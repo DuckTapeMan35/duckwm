@@ -1,0 +1,54 @@
+# Zig cache and build artifacts
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Build outputs
+build/
+dist/
+
+# Zig compiler artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+
+# Debug symbols
+*.pdb
+
+# Coverage / profiling
+*.profraw
+*.profdata
+
+# Editor / IDE files
+
+## VS Code
+.vscode/
+
+## JetBrains
+.idea/
+*.iml
+
+## Vim
+*.swp
+*.swo
+*~
+
+# OS files
+
+## macOS
+.DS_Store
+
+## Windows
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
