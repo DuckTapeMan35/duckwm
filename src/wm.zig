@@ -39,6 +39,8 @@ pub const WM = struct {
     // X11 data
     display: *c.Display,
     root: c.Window,
+    screen_width: u32,
+    screen_height: u32,
     frames: std.AutoHashMap(c.Window, c.Window),
 
     // user defined keybindings
@@ -76,6 +78,8 @@ pub const WM = struct {
         return WM{
             .display = display,
             .root = c.XDefaultRootWindow(display),
+            .screen_width = @intCast(c.XDisplayWidth(display, 0)),
+            .screen_height = @intCast(c.XDisplayHeight(display, 0)),
             .frames = std.AutoHashMap(c.Window, c.Window).init(allocator),
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
@@ -127,6 +131,43 @@ pub const WM = struct {
         return self.node_registry.get(id);
     }
 
+    pub fn set_node_empty(self: *WM, node_id: u32) void {
+        if (self.node_registry.get(node_id)) |node| {
+            switch (node.content) {
+                .window => |win| {
+                    _ = self.window_to_node_id.remove(win);
+                },
+                else => {},
+            }
+            node.content = .empty;
+        }
+    }
+
+    pub fn set_node_window(self: *WM, node_id: u32, win: c.Window) !void {
+        if (self.node_registry.get(node_id)) |node| {
+            switch (node.content) {
+                .window => |old_win| {
+                    _ = self.window_to_node_id.remove(old_win);
+                },
+                else => {},
+            }
+            node.content = .{ .window = win };
+            try self.window_to_node_id.put(win, node_id);
+        }
+    }
+
+    pub fn move_window_to_node(self: *WM, src_node_id: u32, dst_node_id: u32) !void {
+        const src = self.node_registry.get(src_node_id) orelse return error.InvalidNode;
+        const dst = self.node_registry.get(dst_node_id) orelse return error.InvalidNode;
+        if (src.content != .window or dst.content != .empty)
+            return error.InvalidState;
+
+        const win = src.content.window;
+        _ = self.window_to_node_id.remove(win);
+        dst.content = .{ .window = win };
+        try self.window_to_node_id.put(win, dst_node_id);
+        src.content = .empty;
+    }
 
     pub fn bind_lua(self: *WM, modifiers: c_uint, keysym: c.KeySym, ref: i32) !void {
         try self.keybinds.put(.{ .modifiers = modifiers, .keysym = keysym }, .{ .lua = ref });
@@ -153,7 +194,6 @@ pub const WM = struct {
 
     pub fn on_key_press(self: *WM, event: *c.XKeyEvent) void {
         const keysym = c.XKeycodeToKeysym(self.display, @as(u8, @truncate(event.keycode)), 0);
-        std.debug.print("KeyPress: mods={x} keysym={x} keycode={}\n", .{ event.state, keysym, event.keycode });
         if (self.keybinds.get(.{ .modifiers = event.state, .keysym = keysym })) |kb| {
             switch (kb) {
                 .zig => |a| {
@@ -257,31 +297,12 @@ pub const WM = struct {
     }
 
     pub fn reset_root_state(self: *WM) void {
-        std.debug.print("Resetting root window state\n", .{});
-        self.ungrab_keys();
         _ = c.XSelectInput(self.display, self.root,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask | c.KeyPressMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
         _ = c.XSetInputFocus(self.display, self.root, c.RevertToParent, c.CurrentTime);
         _ = c.XSync(self.display, 0);
-        var it = self.keybinds.iterator();
-        while (it.next()) |entry| {
-            const keycode = c.XKeysymToKeycode(self.display, entry.key_ptr.*.keysym);
-            if (keycode == 0) {
-                std.debug.print("Failed to get keycode for keysym: {x}\n", .{entry.key_ptr.*.keysym});
-                continue;
-            }
-            const grab_result = c.XGrabKey(self.display, keycode, entry.key_ptr.*.modifiers,
-                self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
-            // XGrabKey returns GrabSuccess (0) on success, otherwise an error code
-            if (grab_result != 0) {
-                std.debug.print("XGrabKey failed with code: {}\n", .{grab_result});
-            } else {
-                std.debug.print("Grabbed key: mods={x} keysym={x} keycode={}\n", .{entry.key_ptr.*.modifiers, entry.key_ptr.*.keysym, keycode});
-            }
-        }
         _ = c.XFlush(self.display);
         _ = c.XSync(self.display, 0);
-        std.debug.print("Root state reset complete\n", .{});
     }
 
     pub fn on_destroy_notify(self: *WM, event: *c.XDestroyWindowEvent) !void {
@@ -299,7 +320,6 @@ pub const WM = struct {
         
         // Ignore frame destroy events - we handle cleanup when the client is destroyed
         if (is_frame) {
-            std.debug.print("DestroyNotify for frame: {}\n", .{win});
             return;
         }
 
@@ -316,11 +336,9 @@ pub const WM = struct {
         
         // If this window isn't managed, nothing to do
         if (dying == null) {
-            std.debug.print("DestroyNotify for unmanaged window: {}\n", .{win});
             return;
         }
 
-        std.debug.print("DestroyNotify for client window: {} (id={})\n", .{win, dying_id.?});
 
         // Determine next focus BEFORE removing anything
         var next_focus: ?*Node = null;
@@ -333,12 +351,6 @@ pub const WM = struct {
                     next_focus = edge.to;
                     break;
                 }
-            }
-            
-            // Fallback: layout edges
-            if (next_focus == null and dying != null) {
-                const d = dying.?;
-                next_focus = d.left orelse d.right orelse d.up orelse d.down;
             }
             
             // Fallback: any other window node
@@ -401,6 +413,11 @@ pub const WM = struct {
             }
         }
 
+        // fallback input restoration
+        if (self.focused == null) {
+            _ = c.XSetInputFocus(self.display, self.root, c.RevertToParent, c.CurrentTime);
+        }
+
         // Only rebuild if we still have nodes
         if (self.graph.nodes.items.len > 0) {
             try self.resolve(&self.graph);
@@ -409,7 +426,6 @@ pub const WM = struct {
         } else {
             self.reset_root_state();
             self.graph.focus_edges.clearRetainingCapacity();
-            std.debug.print("No windows remaining, root state reset\n", .{});
         }
     }
 
@@ -419,81 +435,9 @@ pub const WM = struct {
     }
 
     pub fn resolve(self: *WM, g: *Graph) !void {
-        const screen_width: u32 = @intCast(c.XDisplayWidth(self.display, 0));
-        const screen_height: u32 = @intCast(c.XDisplayHeight(self.display, 0));
-
-        var origins = try g.get_origins();
-        defer origins.deinit(self.allocator);
-        if (origins.items.len == 0) return;
-        if (g.active_workspace >= origins.items.len) return error.InvalidWorkspace;
-
-        try self.resolve_node(origins.items[g.active_workspace], 0, 0, screen_width, screen_height);
-    }
-
-    fn resolve_node(self: *WM, node: *Node, x: i32, y: i32, width: u32, height: u32) !void {
-        if (node.right != null and node.down != null) {
-            const h_weight = if (node.split_h) |sh| switch (sh) {
-                .equal => @as(f32, 0.5),
-                .weighted => |w| w,
-            } else 0.5;
-            const left_width = @as(u32, @intFromFloat(@as(f32, @floatFromInt(width)) * h_weight));
-
-            const v_weight = if (node.split_v) |sv| switch (sv) {
-                .equal => @as(f32, 0.5),
-                .weighted => |w| w,
-            } else 0.5;
-            const top_height = @as(u32, @intFromFloat(@as(f32, @floatFromInt(height)) * v_weight));
-
-            node.x = x;
-            node.y = y;
-            node.width = left_width;
-            node.height = top_height;
-
-            try self.resolve_node(node.down.?, x, y + @as(i32, @intCast(top_height)), left_width, height - top_height);
-            try self.resolve_node(node.right.?, x + @as(i32, @intCast(left_width)), y, width - left_width, height);
-        } else if (node.right) |right| {
-            const weight = if (node.split_h) |sh| switch (sh) {
-                .equal => @as(f32, 0.5),
-                .weighted => |w| w,
-            } else 0.5;
-            const left_width = @as(u32, @intFromFloat(@as(f32, @floatFromInt(width)) * weight));
-
-            node.x = x;
-            node.y = y;
-            node.width = left_width;
-            node.height = height;
-
-            try self.resolve_node(right, x + @as(i32, @intCast(left_width)), y, width - left_width, height);
-        } else if (node.down) |down| {
-            const weight = if (node.split_v) |sv| switch (sv) {
-                .equal => @as(f32, 0.5),
-                .weighted => |w| w,
-            } else 0.5;
-            const top_height = @as(u32, @intFromFloat(@as(f32, @floatFromInt(height)) * weight));
-
-            node.x = x;
-            node.y = y;
-            node.width = width;
-            node.height = top_height;
-
-            try self.resolve_node(down, x, y + @as(i32, @intCast(top_height)), width, height - top_height);
-        } else {
-            node.x = x;
-            node.y = y;
-            node.width = width;
-            node.height = height;
-        }
-
-        switch (node.content) {
-            .workspace => |child_graph| {
-                var origins = try child_graph.get_origins();
-                defer origins.deinit(self.allocator);
-                if (origins.items.len > 0 and child_graph.active_workspace < origins.items.len) {
-                    try self.resolve_node(origins.items[child_graph.active_workspace], node.x, node.y, node.width, node.height);
-                }
-            },
-            else => {},
-        }
+        const w = @as(u32, @intCast(c.XDisplayWidth(self.display, 0)));
+        const h = @as(u32, @intCast(c.XDisplayHeight(self.display, 0)));
+        try g.solve(w, h);
     }
 
     fn rebuild_focus_edges(self: *WM) !void {
@@ -613,17 +557,6 @@ pub const WM = struct {
 
     fn focus_via_edges(self: *WM, comptime dir: Direction) void {
         if (self.find_focus_target(dir)) |target| { self.focus(target); return; }
-
-        // fallback: layout edge
-        const focused = self.focused orelse return;
-
-        const layout_target: ?*Node = switch (dir) {
-            .Left  => focused.left,
-            .Right => focused.right,
-            .Up    => focused.up,
-            .Down  => focused.down,
-        };
-        if (layout_target) |b| { self.focus(b); return; }
     }
 
     pub fn focus_left(self: *WM) anyerror!void { self.focus_via_edges(.Left); }
@@ -715,34 +648,40 @@ pub const WM = struct {
     // Returns the vertical and horizontal edge coordinates if the cursor is near a corner
     fn find_corner_at(self: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct { v_edge: i32, h_edge: i32 } {
         const nodes = self.graph.nodes.items;
+        // Find any vertical shared edge first
         for (nodes) |a| {
-            switch (a.content) { .window => {}, else => continue }
-            const a_right = a.x + @as(i32, @intCast(a.width));
-            const a_bottom = a.y + @as(i32, @intCast(a.height));
-
-            // Check if near a_right (vertical edge) and a_bottom (horizontal edge)
-            if (@abs(root_x - a_right) <= threshold and @abs(root_y - a_bottom) <= threshold) {
-                // Verify that these edges actually exist (i.e., there are adjacent windows)
-                var has_vertical = false;
-                var has_horizontal = false;
-                for (nodes) |b| {
-                    if (a == b) continue;
-                    switch (b.content) { .window => {}, else => continue }
-                    const b_x = b.x;
-                    const b_y = b.y;
-                    // a_right == b.x (vertical edge)
-                    if (a_right == b_x) {
-                        const y_overlap = @min(a_bottom, b.y + @as(i32, @intCast(b.height))) - @max(a.y, b.y);
-                        if (y_overlap > 0) has_vertical = true;
+            if (a.content != .window) continue;
+            for (nodes) |b| {
+                if (a == b) continue;
+                if (b.content != .window) continue;
+                const a_right = a.x + @as(i32, @intCast(a.width));
+                if (a_right == b.x) {
+                    const vy_start = @max(a.y, b.y);
+                    const vy_end = @min(a.y + @as(i32, @intCast(a.height)), b.y + @as(i32, @intCast(b.height)));
+                    if (vy_end > vy_start) {
+                        // Look for a horizontal shared edge that crosses this vertical one
+                        for (nodes) |cw| {
+                            if (cw.content != .window) continue;
+                            for (nodes) |dw| {
+                                if (cw == dw) continue;
+                                if (dw.content != .window) continue;
+                                const cw_bottom = cw.y + @as(i32, @intCast(cw.height));
+                                if (cw_bottom == dw.y) {
+                                    const hx_start = @max(cw.x, dw.x);
+                                    const hx_end = @min(cw.x + @as(i32, @intCast(cw.width)), dw.x + @as(i32, @intCast(dw.width)));
+                                    if (hx_end > hx_start) {
+                                        // The intersection must lie within both spans
+                                        if (cw_bottom >= vy_start and cw_bottom <= vy_end and
+                                            a_right >= hx_start and a_right <= hx_end) {
+                                            if (@abs(root_x - a_right) <= threshold and @abs(root_y - cw_bottom) <= threshold) {
+                                                return .{ .v_edge = a_right, .h_edge = cw_bottom };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    // a_bottom == b.y (horizontal edge)
-                    if (a_bottom == b_y) {
-                        const x_overlap = @min(a_right, b.x + @as(i32, @intCast(b.width))) - @max(a.x, b.x);
-                        if (x_overlap > 0) has_horizontal = true;
-                    }
-                }
-                if (has_vertical and has_horizontal) {
-                    return .{ .v_edge = a_right, .h_edge = a_bottom };
                 }
             }
         }
@@ -765,12 +704,10 @@ pub const WM = struct {
             const right: i32 = node.x + @as(i32, @intCast(node.width));
             if (right == edge_x) {
                 node.width = @intCast(@as(i32, @intCast(node.width)) + delta);
-                graph_mod.recalculate_row_weights(graph_mod.row_origin(node));
                 changed = true;
             } else if (node.x == edge_x) {
                 node.x += delta;
                 node.width = @intCast(@as(i32, @intCast(node.width)) - delta);
-                graph_mod.recalculate_row_weights(graph_mod.row_origin(node));
                 changed = true;
             }
         }
@@ -794,12 +731,10 @@ pub const WM = struct {
             const bottom: i32 = node.y + @as(i32, @intCast(node.height));
             if (bottom == edge_y) {
                 node.height = @intCast(@as(i32, @intCast(node.height)) + delta);
-                graph_mod.recalculate_col_weights(graph_mod.col_origin(node));
                 changed = true;
             } else if (node.y == edge_y) {
                 node.y += delta;
                 node.height = @intCast(@as(i32, @intCast(node.height)) - delta);
-                graph_mod.recalculate_col_weights(graph_mod.col_origin(node));
                 changed = true;
             }
         }
@@ -809,10 +744,10 @@ pub const WM = struct {
 
     pub fn resize_edge(self: *WM, node: *Node, dir: Direction, delta: i32) !void {
         switch (dir) {
-            .Left  => if (node.left != null) { _ = try self.resize_vertical_edge(node.x, -delta);},
-            .Right => if (node.right != null) { _ = try self.resize_vertical_edge(node.x + @as(i32, @intCast(node.width)), delta);},
-            .Up    => if (node.up != null) { _ = try self.resize_horizontal_edge(node.y, -delta);},
-            .Down  => if (node.down != null) { _ = try self.resize_horizontal_edge(node.y + @as(i32, @intCast(node.height)), delta);},
+            .Left  => _ = try self.resize_vertical_edge(node.x, -delta),
+            .Right => _ = try self.resize_vertical_edge(node.x + @as(i32, @intCast(node.width)), delta),
+            .Up    => _ = try self.resize_horizontal_edge(node.y, -delta),
+            .Down  => _ = try self.resize_horizontal_edge(node.y + @as(i32, @intCast(node.height)), delta),
         }
     }
 
@@ -851,7 +786,6 @@ pub const WM = struct {
     }
 
     pub fn spawn(self: *WM, argv: []const []const u8) !void {
-        std.debug.print("Spawning: {s}\n", .{argv[0]});
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const a = arena.allocator();
@@ -902,7 +836,6 @@ pub const WM = struct {
         }
         // fallback: try to find an edge for resizing
         if (self.find_edge_at(ev.x_root, ev.y_root, 8)) |edge| {
-            std.debug.print("ButtonPress: edge found, is_vertical={}, coord={}\n", .{edge.is_vertical, edge.coordinate});
             self.edge_resizing = true;
             self.edge_is_vertical = edge.is_vertical;
             if (edge.is_vertical) {
@@ -917,7 +850,6 @@ pub const WM = struct {
                 c.PointerMotionMask | c.ButtonReleaseMask,
                 c.GrabModeAsync, c.GrabModeAsync, c.None, c.None, c.CurrentTime);
         } else {
-            std.debug.print("ButtonPress: no edge at ({}, {})\n", .{ev.x_root, ev.y_root});
         }
     }
 
@@ -968,122 +900,6 @@ pub const WM = struct {
         if (self.edge_resizing) {
             self.edge_resizing = false;
             _ = c.XUngrabPointer(self.display, c.CurrentTime);
-        }
-    }
-
-    pub fn print_layout(self: *WM) void {
-        std.debug.print("\n=== Layout ===\n", .{});
-
-        var origins = self.graph.get_origins() catch return;
-        defer origins.deinit(self.allocator);
-
-        var ids = std.AutoHashMap(*Node, usize).init(self.allocator);
-        defer ids.deinit();
-
-        // stable labels
-        for (self.graph.nodes.items, 0..) |node, i| {
-            ids.put(node, i) catch {};
-        }
-
-        for (origins.items) |origin| {
-            self.print_layout_row(origin, &ids);
-            std.debug.print("\n", .{});
-        }
-
-        std.debug.print("================\n", .{});
-    }
-
-    fn print_layout_row(
-        self: *WM,
-        start: *Node,
-        ids: *std.AutoHashMap(*Node, usize),
-    ) void {
-
-        var row: ?*Node = start;
-
-        // -------------------------
-        // First line:
-        // A - B - C
-        // -------------------------
-        while (row) |node| {
-            print_node_label(node, ids);
-
-            if (node.right != null) {
-                std.debug.print(" - ", .{});
-            }
-
-            row = node.right;
-        }
-
-        std.debug.print("\n", .{});
-
-        // -------------------------
-        // Connector line:
-        //         |
-        // -------------------------
-        var has_down = false;
-        row = start;
-
-        while (row) |node| {
-            if (node.down != null) {
-                has_down = true;
-                break;
-            }
-            row = node.right;
-        }
-
-        if (!has_down) return;
-
-        row = start;
-
-        while (row) |node| {
-            if (node.down != null) {
-                std.debug.print("    |", .{});
-            } else {
-                std.debug.print("     ", .{});
-            }
-
-            if (node.right != null) {
-                std.debug.print("    ", .{});
-            }
-
-            row = node.right;
-        }
-
-        std.debug.print("\n", .{});
-
-        // -------------------------
-        // Child rows
-        // -------------------------
-        row = start;
-
-        while (row) |node| {
-            if (node.down) |down| {
-                self.print_layout_row(down, ids);
-            }
-
-            row = node.right;
-        }
-    }
-
-    fn print_node_label(
-        node: *Node,
-        ids: *std.AutoHashMap(*Node, usize),
-    ) void {
-        const id = ids.get(node).?;
-
-        const label: u8 = @intCast('A' + @as(u8, @intCast(id % 26)));
-
-        switch (node.content) {
-            .window => |win| {
-                std.debug.print("{c}[{}]", .{ label, win });
-            },
-            .workspace => {
-                std.debug.print("{c}[WS]", .{label});
-            },
-            .empty => {
-                std.debug.print("{c}[ ]", .{label});
-            },
         }
     }
 
