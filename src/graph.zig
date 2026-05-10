@@ -57,9 +57,10 @@ const ReparentStrategy = union(enum) {
 const FocusEdge = struct {
     from: *Node,
     to: *Node,
+    dir: Direction,
 
-    pub fn new(from: *Node, to: *Node) FocusEdge {
-        return .{ .from = from, .to = to };
+    pub fn new(from: *Node, to: *Node, dir: Direction) FocusEdge {
+        return .{ .from = from, .to = to, .dir = dir };
     }
 };
 
@@ -186,8 +187,8 @@ pub const Graph = struct {
         }
     }
 
-    pub fn add_focus_edge(self: *Graph, from: *Node, to: *Node) !void {
-        try self.focus_edges.append(self.allocator, FocusEdge.new(from, to));
+    pub fn add_focus_edge(self: *Graph, from: *Node, to: *Node, dir: Direction) !void {
+        try self.focus_edges.append(self.allocator, FocusEdge.new(from, to, dir));
     }
 
     pub fn remove_focus_edge(self: *Graph, from: *Node, to: *Node) void {

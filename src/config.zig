@@ -18,7 +18,23 @@ var global_wm: *WM = undefined;
 
 fn l_set_resize_modifier(lua: *Lua) i32 {
     const mod: c_uint = @intCast(lua.checkInteger(1));
+    if (global_wm.resize_modifier) |old|
+        _ = c.XUngrabButton(@ptrCast(global_wm.display), c.AnyButton, old, global_wm.root);
     global_wm.resize_modifier = mod;
+    _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod, global_wm.root, 0,
+        c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
+        c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    return 0;
+}
+
+fn l_set_float_modifier(lua: *Lua) i32 {
+    const mod: c_uint = @intCast(lua.checkInteger(1));
+    if (global_wm.float_move_modifier) |old|
+        _ = c.XUngrabButton(@ptrCast(global_wm.display), c.AnyButton, old, global_wm.root);
+    global_wm.float_move_modifier = mod;
+    _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod, global_wm.root, 0,
+        c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
+        c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
     return 0;
 }
 
@@ -487,6 +503,14 @@ fn l_move_window_to_node(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_toggle_floating(lua: *Lua) i32 {
+    global_wm.toggle_floating() catch {
+        _ = lua.pushString("failed to toggle floating");
+        return lua.raiseError();
+    };
+    return 0;
+}
+
 // -------------------------------------------------------------------------
 // Helper to raise Lua error with a string
 // -------------------------------------------------------------------------
@@ -561,6 +585,8 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_get_node_type));   lua.setField(-2, "get_node_type");
     lua.pushFunction(ziglua.wrap(l_move_window_to_node)); lua.setField(-2, "move_window_to_node");
     lua.pushFunction(ziglua.wrap(l_set_resize_modifier)); lua.setField(-2, "set_resize_modifier");
+    lua.pushFunction(ziglua.wrap(l_set_float_modifier));   lua.setField(-2, "set_float_modifier");
+    lua.pushFunction(ziglua.wrap(l_toggle_floating));      lua.setField(-2, "toggle_floating");
 
     lua.setGlobal("wm");
 

@@ -5,6 +5,8 @@ const graph_mod = @import("graph");
 const ziglua = @import("ziglua");
 const resize_mod = @import("resize.zig");
 const focus_mod = @import("focus.zig");
+const float_mod = @import("float.zig");
+
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
@@ -112,7 +114,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         return;
     }
 
-
     // Determine next focus BEFORE removing anything
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
@@ -207,90 +208,291 @@ pub fn on_reparent_notify(_: *WM, event: *c.XReparentEvent) void {
         .{ event.window, event.parent, event.x, event.y });
 }
 
+/// Helper: check if a point is near an edge or corner of a floating window.
+fn find_float_edge_or_corner(node: *Node, x: i32, y: i32, threshold: i32) struct {
+    is_edge: bool,
+    is_corner: bool,
+    edge_vertical: bool,
+    edge_coord: i32,
+    corner_v: i32,
+    corner_h: i32,
+} {
+    const left = node.x;
+    const right = node.x + @as(i32, @intCast(node.width));
+    const top = node.y;
+    const bottom = node.y + @as(i32, @intCast(node.height));
+
+    const near_left = @abs(x - left) <= threshold;
+    const near_right = @abs(x - right) <= threshold;
+    const near_top = @abs(y - top) <= threshold;
+    const near_bottom = @abs(y - bottom) <= threshold;
+
+    const is_corner = (near_left and near_top) or (near_left and near_bottom) or
+                      (near_right and near_top) or (near_right and near_bottom);
+    const is_edge = (near_left or near_right or near_top or near_bottom) and !is_corner;
+
+    var edge_vertical = false;
+    var edge_coord: i32 = 0;
+    var corner_v: i32 = 0;
+    var corner_h: i32 = 0;
+
+    if (is_edge) {
+        if (near_left) {
+            edge_vertical = true;
+            edge_coord = left;
+        } else if (near_right) {
+            edge_vertical = true;
+            edge_coord = right;
+        } else if (near_top) {
+            edge_vertical = false;
+            edge_coord = top;
+        } else if (near_bottom) {
+            edge_vertical = false;
+            edge_coord = bottom;
+        }
+    } else if (is_corner) {
+        if (near_left) corner_v = left else if (near_right) corner_v = right;
+        if (near_top) corner_h = top else if (near_bottom) corner_h = bottom;
+    }
+
+    return .{
+        .is_edge = is_edge,
+        .is_corner = is_corner,
+        .edge_vertical = edge_vertical,
+        .edge_coord = edge_coord,
+        .corner_v = corner_v,
+        .corner_h = corner_h,
+    };
+}
+
 pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
-    if (wm.resize_modifier) |mod| {
-        if (ev.state & mod == 0) {
-            return; // modifier not held, ignore
+    const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
+    if (lookup_win == 0) return;
+
+    // ----- Floating handling -----
+    if (wm.float_move_modifier) |float_modifier| {
+        if (ev.state & float_modifier != 0) {
+            const client = wm.get_client_from_frame(lookup_win) orelse return;
+            const node_id = wm.window_to_node_id.get(client) orelse return;
+            const node = wm.node_registry.get(node_id) orelse return;
+            if (node.floating) {
+                const info = find_float_edge_or_corner(node, ev.x_root, ev.y_root, 8);
+
+                const left   = node.x;
+                const right  = node.x + @as(i32, @intCast(node.width));
+                const top    = node.y;
+                const bottom = node.y + @as(i32, @intCast(node.height));
+
+                if (info.is_corner) {
+                    wm.corner_resizing = true;
+                    wm.resize_v_edge   = info.corner_v;
+                    wm.resize_h_edge   = info.corner_h;
+                    wm.resize_end_x    = ev.x_root;
+                    wm.resize_end_y    = ev.y_root;
+                    // fixed point is the opposite corner
+                    wm.resize_fixed_x = if (info.corner_v == left) right else left;
+                    wm.resize_fixed_y = if (info.corner_h == top) bottom else top;
+                } else if (info.is_edge) {
+                    wm.edge_resizing    = true;
+                    wm.edge_is_vertical = info.edge_vertical;
+                    if (info.edge_vertical) {
+                        wm.edge_x = info.edge_coord;
+                        wm.resize_fixed_x = if (info.edge_coord == left) right else left;
+                    } else {
+                        wm.edge_y = info.edge_coord;
+                        wm.resize_fixed_y = if (info.edge_coord == top) bottom else top;
+                    }
+                    wm.resize_end_x = ev.x_root;
+                    wm.resize_end_y = ev.y_root;
+                } else {
+                    wm.float_moving       = true;
+                    wm.float_move_frame   = lookup_win;   // <-- FIX: store the frame window
+                    wm.float_move_start_x = ev.x_root;
+                    wm.float_move_start_y = ev.y_root;
+                    wm.float_win_start_x  = node.x;
+                    wm.float_win_start_y  = node.y;
+                }
+                _ = c.XGrabPointer(wm.display, lookup_win, 1,
+                    c.PointerMotionMask | c.ButtonReleaseMask,
+                    c.GrabModeAsync, c.GrabModeAsync, c.None, c.None, c.CurrentTime);
+                return;
+            }
         }
     }
-    // first check for corner
+
+    // ----- Tiling resize -----
+    if (wm.resize_modifier) |resize_modifier| {
+        if (ev.state & resize_modifier == 0) return;
+    } else return;
+
     if (resize_mod.find_corner_at(wm, ev.x_root, ev.y_root, 8)) |corner| {
         wm.corner_resizing = true;
-        wm.resize_v_edge = corner.v_edge;
-        wm.resize_h_edge = corner.h_edge;
-        wm.resize_end_x = ev.x_root;
-        wm.resize_end_y = ev.y_root;
-        _ = c.XGrabPointer(wm.display, ev.window, 1,
+        wm.resize_v_edge   = corner.v_edge;
+        wm.resize_h_edge   = corner.h_edge;
+        wm.resize_end_x    = ev.x_root;
+        wm.resize_end_y    = ev.y_root;
+        _ = c.XGrabPointer(wm.display, lookup_win, 1,
             c.PointerMotionMask | c.ButtonReleaseMask,
             c.GrabModeAsync, c.GrabModeAsync, c.None, c.None, c.CurrentTime);
         return;
     }
-    // fallback: try to find an edge for resizing
     if (resize_mod.find_edge_at(wm, ev.x_root, ev.y_root, 8)) |edge| {
-        wm.edge_resizing = true;
+        wm.edge_resizing    = true;
         wm.edge_is_vertical = edge.is_vertical;
-        if (edge.is_vertical) {
-            wm.edge_x = edge.coordinate;
-        } else {
-            wm.edge_y = edge.coordinate;
-        }
+        if (edge.is_vertical) wm.edge_x = edge.coordinate
+        else                  wm.edge_y = edge.coordinate;
         wm.resize_end_x = ev.x_root;
         wm.resize_end_y = ev.y_root;
-        // Grab pointer for motion events
-        _ = c.XGrabPointer(wm.display, ev.window, 1,
+        _ = c.XGrabPointer(wm.display, lookup_win, 1,
             c.PointerMotionMask | c.ButtonReleaseMask,
             c.GrabModeAsync, c.GrabModeAsync, c.None, c.None, c.CurrentTime);
-    } else {
     }
 }
 
 pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
-    if (wm.corner_resizing) {
-        const delta_x = ev.x_root - wm.resize_end_x;
-        const delta_y = ev.y_root - wm.resize_end_y;
-        if (delta_x != 0) {
-            if (try resize_mod.resize_vertical_edge(wm, wm.resize_v_edge, delta_x)) {
-                wm.resize_v_edge += delta_x;
+    // Floating window moving
+    if (wm.float_moving) {
+        const delta_x = ev.x_root - wm.float_move_start_x;
+        const delta_y = ev.y_root - wm.float_move_start_y;
+        if (delta_x != 0 or delta_y != 0) {
+            const client = wm.get_client_from_frame(wm.float_move_frame) orelse return;
+            const node_id = wm.window_to_node_id.get(client) orelse return;
+            const node = wm.node_registry.get(node_id) orelse return;
+            if (node.floating) {
+                node.x = wm.float_win_start_x + delta_x;
+                node.y = wm.float_win_start_y + delta_y;
+                if (wm.frames.get(client)) |frame| {
+                    _ = c.XMoveWindow(wm.display, frame, node.x, node.y);
+                }
             }
-            wm.resize_end_x = ev.x_root;
-        }
-        if (delta_y != 0) {
-            if (try resize_mod.resize_horizontal_edge(wm, wm.resize_h_edge, delta_y)) {
-                wm.resize_h_edge += delta_y;
-            }
-            wm.resize_end_y = ev.y_root;
         }
         return;
     }
-    if (wm.edge_resizing) {
-        const delta_x = ev.x_root - wm.resize_end_x;
-        const delta_y = ev.y_root - wm.resize_end_y;
-        if (wm.edge_is_vertical) {
-            if (delta_x != 0) {
-                if (try resize_mod.resize_vertical_edge(wm, wm.edge_x, delta_x)) {
-                    wm.edge_x += delta_x; // edge moved
+
+    // Floating / tiling resizing
+    if (wm.edge_resizing or wm.corner_resizing) {
+        const focused = wm.focused orelse return;
+        if (focused.floating) {
+            const client = switch (focused.content) {
+                .window => |win| win,
+                else => return,
+            };
+
+            // --- Floating resize with fixed anchor ---
+            if (wm.corner_resizing) {
+                const delta_x = ev.x_root - wm.resize_end_x;
+                const delta_y = ev.y_root - wm.resize_end_y;
+                if (delta_x != 0 or delta_y != 0) {
+                    if (delta_x != 0) wm.resize_v_edge += delta_x;
+                    if (delta_y != 0) wm.resize_h_edge += delta_y;
+                    wm.resize_end_x = ev.x_root;
+                    wm.resize_end_y = ev.y_root;
+
+                    const new_x = @min(wm.resize_fixed_x, wm.resize_v_edge);
+                    const new_y = @min(wm.resize_fixed_y, wm.resize_h_edge);
+                    const new_w: u32 = @intCast(@max(10, @abs(wm.resize_fixed_x - wm.resize_v_edge)));
+                    const new_h: u32 = @intCast(@max(10, @abs(wm.resize_fixed_y - wm.resize_h_edge)));
+                    focused.x = new_x;
+                    focused.y = new_y;
+                    focused.width = new_w;
+                    focused.height = new_h;
                 }
-                wm.resize_end_x = ev.x_root;
+            } else if (wm.edge_resizing) {
+                if (wm.edge_is_vertical) {
+                    const delta_x = ev.x_root - wm.resize_end_x;
+                    if (delta_x != 0) {
+                        wm.edge_x += delta_x;
+                        wm.resize_end_x = ev.x_root;
+                        const new_x = @min(wm.resize_fixed_x, wm.edge_x);
+                        const new_w: u32 = @intCast(@max(10, @abs(wm.resize_fixed_x - wm.edge_x)));
+                        focused.x = new_x;
+                        focused.width = new_w;
+                    }
+                } else {
+                    const delta_y = ev.y_root - wm.resize_end_y;
+                    if (delta_y != 0) {
+                        wm.edge_y += delta_y;
+                        wm.resize_end_y = ev.y_root;
+                        const new_y = @min(wm.resize_fixed_y, wm.edge_y);
+                        const new_h: u32 = @intCast(@max(10, @abs(wm.resize_fixed_y - wm.edge_y)));
+                        focused.y = new_y;
+                        focused.height = new_h;
+                    }
+                }
             }
+
+            // Apply geometry changes to frame and client
+            if (wm.frames.get(client)) |frame| {
+                _ = c.XMoveResizeWindow(wm.display, frame, focused.x, focused.y, focused.width, focused.height);
+                const border_2x = 2 * @as(u32, @intCast(wm.border_width));
+                const client_w = if (focused.width >= 2 * wm.border_width) focused.width - border_2x else 0;
+                const client_h = if (focused.height >= 2 * wm.border_width) focused.height - border_2x else 0;
+                _ = c.XResizeWindow(wm.display, client, client_w, client_h);
+            }
+            return;
         } else {
-            if (delta_y != 0) {
-                if (try resize_mod.resize_horizontal_edge(wm, wm.edge_y, delta_y)) {
-                    wm.edge_y += delta_y; // edge moved
+            // Tiling resize (unchanged original logic)
+            if (wm.corner_resizing) {
+                const delta_x = ev.x_root - wm.resize_end_x;
+                const delta_y = ev.y_root - wm.resize_end_y;
+                if (delta_x != 0) {
+                    if (resize_mod.resize_vertical_edge(wm, wm.resize_v_edge, delta_x) catch false) {
+                        wm.resize_v_edge += delta_x;
+                    }
+                    wm.resize_end_x = ev.x_root;
                 }
-                wm.resize_end_y = ev.y_root;
+                if (delta_y != 0) {
+                    if (resize_mod.resize_horizontal_edge(wm, wm.resize_h_edge, delta_y) catch false) {
+                        wm.resize_h_edge += delta_y;
+                    }
+                    wm.resize_end_y = ev.y_root;
+                }
+                return;
+            }
+            if (wm.edge_resizing) {
+                const delta_x = ev.x_root - wm.resize_end_x;
+                const delta_y = ev.y_root - wm.resize_end_y;
+                if (wm.edge_is_vertical) {
+                    if (delta_x != 0) {
+                        if (resize_mod.resize_vertical_edge(wm, wm.edge_x, delta_x) catch false) {
+                            wm.edge_x += delta_x;
+                        }
+                        wm.resize_end_x = ev.x_root;
+                    }
+                } else {
+                    if (delta_y != 0) {
+                        if (resize_mod.resize_horizontal_edge(wm, wm.edge_y, delta_y) catch false) {
+                            wm.edge_y += delta_y;
+                        }
+                        wm.resize_end_y = ev.y_root;
+                    }
+                }
             }
         }
     }
 }
 
 pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
+    if (wm.float_moving) {
+        wm.float_moving = false;
+        _ = c.XUngrabPointer(wm.display, c.CurrentTime);
+        // Raise all floating windows to keep them on top after moving
+        float_mod.raise_floating_windows(wm);
+    }
     if (wm.corner_resizing) {
         wm.corner_resizing = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
+        // For floating resize, raise after completion
+        if (wm.focused) |node| {
+            if (node.floating) float_mod.raise_floating_windows(wm);
+        }
     }
     if (wm.edge_resizing) {
         wm.edge_resizing = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
+        if (wm.focused) |node| {
+            if (node.floating) float_mod.raise_floating_windows(wm);
+        }
     }
 }
 

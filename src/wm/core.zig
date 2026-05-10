@@ -9,6 +9,7 @@ const Lua = ziglua.Lua;
 const focus_mod = @import("focus.zig");
 const resize_mod = @import("resize.zig");
 const events_mod = @import("events.zig");
+const float_mod = @import("float.zig");
 
 pub const KeybindKey = struct {
     modifiers: c_uint,
@@ -46,6 +47,17 @@ pub const WM = struct {
     corner_resizing: bool,
     resize_v_edge: i32,
     resize_h_edge: i32,
+    resize_fixed_x: i32,
+    resize_fixed_y: i32,
+
+    // floating state fields
+    float_moving: bool,
+    float_move_modifier: ?c_uint,
+    float_move_frame: c.Window,
+    float_move_start_x: i32,
+    float_move_start_y: i32,
+    float_win_start_x: i32,
+    float_win_start_y: i32,
 
     // data for the lua API and callbacks
     node_registry: std.AutoHashMap(u32, *Node),
@@ -83,6 +95,16 @@ pub const WM = struct {
             .corner_resizing = false,
             .resize_v_edge = 0,
             .resize_h_edge = 0,
+            .resize_fixed_x = 0,
+            .resize_fixed_y = 0,
+
+            .float_moving = false,
+            .float_move_modifier = null,
+            .float_move_frame = 0,
+            .float_move_start_x = 0,
+            .float_move_start_y = 0,
+            .float_win_start_x = 0,
+            .float_win_start_y = 0,
 
             .node_registry = std.AutoHashMap(u32, *Node).init(allocator),
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),
@@ -112,6 +134,14 @@ pub const WM = struct {
         try self.window_to_node_id.put(win, id);
         self.next_node_id += 1;
         return id;
+    }
+
+    pub fn get_client_from_frame(self: *WM, win_frame: c.Window) ?c.Window {
+        var it = self.frames.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.* == win_frame) return entry.key_ptr.*;
+        }
+        return null;
     }
 
     pub fn get_node_by_id(self: *WM, id: u32) ?*Node {
@@ -198,7 +228,7 @@ pub const WM = struct {
             bg_color,
         );
 
-        _ = c.XSelectInput(self.display, win_frame, c.SubstructureRedirectMask | c.SubstructureNotifyMask);
+        _ = c.XSelectInput(self.display, win_frame, c.SubstructureRedirectMask | c.SubstructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
         _ = c.XAddToSaveSet(self.display, win);
         _ = c.XReparentWindow(self.display, win, win_frame, self.border_width, self.border_width);
         _ = c.XMapWindow(self.display, win_frame);
@@ -233,10 +263,13 @@ pub const WM = struct {
     pub fn resize_edge(self: *WM, node: *Node, dir: Direction, delta: i32) !void { return resize_mod.resize_edge(self, node, dir, delta); }
     pub fn resize_corner(self: *WM, node: *Node, delta_x: i32, delta_y: i32) !void { return resize_mod.resize_corner(self, node, delta_x, delta_y); }
 
+    pub fn toggle_floating(self: *WM) !void { return float_mod.toggle_floating(self); }
+
     pub fn flush(self: *WM, g: *Graph) !void {
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => |win| {
+                    if (node.floating) continue;
                     if (self.frames.get(win)) |win_frame| {
                         _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
                         const border_2x = 2 * @as(u32, @intCast(self.border_width));
@@ -249,17 +282,58 @@ pub const WM = struct {
                 .empty => {},
             }
         }
+        float_mod.raise_floating_windows(self);
         _ = c.XFlush(self.display);
     }
 
     pub fn focus(self: *WM, node: *Node) void { focus_mod.set_focus(self, node); }
 
     pub fn exchange(self: *WM, a: *Node, b: *Node) !void {
-        const tmp = a.content;
-        a.content = b.content;
-        b.content = tmp;
+        // 1. Find node IDs (needed for registry updates)
+        var a_id: ?u32 = null;
+        var b_id: ?u32 = null;
+        var it = self.node_registry.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.* == a) a_id = entry.key_ptr.*;
+            if (entry.value_ptr.* == b) b_id = entry.key_ptr.*;
+        }
+        const id_a = a_id orelse return error.InvalidNode;
+        const id_b = b_id orelse return error.InvalidNode;
+
+        // 2. Remember current windows
+        const win_a = switch (a.content) { .window => |w| w, else => null };
+        const win_b = switch (b.content) { .window => |w| w, else => null };
+        if (win_a == null and win_b == null) return;
+
+        // 3. Clear both nodes (updates window_to_node_id)
+        if (win_a != null) self.set_node_empty(id_a);
+        if (win_b != null) self.set_node_empty(id_b);
+
+        // 4. Place windows into the opposite nodes
+        if (win_b) |w| try self.set_node_window(id_a, w);
+        if (win_a) |w| try self.set_node_window(id_b, w);
+
+        // 5. Update focused pointer
         if (self.focused == a) self.focused = b
         else if (self.focused == b) self.focused = a;
+
+        // 6. Move frames to match node geometry (crucial for floating windows)
+        for ([_]*Node{ a, b }) |node| {
+            switch (node.content) {
+                .window => |win| {
+                    if (self.frames.get(win)) |win_frame| {
+                        _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
+                        const border_2x = 2 * @as(u32, @intCast(self.border_width));
+                        const client_w = if (node.width >= 2*self.border_width) node.width - border_2x else 0;
+                        const client_h = if (node.height >= 2*self.border_width) node.height - border_2x else 0;
+                        _ = c.XResizeWindow(self.display, win, client_w, client_h);
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // 7. Flush (also raises floating windows and redraws borders)
         try self.flush(&self.graph);
     }
 
