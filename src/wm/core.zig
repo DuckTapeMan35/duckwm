@@ -36,6 +36,7 @@ pub const WM = struct {
     focused: ?*Node,
 
     // resize state fields
+    resize_modifier: ?c_uint,
     edge_resizing: bool,
     edge_x: i32,
     edge_y: i32,
@@ -72,6 +73,7 @@ pub const WM = struct {
             .graph = Graph.init(allocator),
             .focused = null,
 
+            .resize_modifier = null,
             .edge_resizing = false,
             .edge_x = 0,
             .edge_y = 0,

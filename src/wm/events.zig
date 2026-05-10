@@ -208,6 +208,11 @@ pub fn on_reparent_notify(_: *WM, event: *c.XReparentEvent) void {
 }
 
 pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
+    if (wm.resize_modifier) |mod| {
+        if (ev.state & mod == 0) {
+            return; // modifier not held, ignore
+        }
+    }
     // first check for corner
     if (resize_mod.find_corner_at(wm, ev.x_root, ev.y_root, 8)) |corner| {
         wm.corner_resizing = true;

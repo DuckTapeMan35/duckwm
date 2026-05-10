@@ -16,6 +16,12 @@ var global_wm: *WM = undefined;
 // Existing bindings that still work
 // -------------------------------------------------------------------------
 
+fn l_set_resize_modifier(lua: *Lua) i32 {
+    const mod: c_uint = @intCast(lua.checkInteger(1));
+    global_wm.resize_modifier = mod;
+    return 0;
+}
+
 fn l_bind(lua: *Lua) i32 {
     const mod: c_uint = @intCast(lua.checkInteger(1));
     const key = lua.checkString(2);
@@ -554,6 +560,7 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_set_node_window));  lua.setField(-2, "set_node_window");
     lua.pushFunction(ziglua.wrap(l_get_node_type));   lua.setField(-2, "get_node_type");
     lua.pushFunction(ziglua.wrap(l_move_window_to_node)); lua.setField(-2, "move_window_to_node");
+    lua.pushFunction(ziglua.wrap(l_set_resize_modifier)); lua.setField(-2, "set_resize_modifier");
 
     lua.setGlobal("wm");
 
