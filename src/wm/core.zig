@@ -11,6 +11,20 @@ const resize_mod = @import("resize.zig");
 const events_mod = @import("events.zig");
 const float_mod = @import("float.zig");
 
+pub const Strut = struct {
+    left: u32,
+    right: u32,
+    top: u32,
+    bottom: u32,
+};
+
+pub const WorkArea = struct {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+};
+
 pub const KeybindKey = struct {
     modifiers: c_uint,
     keysym: c.KeySym,
@@ -28,6 +42,9 @@ pub const WM = struct {
     screen_width: u32,
     screen_height: u32,
     frames: std.AutoHashMap(c.Window, c.Window),
+    dock_struts: std.AutoHashMap(c.Window, Strut),
+    work_x: i32,
+    work_y: i32,
 
     // user defined keybindings
     keybinds: std.AutoHashMap(KeybindKey, Keybind),
@@ -79,6 +96,9 @@ pub const WM = struct {
             .screen_width = @intCast(c.XDisplayWidth(display, 0)),
             .screen_height = @intCast(c.XDisplayHeight(display, 0)),
             .frames = std.AutoHashMap(c.Window, c.Window).init(allocator),
+            .dock_struts = std.AutoHashMap(c.Window, Strut).init(allocator),
+            .work_x = 0,
+            .work_y = 0,
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
@@ -125,6 +145,7 @@ pub const WM = struct {
         self.frames.deinit();
         self.node_registry.deinit();
         self.window_to_node_id.deinit();
+        self.dock_struts.deinit();
         _ = c.XCloseDisplay(self.display);
     }
 
@@ -245,10 +266,56 @@ pub const WM = struct {
         _ = c.XSync(self.display, 0);
     }
 
+    pub fn get_work_area(self: *WM) WorkArea {
+        var left: u32 = 0;
+        var right: u32 = 0;
+        var top: u32 = 0;
+        var bottom: u32 = 0;
+
+        var it = self.dock_struts.valueIterator();
+        while (it.next()) |s| {
+            if (s.left   > left)   left   = s.left;
+            if (s.right  > right)  right  = s.right;
+            if (s.top    > top)    top    = s.top;
+            if (s.bottom > bottom) bottom = s.bottom;
+        }
+
+        const x: i32 = @intCast(left);
+        const y: i32 = @intCast(top);
+        const w = self.screen_width - left - right;
+        const h = self.screen_height - top - bottom;
+
+        return WorkArea{
+            .x = x,
+            .y = y,
+            .width = w,
+            .height = h,
+        };
+    }
+
     pub fn resolve(self: *WM, g: *Graph) !void {
-        const w = @as(u32, @intCast(c.XDisplayWidth(self.display, 0)));
-        const h = @as(u32, @intCast(c.XDisplayHeight(self.display, 0)));
-        try g.solve(w, h);
+        const work = self.get_work_area();
+
+        // Step 1: revert tiled nodes to relative coordinates
+        for (g.nodes.items) |node| {
+            if (node.floating) continue;
+            node.x -= self.work_x;
+            node.y -= self.work_y;
+        }
+
+        // Step 2: run the layout solver in the relative coordinate space
+        try g.solve(work.width, work.height);
+
+        // Step 3: apply the new offset to tiled nodes
+        for (g.nodes.items) |node| {
+            if (node.floating) continue;
+            node.x += work.x;
+            node.y += work.y;
+        }
+
+        // Step 4: remember the offset for the next call
+        self.work_x = work.x;
+        self.work_y = work.y;
     }
 
     pub fn rebuild_focus_edges(self: *WM) !void { return focus_mod.rebuild_focus_edges(self); }
@@ -287,6 +354,37 @@ pub const WM = struct {
     }
 
     pub fn focus(self: *WM, node: *Node) void { focus_mod.set_focus(self, node); }
+
+    // inside WM struct
+    pub fn unmanage_as_dock(self: *WM, win: c.Window) !void {
+        const node_id = self.window_to_node_id.get(win) orelse return;
+        const node = self.node_registry.get(node_id) orelse return;
+
+        // 1. Unmap client and remove frame
+        if (self.frames.get(win)) |win_frame| {
+            _ = c.XUnmapWindow(self.display, win);
+            _ = c.XReparentWindow(self.display, win, self.root, 0, 0);
+            _ = c.XDestroyWindow(self.display, win_frame);
+            _ = self.frames.remove(win);
+        }
+
+        // 2. Save strut (if any) and clean up registry / graph
+        // (need to call get_strut, defined in events.zig, so we'll do it in events.zig)
+
+        // 3. Map the client directly
+        _ = c.XMapWindow(self.display, win);
+        _ = c.XFlush(self.display);
+
+        // 4. Remove from graph and registry
+        self.graph.remove_node(node);
+        _ = self.node_registry.remove(node_id);
+        _ = self.window_to_node_id.remove(win);
+
+        // 5. Recalculate layout
+        try self.resolve(&self.graph);
+        try self.rebuild_focus_edges();
+        try self.flush(&self.graph);
+    }
 
     pub fn exchange(self: *WM, a: *Node, b: *Node) !void {
         // 1. Find node IDs (needed for registry updates)
@@ -396,6 +494,7 @@ pub const WM = struct {
     pub fn run(self: *WM) !void {
         events_mod.wm_detected = false;
         _ = c.XSetErrorHandler(events_mod.on_wm_detected);
+        events_mod.announce_supported_hints(self);
         _ = c.XSelectInput(self.display, self.root, c.SubstructureRedirectMask | c.SubstructureNotifyMask | c.KeyPressMask |  c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
         _ = c.XSync(self.display, 0);
         if (events_mod.wm_detected) {
@@ -416,6 +515,7 @@ pub const WM = struct {
                 c.ButtonPress => events_mod.on_button_press(self, &e.xbutton),
                 c.MotionNotify => events_mod.on_motion_notify(self, &e.xmotion),
                 c.ButtonRelease => events_mod.on_button_release(self, &e.xbutton),
+                c.PropertyNotify => try events_mod.on_property_notify(self, &e.xproperty),
                 else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
             }
         }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c.zig").c;
 const WM = @import("core.zig").WM;
+const events_mod = @import("events.zig");
 const graph_mod = @import("graph");
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
@@ -144,6 +145,14 @@ pub fn set_focus(wm: *WM, node: *Node) void {
             },
             else => {},
         }
+    }
+    switch (node.content) {
+        .window => |win| {
+            events_mod.update_net_active_window(wm, win);
+        },
+        else => {
+            events_mod.update_net_active_window(wm, 0); // None
+        },
     }
 }
 
