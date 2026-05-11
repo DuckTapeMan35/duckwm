@@ -355,7 +355,6 @@ pub const WM = struct {
 
     pub fn focus(self: *WM, node: *Node) void { focus_mod.set_focus(self, node); }
 
-    // inside WM struct
     pub fn unmanage_as_dock(self: *WM, win: c.Window) !void {
         const node_id = self.window_to_node_id.get(win) orelse return;
         const node = self.node_registry.get(node_id) orelse return;
