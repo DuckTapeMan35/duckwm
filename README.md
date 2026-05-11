@@ -8,8 +8,6 @@ While not impossible to make duckwm as a wayland compositor the difficulty of th
 On X11 a window manager can focus (almost) entirely on managing windows (by handling X11 events and forwarding data to the display server), whereas a wayland compositor must do many other things on top of that (like actually compositing or implementing portals)
 The only way this project would be doable on wayland would be to build on top of river, but I wasn't sure it would even function so I took the path of least resistance.
 
-Also personally I'm very interested in the phoenix project
-
 # Graph based?
 
 Most window managers and compositors use one of 3 data structures to represent layouts (matrix, tree, stack)
@@ -44,8 +42,6 @@ In addition to being created for teaching lua was also made to be extremely easy
 - fennel
 
 Fennel is a lisp that transpiles into lua, the config is something that benefits from functional programming since it's very idiomatic, so fennel as a lisp has advantages to simplifying configs
-
-(The irony of hyprland moving to lua as the config is not lost on me)
 
 # Disadvantages
 
