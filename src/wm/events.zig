@@ -65,7 +65,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     if (wm.lua) |lua| {
         if (wm.on_map_ref != 0) {
-            _ = lua.rawGetIndex(ziglua.registry_index, wm.on_map_ref);
+            _ = lua.getIndexRaw(ziglua.registry_index, wm.on_map_ref);
             lua.pushInteger(@intCast(id));
             if (prev_focused) |f| {
                 var focused_id: ?u32 = null;
@@ -249,7 +249,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     if (dying_id) |id| {
         if (wm.lua) |lua| {
             if (wm.on_unmap_ref != 0) {
-                _ = lua.rawGetIndex(ziglua.registry_index, wm.on_unmap_ref);
+                _ = lua.getIndexRaw(ziglua.registry_index, wm.on_unmap_ref);
                 lua.pushInteger(@intCast(id));
                 lua.protectedCall(.{ .args = 1, .results = 0 }) catch |err| {
                     std.debug.print("Lua on_unmap callback error: {}\n", .{err});
@@ -610,7 +610,7 @@ pub fn on_key_press(wm: *WM, event: *c.XKeyEvent) void {
             },
             .lua => |ref| {
                 if (wm.lua) |lua| {
-                    _ = lua.rawGetIndex(ziglua.registry_index, ref);
+                    _ = lua.getIndexRaw(ziglua.registry_index, ref);
                     lua.protectedCall(.{ .args = 0, .results = 0 }) catch |err| {
                         std.debug.print("Lua keybinding error: {}\n", .{err});
                     };

@@ -62,8 +62,8 @@
         //    .lazy = false,
         //},
         .ziglua = .{
-            .url = "https://github.com/natecraddock/ziglua/archive/refs/heads/main.tar.gz",
-            .hash = "zlua-0.1.0-hGRpC298BQBZ-R18LaiSRcZyfX36wUrsb_MXJUOIIxog"
+            .url = "https://github.com/natecraddock/ziglua/archive/8f271c82baa5fc43aa02a72f6da020c2025d9436.tar.gz",
+            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
         },
     },
     // Specifies the set of files and directories that are included in this package.

@@ -23,7 +23,7 @@ pub fn toggle_floating(wm: *WM) !void {
         // Re-integrate into the tiling layout exactly like a new window
         if (wm.lua) |lua| {
             if (wm.on_map_ref != 0) {
-                _ = lua.rawGetIndex(ziglua.registry_index, wm.on_map_ref);
+                _ = lua.getIndexRaw(ziglua.registry_index, wm.on_map_ref);
                 lua.pushInteger(@intCast(id));
                 lua.pushNil(); // no "previously focused" hint needed here
                 lua.protectedCall(.{ .args = 2, .results = 0 }) catch |err|
@@ -38,7 +38,7 @@ pub fn toggle_floating(wm: *WM) !void {
         // Let Lua remove it from the grid and reflow the remaining windows
         if (wm.lua) |lua| {
             if (wm.on_unmap_ref != 0) {
-                _ = lua.rawGetIndex(ziglua.registry_index, wm.on_unmap_ref);
+                _ = lua.getIndexRaw(ziglua.registry_index, wm.on_unmap_ref);
                 lua.pushInteger(@intCast(id));
                 lua.protectedCall(.{ .args = 1, .results = 0 }) catch |err|
                     std.debug.print("toggle_floating on_unmap error: {}\n", .{err});
