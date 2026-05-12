@@ -26,6 +26,10 @@ pub fn on_x_error(_: ?*c.Display, e: [*c]c.XErrorEvent) callconv(.c) c_int {
 }
 
 pub fn on_configure_request(wm: *WM, req: *c.XConfigureRequestEvent) void {
+    var mask = req.value_mask;
+    if (wm.dock_struts.contains(req.window)) {
+        mask &= ~@as(c_ulong, c.CWX | c.CWY);
+    }
     var changes = c.XWindowChanges{
         .x = req.x,
         .y = req.y,
@@ -35,7 +39,33 @@ pub fn on_configure_request(wm: *WM, req: *c.XConfigureRequestEvent) void {
         .sibling = req.above,
         .stack_mode = req.detail,
     };
-    _ = c.XConfigureWindow(wm.display, req.window, @intCast(req.value_mask), &changes);
+    _ = c.XConfigureWindow(wm.display, req.window, @intCast(mask), &changes);
+}
+
+fn restack_docks(wm: *WM) void {
+    var top: i32 = 0;
+    var bottom: i32 = 0;
+    var left: i32 = 0;
+    var right: i32 = 0;
+    var it = wm.dock_struts.iterator();
+    while (it.next()) |entry| {
+        const win = entry.key_ptr.*;
+        const s   = entry.value_ptr.*;
+        if (s.top > 0) {
+            _ = c.XMoveWindow(wm.display, win, 0, top);
+            top += @intCast(s.top);
+        } else if (s.bottom > 0) {
+            bottom += @intCast(s.bottom);
+            _ = c.XMoveWindow(wm.display, win, 0, @as(i32, @intCast(wm.screen_height)) - bottom);
+        } else if (s.left > 0) {
+            _ = c.XMoveWindow(wm.display, win, left, 0);
+            left += @intCast(s.left);
+        } else if (s.right > 0) {
+            right += @intCast(s.right);
+            _ = c.XMoveWindow(wm.display, win, @as(i32, @intCast(wm.screen_width)) - right, 0);
+        }
+    }
+    _ = c.XFlush(wm.display);
 }
 
 pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
@@ -45,11 +75,36 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     if (is_dock_or_toolbar(wm.display, req.window)) {
         _ = c.XMapWindow(wm.display, req.window);
-        // Store strut (if any)
-        if (get_strut(wm.display, req.window)) |s| {
-            try wm.dock_struts.put(req.window, s);
+        const s = get_strut(wm.display, req.window) orelse Strut{ .left = 0, .right = 0, .top = 0, .bottom = 0 };
+
+        // Sum existing struts BEFORE inserting this dock
+        var existing_top: u32 = 0;
+        var existing_bottom: u32 = 0;
+        var existing_left: u32 = 0;
+        var existing_right: u32 = 0;
+        var strut_it = wm.dock_struts.valueIterator();
+        while (strut_it.next()) |es| {
+            existing_top    += es.top;
+            existing_bottom += es.bottom;
+            existing_left   += es.left;
+            existing_right  += es.right;
         }
-        // Recalculate layout with new work area
+
+        // Reposition the dock so it stacks after existing ones on the same side
+        if (s.top > 0) {
+            _ = c.XMoveWindow(wm.display, req.window, 0, @intCast(existing_top));
+        } else if (s.bottom > 0) {
+            const new_y: i32 = @intCast(wm.screen_height - existing_bottom - s.bottom);
+            _ = c.XMoveWindow(wm.display, req.window, 0, new_y);
+        } else if (s.left > 0) {
+            _ = c.XMoveWindow(wm.display, req.window, @intCast(existing_left), 0);
+        } else if (s.right > 0) {
+            const new_x: i32 = @intCast(wm.screen_width - existing_right - s.right);
+            _ = c.XMoveWindow(wm.display, req.window, new_x, 0);
+        }
+
+        try wm.dock_struts.put(req.window, s);
+        restack_docks(wm);
         try wm.resolve(&wm.graph);
         try wm.rebuild_focus_edges();
         try wm.flush(&wm.graph);
@@ -180,6 +235,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     // If it was a dock/toolbar, remove its strut and recalc
     if (wm.dock_struts.remove(win)) {
+        restack_docks(wm);
         try wm.resolve(&wm.graph);
         try wm.rebuild_focus_edges();
         try wm.flush(&wm.graph);
@@ -722,16 +778,15 @@ pub fn update_net_active_window(wm: *WM, active_window: c.Window) void {
         @ptrCast(&new_val), 1);
 }
 
-// Set _NET_SUPPORTED list on the root (call once after startup)
 pub fn announce_supported_hints(self: *WM) void {
     const supported = c.XInternAtom(self.display, "_NET_SUPPORTED", 0);
     const XA_ATOM = c.XInternAtom(self.display, "ATOM", 0);
-
     const atoms = [_]c.Atom{
         supported,
         c.XInternAtom(self.display, "_NET_ACTIVE_WINDOW", 0),
         c.XInternAtom(self.display, "_NET_WM_WINDOW_TYPE", 0),
         c.XInternAtom(self.display, "_NET_WM_STRUT_PARTIAL", 0),
+        c.XInternAtom(self.display, "_NET_WORKAREA", 0),
     };
     _ = c.XChangeProperty(self.display, self.root, supported,
         XA_ATOM, 32, c.PropModeReplace,

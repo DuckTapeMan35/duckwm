@@ -90,7 +90,7 @@ pub const WM = struct {
 
     pub fn create(allocator: std.mem.Allocator) !WM {
         const display = c.XOpenDisplay(null) orelse return error.CannotOpenDisplay;
-        return WM{
+        const wm =  WM{
             .display = display,
             .root = c.XDefaultRootWindow(display),
             .screen_width = @intCast(c.XDisplayWidth(display, 0)),
@@ -136,6 +136,18 @@ pub const WM = struct {
 
             .allocator = allocator,
         };
+
+        // Seed _NET_WORKAREA so bars that start before any MapRequest see a valid value
+        const workarea_atom = c.XInternAtom(display, "_NET_WORKAREA", 0);
+        const XA_CARDINAL = c.XInternAtom(display, "CARDINAL", 0);
+        const w: c_ulong = @intCast(c.XDisplayWidth(display, 0));
+        const h: c_ulong = @intCast(c.XDisplayHeight(display, 0));
+        const vals = [4]c_ulong{ 0, 0, w, h };
+        _ = c.XChangeProperty(display, c.XDefaultRootWindow(display),
+            workarea_atom, XA_CARDINAL, 32, c.PropModeReplace,
+            @ptrCast(&vals), 4);
+        
+        return wm;
     }
 
     pub fn deinit(self: *WM) void {
@@ -267,34 +279,52 @@ pub const WM = struct {
     }
 
     pub fn get_work_area(self: *WM) WorkArea {
-        var left: u32 = 0;
-        var right: u32 = 0;
-        var top: u32 = 0;
-        var bottom: u32 = 0;
+        var max_top: i32    = 0;
+        var max_bottom: i32 = 0;
+        var max_left: i32   = 0;
+        var max_right: i32  = 0;
 
-        var it = self.dock_struts.valueIterator();
-        while (it.next()) |s| {
-            if (s.left   > left)   left   = s.left;
-            if (s.right  > right)  right  = s.right;
-            if (s.top    > top)    top    = s.top;
-            if (s.bottom > bottom) bottom = s.bottom;
+        var it = self.dock_struts.iterator();
+        while (it.next()) |entry| {
+            const win = entry.key_ptr.*;
+            const s   = entry.value_ptr.*;
+            var attrs: c.XWindowAttributes = undefined;
+            if (c.XGetWindowAttributes(self.display, win, &attrs) == 0) continue;
+            const x: i32 = attrs.x;
+            const y: i32 = attrs.y;
+            const w: i32 = @intCast(attrs.width);
+            const h: i32 = @intCast(attrs.height);
+
+            if      (s.top    > 0) { if (y + h > max_top)    max_top    = y + h; }
+            else if (s.bottom > 0) { const fb = @as(i32, @intCast(self.screen_height)) - y;
+                                    if (fb > max_bottom) max_bottom = fb; }
+            else if (s.left   > 0) { if (x + w > max_left)   max_left   = x + w; }
+            else if (s.right  > 0) { const fr = @as(i32, @intCast(self.screen_width))  - x;
+                                    if (fr > max_right)  max_right  = fr; }
         }
 
-        const x: i32 = @intCast(left);
-        const y: i32 = @intCast(top);
-        const w = self.screen_width - left - right;
-        const h = self.screen_height - top - bottom;
-
         return WorkArea{
-            .x = x,
-            .y = y,
-            .width = w,
-            .height = h,
+            .x      = max_left,
+            .y      = max_top,
+            .width  = @intCast(@as(i32, @intCast(self.screen_width))  - max_left - max_right),
+            .height = @intCast(@as(i32, @intCast(self.screen_height)) - max_top  - max_bottom),
         };
     }
 
     pub fn resolve(self: *WM, g: *Graph) !void {
         const work = self.get_work_area();
+        for (g.nodes.items) |node| {
+            if (node.floating) continue;
+            switch (node.content) {
+                .empty => { // Only update "container/root" nodes
+                    node.x = 0;
+                    node.y = 0;
+                    node.width = work.width;
+                    node.height = work.height;
+                },
+                else => {},
+            }
+        }
 
         // Step 1: revert tiled nodes to relative coordinates
         for (g.nodes.items) |node| {
@@ -316,6 +346,18 @@ pub const WM = struct {
         // Step 4: remember the offset for the next call
         self.work_x = work.x;
         self.work_y = work.y;
+
+        const workarea_atom = c.XInternAtom(self.display, "_NET_WORKAREA", 0);
+        const XA_CARDINAL = c.XInternAtom(self.display, "CARDINAL", 0);
+        const vals = [4]c_ulong{
+            @intCast(work.x),
+            @intCast(work.y),
+            @intCast(work.width),
+            @intCast(work.height),
+        };
+        _ = c.XChangeProperty(self.display, self.root, workarea_atom,
+            XA_CARDINAL, 32, c.PropModeReplace,
+            @ptrCast(&vals), 4);
     }
 
     pub fn rebuild_focus_edges(self: *WM) !void { return focus_mod.rebuild_focus_edges(self); }
@@ -367,19 +409,16 @@ pub const WM = struct {
             _ = self.frames.remove(win);
         }
 
-        // 2. Save strut (if any) and clean up registry / graph
-        // (need to call get_strut, defined in events.zig, so we'll do it in events.zig)
-
-        // 3. Map the client directly
+        // 2. Map the client directly
         _ = c.XMapWindow(self.display, win);
         _ = c.XFlush(self.display);
 
-        // 4. Remove from graph and registry
+        // 3. Remove from graph and registry
         self.graph.remove_node(node);
         _ = self.node_registry.remove(node_id);
         _ = self.window_to_node_id.remove(win);
 
-        // 5. Recalculate layout
+        // 4. Recalculate layout
         try self.resolve(&self.graph);
         try self.rebuild_focus_edges();
         try self.flush(&self.graph);
