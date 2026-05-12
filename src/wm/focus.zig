@@ -6,7 +6,6 @@ const graph_mod = @import("graph");
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
-// ── Rebuild focus edges for ALL windows (tiling and floating) ──────────
 pub fn rebuild_focus_edges(wm: *WM) !void {
     wm.graph.focus_edges.clearRetainingCapacity();
     const nodes = wm.graph.nodes.items;
@@ -57,7 +56,6 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
     }
 }
 
-// ── Find the best focus target for a direction ─────────────────────────
 pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
     const focused = wm.focused orelse return null;
     const fx = focused.x; const fy = focused.y;
@@ -115,7 +113,6 @@ pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
     return best;
 }
 
-// ── Convenience wrappers ───────────────────────────────────────────────
 fn focus_via_edges(wm: *WM, comptime dir: Direction) void {
     if (find_focus_target(wm, dir)) |target| set_focus(wm, target);
 }
@@ -125,14 +122,15 @@ pub fn focus_right(wm: *WM) anyerror!void { focus_via_edges(wm, .Right); }
 pub fn focus_up(wm: *WM)    anyerror!void { focus_via_edges(wm, .Up); }
 pub fn focus_down(wm: *WM)  anyerror!void { focus_via_edges(wm, .Down); }
 
-// ── set_focus ─────────────────────────────────────────────────────────
 pub fn set_focus(wm: *WM, node: *Node) void {
     wm.focused = node;
     switch (node.content) {
         .window => |win| {
             _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
-            if (wm.frames.get(win)) |win_frame|
-                _ = c.XSetWindowBorder(wm.display, win_frame, 0xFFFFFF);
+            if (wm.frames.get(win)) |win_frame| {
+                const focused_color = node.border_color_focused orelse wm.default_border_color_focused;
+                _ = c.XSetWindowBorder(wm.display, win_frame, focused_color);
+            }
         },
         else => {},
     }
@@ -140,8 +138,10 @@ pub fn set_focus(wm: *WM, node: *Node) void {
         if (n == node) continue;
         switch (n.content) {
             .window => |win| {
-                if (wm.frames.get(win)) |win_frame|
-                    _ = c.XSetWindowBorder(wm.display, win_frame, 0xFF0000);
+                if (wm.frames.get(win)) |win_frame| {
+                    const unfocused_color = n.border_color_unfocused orelse wm.default_border_color_unfocused;
+                    _ = c.XSetWindowBorder(wm.display, win_frame, unfocused_color);
+                }
             },
             else => {},
         }
@@ -151,12 +151,11 @@ pub fn set_focus(wm: *WM, node: *Node) void {
             events_mod.update_net_active_window(wm, win);
         },
         else => {
-            events_mod.update_net_active_window(wm, 0); // None
+            events_mod.update_net_active_window(wm, 0);
         },
     }
 }
 
-// ── top_left_window ───────────────────────────────────────────────────
 pub fn top_left_window(wm: *WM) ?*Node {
     var best: ?*Node = null;
     for (wm.graph.nodes.items) |node| {

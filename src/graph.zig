@@ -75,6 +75,9 @@ pub const Node = struct {
 
     constraints: std.ArrayListUnmanaged(Constraint),
 
+    border_color_focused: ?u32, // ARGB
+    border_color_unfocused: ?u32,
+
     on_remove: ?ReparentStrategy,
     dead: bool,
 
@@ -89,6 +92,8 @@ pub const Node = struct {
             .on_remove = null,
             .dead = false,
             .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4), //TODO: make so no constrants don't allocate at all
+            .border_color_focused = null,
+            .border_color_unfocused = null,
         };
     }
 
@@ -207,7 +212,7 @@ pub const Graph = struct {
         node.height = height;
     }
 
-    pub fn solve(self: *Graph, screen_width: u32, screen_height: u32) !void {
+    pub fn solve(self: *Graph, screen_width: u32, screen_height: u32, border_width: i32) !void {
         // 1. Initialize all nodes to a default size if they have zero area
         const default_w = screen_width;
         const default_h = screen_height;
@@ -234,7 +239,7 @@ pub const Graph = struct {
                     switch (con) {
                         .equal_width, .equal_height => continue,
                         else => {
-                            if (apply_one(node, con)) changed = true;
+                            if (apply_one(node, con, border_width)) changed = true;
                         },
                     }
                 }
@@ -298,11 +303,12 @@ pub const Graph = struct {
         }
     }
 
-    fn apply_one(src: *Node, con: Constraint) bool {
+    fn apply_one(src: *Node, con: Constraint, border_width: i32) bool {
+        const gap = 2*border_width;
         switch (con) {
             .left_of => |dst| {
                 if (dst.floating) return false;
-                const new_x = src.x + @as(i32, @intCast(src.width));
+                const new_x = src.x + @as(i32, @intCast(src.width)) + gap;
                 if (dst.x != new_x) {
                     dst.x = new_x;
                     return true;
@@ -310,7 +316,7 @@ pub const Graph = struct {
             },
             .right_of => |dst| {
                 if (dst.floating) return false;
-                const new_x = dst.x + @as(i32, @intCast(dst.width));
+                const new_x = dst.x + @as(i32, @intCast(dst.width)) + gap;
                 if (src.x != new_x) {
                     src.x = new_x;
                     return true;
@@ -318,7 +324,7 @@ pub const Graph = struct {
             },
             .above => |dst| {
                 if (dst.floating) return false;
-                const new_y = src.y + @as(i32, @intCast(src.height));
+                const new_y = src.y + @as(i32, @intCast(src.height)) + gap;
                 if (dst.y != new_y) {
                     dst.y = new_y;
                     return true;
@@ -326,7 +332,7 @@ pub const Graph = struct {
             },
             .below => |dst| {
                 if (dst.floating) return false;
-                const new_y = dst.y + @as(i32, @intCast(dst.height));
+                const new_y = dst.y + @as(i32, @intCast(dst.height)) + gap;
                 if (src.y != new_y) {
                     src.y = new_y;
                     return true;
@@ -372,10 +378,23 @@ pub const Graph = struct {
             },
             .grid_cell => |g| {
                 if (g.container.floating) return false;
-                const cell_w = g.container.width / g.cols;
-                const cell_h = g.container.height / g.rows;
-                const new_x = g.container.x + @as(i32, @intCast(g.col * cell_w));
-                const new_y = g.container.y + @as(i32, @intCast(g.row * cell_h));
+
+                const gap_u32: u32 = @intCast(gap);
+
+                // Reserve space for gaps between columns and rows
+                const total_gap_w = gap_u32 * (g.cols - 1);
+                const total_gap_h = gap_u32 * (g.rows - 1);
+
+                // Cell outer width/height
+                const cell_w = (g.container.width - total_gap_w) / g.cols;
+                const cell_h = (g.container.height - total_gap_h) / g.rows;
+
+                const col_offset = g.col * (cell_w + gap_u32);
+                const row_offset = g.row * (cell_h + gap_u32);
+
+                const new_x = g.container.x + @as(i32, @intCast(col_offset));
+                const new_y = g.container.y + @as(i32, @intCast(row_offset));
+
                 if (src.x != new_x or src.y != new_y or src.width != cell_w or src.height != cell_h) {
                     src.x = new_x;
                     src.y = new_y;

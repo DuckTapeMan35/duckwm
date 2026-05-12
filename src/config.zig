@@ -408,6 +408,20 @@ fn l_set_geometry(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_get_node_geometry(lua: *Lua) i32 {
+    const id = @as(u32, @intCast(lua.checkInteger(1)));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    lua.createTable(0, 4);
+    lua.pushInteger(node.x);      lua.setField(-2, "x");
+    lua.pushInteger(node.y);      lua.setField(-2, "y");
+    lua.pushInteger(node.width);  lua.setField(-2, "width");
+    lua.pushInteger(node.height); lua.setField(-2, "height");
+    return 1;
+}
+
 fn l_get_all_windows(lua: *Lua) i32 {
     lua.newTable();
     var i: usize = 0;
@@ -492,6 +506,46 @@ fn l_toggle_floating(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_set_node_focused_border_color(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const color: u32 = @intCast(lua.checkInteger(2));
+    if (global_wm.get_node_by_id(id)) |node| {
+        node.border_color_focused = color;
+        return 0;
+    }
+    _ = lua.pushString("invalid node id");
+    return lua.raiseError();
+}
+
+fn l_set_node_unfocused_border_color(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const color: u32 = @intCast(lua.checkInteger(2));
+    if (global_wm.get_node_by_id(id)) |node| {
+        node.border_color_unfocused = color;
+        return 0;
+    }
+    _ = lua.pushString("invalid node id");
+    return lua.raiseError();
+}
+
+fn l_set_default_focus_border_color(lua: *Lua) i32 {
+    const color: u32 = @intCast(lua.checkInteger(1));
+    global_wm.default_border_color_focused = color;
+    return 0;
+}
+
+fn l_set_default_unfocused_border_color(lua: *Lua) i32 {
+    const color: u32 = @intCast(lua.checkInteger(1));
+    global_wm.default_border_color_unfocused = color;
+    return 0;
+}
+
+fn l_set_border_width(lua: *Lua) i32 {
+    const width: i32 = @intCast(lua.checkInteger(1));
+    global_wm.border_width = width;
+    return 0;
+}
+
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
     _ = lua.pushString(msg);
     lua.raiseError();
@@ -557,6 +611,12 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_set_resize_modifier));   lua.setField(-2, "set_resize_modifier");
     lua.pushFunction(ziglua.wrap(l_set_float_modifier));    lua.setField(-2, "set_float_modifier");
     lua.pushFunction(ziglua.wrap(l_toggle_floating));       lua.setField(-2, "toggle_floating");
+    lua.pushFunction(ziglua.wrap(l_set_node_focused_border_color));   lua.setField(-2, "set_node_focused_border_color");
+    lua.pushFunction(ziglua.wrap(l_set_node_unfocused_border_color)); lua.setField(-2, "set_node_unfocused_border_color");
+    lua.pushFunction(ziglua.wrap(l_set_default_focus_border_color));   lua.setField(-2, "set_default_focus_border_color");
+    lua.pushFunction(ziglua.wrap(l_set_default_unfocused_border_color)); lua.setField(-2, "set_default_unfocused_border_color");
+    lua.pushFunction(ziglua.wrap(l_get_node_geometry));       lua.setField(-2, "get_node_geometry");
+    lua.pushFunction(ziglua.wrap(l_set_border_width));        lua.setField(-2, "set_border_width");
 
     lua.setGlobal("wm");
 

@@ -76,6 +76,7 @@ pub const WM = struct {
     float_win_start_x: i32,
     float_win_start_y: i32,
 
+
     // data for the lua API and callbacks
     node_registry: std.AutoHashMap(u32, *Node),
     window_to_node_id: std.AutoHashMap(c.Window, u32),
@@ -84,6 +85,8 @@ pub const WM = struct {
     on_map_ref: i32,
     on_unmap_ref: i32,
     border_width: i32,
+    default_border_color_focused: u32,
+    default_border_color_unfocused: u32,
 
     // allocator
     allocator: std.mem.Allocator,
@@ -133,6 +136,8 @@ pub const WM = struct {
             .on_map_ref = 0,
             .on_unmap_ref = 0,
             .border_width = 2,
+            .default_border_color_focused = 0xFF0000,
+            .default_border_color_unfocused = 0x000000,
 
             .allocator = allocator,
         };
@@ -242,28 +247,44 @@ pub const WM = struct {
         _ = c.XSync(self.display, 0);
     }
 
-    pub fn frame(self: *WM, win: c.Window) !void {
-        const border_color = 0xFF0000;
-        const bg_color = 0x000000;
+    fn set_border_color(self: *WM, win_frame: c.Window, color: u32) void {
+        _ = c.XSetWindowBorder(self.display, win_frame, color);
+    }
 
-        var x_window_attributes: c.XWindowAttributes = undefined;
-        _ = c.XGetWindowAttributes(self.display, win, &x_window_attributes);
+    pub fn frame(self: *WM, win: c.Window, node: *Node) !void {
+        // Choose the correct border color based on whether this node is focused
+        const border_color = if (self.focused == node)
+            node.border_color_focused orelse self.default_border_color_focused
+        else
+            node.border_color_unfocused orelse self.default_border_color_unfocused;
+
+        const bg_color = border_color;
+
+        var attrs: c.XWindowAttributes = undefined;
+        _ = c.XGetWindowAttributes(self.display, win, &attrs);
 
         const win_frame = c.XCreateSimpleWindow(
             self.display,
             self.root,
-            x_window_attributes.x,
-            x_window_attributes.y,
-            @intCast(x_window_attributes.width),
-            @intCast(x_window_attributes.height),
+            attrs.x,
+            attrs.y,
+            @intCast(attrs.width),
+            @intCast(attrs.height),
             @intCast(self.border_width),
             border_color,
             bg_color,
         );
 
-        _ = c.XSelectInput(self.display, win_frame, c.SubstructureRedirectMask | c.SubstructureNotifyMask | c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
+        _ = c.XSelectInput(self.display, win_frame,
+            c.SubstructureRedirectMask | c.SubstructureNotifyMask |
+            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
         _ = c.XAddToSaveSet(self.display, win);
         _ = c.XReparentWindow(self.display, win, win_frame, self.border_width, self.border_width);
+        _ = c.XSetWindowBorderWidth(self.display, win, 0);
+        const client_w = if (node.width >= 2 * self.border_width) node.width - 2 * @as(u32, @intCast(self.border_width)) else 0;
+        const client_h = if (node.height >= 2 * self.border_width) node.height - 2 * @as(u32, @intCast(self.border_width)) else 0;
+        _ = c.XResizeWindow(self.display, win, client_w, client_h);
+        _ = c.XMoveWindow(self.display, win, self.border_width, self.border_width);
         _ = c.XMapWindow(self.display, win_frame);
 
         try self.frames.put(win, win_frame);
@@ -334,7 +355,7 @@ pub const WM = struct {
         }
 
         // Step 2: run the layout solver in the relative coordinate space
-        try g.solve(work.width, work.height);
+        try g.solve(work.width, work.height, self.border_width);
 
         // Step 3: apply the new offset to tiled nodes
         for (g.nodes.items) |node| {
