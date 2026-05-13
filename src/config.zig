@@ -9,6 +9,66 @@ const c = @import("c").c;
 
 var global_wm: *WM = undefined;
 
+fn create_workspace_node(lua: *Lua, call_on_map: bool) !u32 {
+    const sub = global_wm.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
+    sub.* = graph_mod.Graph.init(global_wm.allocator);
+
+    const pw = c.XCreateSimpleWindow(
+        global_wm.display, global_wm.root,
+        0, 0, 200, 150, 0, 0, 0x4488ff
+    );
+    var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+    wa.override_redirect = 1;
+    _ = c.XChangeWindowAttributes(global_wm.display, pw, c.CWOverrideRedirect, &wa);
+
+    const node = global_wm.current_graph.add_node(.{ .workspace = sub }) catch return error.OutOfMemory;
+    sub.parent_node = node;
+    node.preview_window = pw;
+    node.floating = false;
+
+    global_wm.frame(pw, node) catch return error.OutOfMemory;
+    _ = c.XMapWindow(global_wm.display, pw);
+    _ = c.XSelectInput(global_wm.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+
+    const id = global_wm.register_node(pw, node) catch return error.OutOfMemory;
+
+    if (call_on_map) {
+        if (global_wm.on_map_ref != 0) {
+            _ = lua.getIndexRaw(ziglua.registry_index, global_wm.on_map_ref);
+            lua.pushInteger(@intCast(id));
+            // previous focused node ID logic
+            if (global_wm.focused) |prev_focused| {
+                var in_current = false;
+                for (global_wm.current_graph.nodes.items) |n| {
+                    if (n == prev_focused) { in_current = true; break; }
+                }
+                if (in_current) {
+                    var focused_id: ?u32 = null;
+                    var it = global_wm.node_registry.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.* == prev_focused) {
+                            focused_id = entry.key_ptr.*;
+                            break;
+                        }
+                    }
+                    if (focused_id) |fid| lua.pushInteger(@intCast(fid)) else lua.pushNil();
+                } else {
+                    lua.pushNil();
+                }
+            } else {
+                lua.pushNil();
+            }
+            lua.protectedCall(.{ .args = 2, .results = 0 }) catch return error.LuaError;
+        }
+    }
+
+    global_wm.resolve(global_wm.current_graph) catch return error.OutOfMemory;
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+
+    return id;
+}
+
 fn l_set_resize_modifier(lua: *Lua) i32 {
     const mod: c_uint = @intCast(lua.checkInteger(1));
     if (global_wm.resize_modifier) |old|
@@ -232,7 +292,9 @@ fn l_remove_node(lua: *Lua) i32 {
         else => {},
     }
     _ = global_wm.node_registry.remove(id);
-    global_wm.current_graph.remove_node(node);
+    if (node.owner_graph) |graph| {
+        graph.remove_node(node);
+    }
     return 0;
 }
 
@@ -257,14 +319,28 @@ fn l_get_node_info(lua: *Lua) i32 {
 }
 
 fn l_create_root_node(lua: *Lua) i32 {
-    const node = global_wm.current_graph.add_node(.empty) catch return luaL_error_str(lua, "failed to create root node");
+    const node = global_wm.current_graph.add_node(.empty) catch
+        return luaL_error_str(lua, "failed to create root node");
     const w = @as(u32, @intCast(c.XDisplayWidth(@ptrCast(global_wm.display), 0)));
     const h = @as(u32, @intCast(c.XDisplayHeight(@ptrCast(global_wm.display), 0)));
     node.width = w;
     node.height = h;
     node.x = 0;
     node.y = 0;
-    lua.pushInteger(global_wm.register_node(0, node) catch return luaL_error_str(lua, "failed to register root node"));
+    // Root container is not a real window, so pass null.
+    const id = global_wm.register_node(null, node) catch
+        return luaL_error_str(lua, "failed to register root node");
+    lua.pushInteger(@intCast(id));
+    return 1;
+}
+
+fn l_create_empty_node(lua: *Lua) i32 {
+     const node = global_wm.current_graph.add_node(.empty) catch
+        return luaL_error_str(lua, "failed to create empty node");
+    // Empty nodes have no window; just register them.
+    const id = global_wm.register_node(null, node) catch
+        return luaL_error_str(lua, "failed to register empty node");
+    lua.pushInteger(@intCast(id));
     return 1;
 }
 
@@ -423,16 +499,16 @@ fn l_get_all_windows(lua: *Lua) i32 {
     lua.newTable();
     var i: usize = 0;
     for (global_wm.current_graph.nodes.items) |node| {
-        if (node.content == .window) {
-            var it = global_wm.window_to_node_id.iterator();
-            while (it.next()) |entry| {
-                if (entry.key_ptr.* == node.content.window) {
-                    lua.pushInteger(@intCast(entry.value_ptr.*));
-                    lua.setIndexRaw(-2, @intCast(i + 1));
-                    i += 1;
-                    break;
-                }
-            }
+        // Include real windows AND workspace-preview nodes.
+        const lookup_win: c.Window = switch (node.content) {
+            .window    => |w| w,
+            .workspace => node.preview_window orelse continue,
+            .empty     => continue,
+        };
+        if (global_wm.window_to_node_id.get(lookup_win)) |nid| {
+            lua.pushInteger(@intCast(nid));
+            lua.setIndexRaw(-2, @intCast(i + 1));
+            i += 1;
         }
     }
     return 1;
@@ -544,29 +620,169 @@ fn l_set_border_width(lua: *Lua) i32 {
 }
 
 fn l_create_nested_workspace(lua: *Lua) i32 {
-    // 1. Create a new Graph
-    const sub = global_wm.allocator.create(graph_mod.Graph) catch return luaL_error_str(lua, "OOM");
-    sub.* = graph_mod.Graph.init(global_wm.allocator);
-    // 2. Create a preview window
-    const pw = c.XCreateSimpleWindow(
-        global_wm.display, global_wm.root,
-        0, 0, 200, 150, 0, 0, 0x4488ff
-    );
-    // 3. Create a node in the current graph
-    const node = global_wm.current_graph.add_node(.{ .workspace = sub }) catch return luaL_error_str(lua, "OOM");
-    node.preview_window = pw;
-    node.floating = true;          // or false, you decide
-    node.x = 100; node.y = 100;   // default preview position
-    node.width = 200; node.height = 150;
-    // 4. Frame the preview window (reuse existing frame)
-    global_wm.frame(pw, node) catch return luaL_error_str(lua, "frame failed");
-    _ = c.XMapWindow(global_wm.display, pw);
-    _ = c.XSelectInput(global_wm.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
-    // 5. Register node
-    const id = global_wm.register_node(pw, node) catch return luaL_error_str(lua, "register failed");
-    // 6. Return node id
+    const id = create_workspace_node(lua, true) catch return luaL_error_str(lua, "create failed");
     lua.pushInteger(@intCast(id));
     return 1;
+}
+
+fn l_get_workspace(lua: *Lua) i32 {
+    const index: usize = @intCast(lua.checkInteger(1));
+    var workspaces: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0};
+    defer workspaces.deinit(global_wm.allocator);
+
+    for (global_wm.current_graph.nodes.items) |node| {
+        if (node.content == .workspace) {
+            workspaces.append(global_wm.allocator, node) catch {
+                _ = lua.pushString("wm.get_workspace: out of memory");
+                return lua.raiseError();
+            };
+        }
+    }
+
+    // Sort by node ID (creation order)
+    std.sort.heap(*graph_mod.Node, workspaces.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    if (index < 1 or index > workspaces.items.len) {
+        lua.pushNil();
+    } else {
+        const node = workspaces.items[index - 1];
+        const id = global_wm.get_id_for_node(node) orelse {
+            lua.pushNil();
+            return 1;
+        };
+        lua.pushInteger(@intCast(id));
+    }
+    return 1;
+}
+
+fn l_get_workspaces_at_level(lua: *Lua) i32 {
+    // Determine the graph that contains the workspace nodes we can switch to.
+    // If we are inside a nested workspace, use its parent graph;
+    // otherwise use the current (top‑level) graph itself.
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse global_wm.current_graph
+    else
+        global_wm.current_graph;
+
+    // Collect workspace nodes in that graph
+    var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0};
+    defer list.deinit(global_wm.allocator);
+
+    for (parent_graph.nodes.items) |node| {
+        if (node.content == .workspace) {
+            list.append(global_wm.allocator, node) catch {
+                _ = lua.pushString("out of memory");
+                return lua.raiseError();
+            };
+        }
+    }
+
+    // Sort by node ID (creation order)
+    std.sort.heap(*graph_mod.Node, list.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    lua.newTable();
+    for (list.items, 0..) |node, i| {
+        if (global_wm.get_id_for_node(node)) |nid| {
+            lua.pushInteger(@intCast(nid));
+            lua.setIndexRaw(-2, @intCast(i + 1));
+        }
+    }
+    return 1;
+}
+
+fn l_switch_to_workspace(lua: *Lua) i32 {
+    const index: usize = @intCast(lua.checkInteger(1));
+    if (index < 1) return 0;
+
+    // If we are inside a nested workspace, go back to its parent first.
+    if (global_wm.current_graph.parent_node != null) {
+        global_wm.leave_workspace() catch {
+            _ = lua.pushString("failed to leave workspace");
+            return lua.raiseError();
+        };
+    }
+
+    const graph = global_wm.current_graph;
+
+    // Collect existing workspace nodes, sorted by creation ID.
+    var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
+    defer list.deinit(global_wm.allocator);
+    for (graph.nodes.items) |node| {
+        if (node.content == .workspace) {
+            list.append(global_wm.allocator, node) catch {
+                _ = lua.pushString("out of memory");
+                return lua.raiseError();
+            };
+        }
+    }
+    std.sort.heap(*graph_mod.Node, list.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    // If the workspace already exists, switch to it.
+    if (index <= list.items.len) {
+        const target = list.items[index - 1];
+        global_wm.enter_workspace(target) catch {
+            _ = lua.pushString("enter_workspace failed");
+            return lua.raiseError();
+        };
+        return 0;
+    }
+
+    // Create missing workspace nodes up to the requested index.
+    var last_id: u32 = 0;
+    const needed = index - list.items.len;
+    for (0..needed) |_| {
+        const new_id = create_workspace_node(lua, true) catch {
+            _ = lua.pushString("failed to create workspace");
+            return lua.raiseError();
+        };
+        last_id = new_id;
+    }
+
+    // Enter the newly created workspace.
+    const target_node = global_wm.get_node_by_id(last_id) orelse {
+        _ = lua.pushString("internal error: newly created workspace not found");
+        return lua.raiseError();
+    };
+    global_wm.enter_workspace(target_node) catch {
+        _ = lua.pushString("enter_workspace failed");
+        return lua.raiseError();
+    };
+    return 0;
+}
+
+fn l_enter_workspace_by_id(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        _ = lua.pushString("invalid workspace id");
+        return lua.raiseError();
+    };
+    if (node.content != .workspace) {
+        _ = lua.pushString("node is not a workspace");
+        return lua.raiseError();
+    }
+    global_wm.enter_workspace(node) catch {
+        _ = lua.pushString("enter_workspace failed");
+        return lua.raiseError();
+    };
+    return 0;
 }
 
 fn l_enter_nested(lua: *Lua) i32 {
@@ -668,6 +884,11 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_enter_nested));           lua.setField(-2, "enter_nested");
     lua.pushFunction(ziglua.wrap(l_leave_nested));           lua.setField(-2, "leave_nested");
     lua.pushFunction(ziglua.wrap(l_switch_workspace));       lua.setField(-2, "switch_workspace");
+    lua.pushFunction(ziglua.wrap(l_get_workspace));        lua.setField(-2, "get_workspace");
+    lua.pushFunction(ziglua.wrap(l_create_empty_node)); lua.setField(-2, "create_empty_node");
+    lua.pushFunction(ziglua.wrap(l_get_workspaces_at_level)); lua.setField(-2, "get_workspaces_at_level");
+    lua.pushFunction(ziglua.wrap(l_enter_workspace_by_id));   lua.setField(-2, "enter_workspace_by_id");
+    lua.pushFunction(ziglua.wrap(l_switch_to_workspace));   lua.setField(-2, "switch_to_workspace");
 
     lua.setGlobal("wm");
 

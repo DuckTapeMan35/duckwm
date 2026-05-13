@@ -64,6 +64,7 @@ const FocusEdge = struct {
 
 pub const Node = struct {
     content: NodeContent,
+    owner_graph: ?*Graph,
     preview_window: ?c.Window, // non-null for workspace nodes
 
     x: i32,
@@ -83,6 +84,7 @@ pub const Node = struct {
     pub fn init(content: NodeContent, allocator: std.mem.Allocator) !Node {
         return .{
             .content = content,
+            .owner_graph = null,
             .preview_window = null,
             .x = 0,
             .y = 0,
@@ -107,12 +109,14 @@ pub const Graph = struct {
     focus_edges: std.ArrayListUnmanaged(FocusEdge),
     active_workspace: usize,
     allocator: std.mem.Allocator,
+    parent_node: ?*Node,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
         return .{
             .nodes = .{ .items = &.{}, .capacity = 0 },
             .focus_edges = .{ .items = &.{}, .capacity = 0 },
             .active_workspace = 0,
+            .parent_node = null,
             .allocator = allocator,
         };
     }
@@ -129,6 +133,7 @@ pub const Graph = struct {
     pub fn add_node(self: *Graph, content: NodeContent) !*Node {
         const node = try self.allocator.create(Node);
         node.* = try Node.init(content, self.allocator);
+        node.owner_graph = self;
         try self.nodes.append(self.allocator, node);
         return node;
     }
@@ -146,6 +151,7 @@ pub const Graph = struct {
     }
 
     pub fn remove_node(self: *Graph, node: *Node) void {
+        std.debug.assert(node.owner_graph == self);
         if (node.dead) return; // Already removed
         node.dead = true;
         // 1. Remove any constraint from any node that references `node`

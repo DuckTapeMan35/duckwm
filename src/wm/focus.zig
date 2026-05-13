@@ -24,7 +24,13 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
 
         for (nodes) |b| {
             if (a == b) continue;
-            switch (b.content) { .window => {}, else => continue }
+            if (a == b) continue;
+            const b_win = switch (b.content) {
+                .window => true,
+                .workspace => b.preview_window != null,
+                .empty => false,
+            };
+            if (!b_win) continue;
             const bx = b.x; const by = b.y;
             const bw: i32 = @intCast(b.width); const bh: i32 = @intCast(b.height);
             const b_center_x = bx + @divTrunc(bw, 2);
@@ -131,12 +137,14 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     wm.focused = node;
     const win = switch (node.content) {
         .window => |w| w,
-        .workspace => node.preview_window orelse return,  // no window → can't focus
+        .workspace => node.preview_window orelse return,
         .empty => return,
     };
+    // Focus the client window, not the frame
     _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
-    // Update frame borders
-    for (wm.graph.nodes.items) |n| {
+
+    // Update frame borders (correctly iterates over current_graph)
+    for (wm.current_graph.nodes.items) |n| {
         const n_win = switch (n.content) {
             .window => |w| w,
             .workspace => n.preview_window orelse continue,

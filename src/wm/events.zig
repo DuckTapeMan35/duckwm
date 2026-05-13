@@ -123,15 +123,28 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
             _ = lua.getIndexRaw(ziglua.registry_index, wm.on_map_ref);
             lua.pushInteger(@intCast(id));
             if (prev_focused) |f| {
-                var focused_id: ?u32 = null;
-                var it = wm.node_registry.iterator();
-                while (it.next()) |entry| {
-                    if (entry.value_ptr.* == f) {
-                        focused_id = entry.key_ptr.*;
-                        break;
-                    }
+                // Only pass the ID if the previously-focused node is actually in the
+                // current (possibly nested) graph.  If the user just entered an empty
+                // workspace, wm.focused still points at a node from the parent graph;
+                // passing that ID to Lua would make the config think there is already a
+                // sibling window to arrange against.
+                var in_current = false;
+                for (wm.current_graph.nodes.items) |n| {
+                    if (n == f) { in_current = true; break; }
                 }
-                if (focused_id) |fid| lua.pushInteger(@intCast(fid)) else lua.pushNil();
+                if (in_current) {
+                    var focused_id: ?u32 = null;
+                    var it = wm.node_registry.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.* == f) {
+                            focused_id = entry.key_ptr.*;
+                            break;
+                        }
+                    }
+                    if (focused_id) |fid| lua.pushInteger(@intCast(fid)) else lua.pushNil();
+                } else {
+                    lua.pushNil();
+                }
             } else {
                 lua.pushNil();
             }
@@ -164,7 +177,9 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         }
         _ = c.XMapWindow(wm.display, req.window);
         // Remove from graph and registry
-        wm.current_graph.remove_node(node_dock);
+        if (node_dock.owner_graph) |graph| {
+            graph.remove_node(node_dock);
+        }
         _ = wm.node_registry.remove(node_id);
         _ = wm.window_to_node_id.remove(req.window);
         // Relayout
@@ -301,7 +316,13 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Notify Lua BEFORE removing the node
+    // Remove from registry EARLY so Lua callback sees the window as gone.
+    if (dying_id) |id| {
+        _ = wm.node_registry.remove(id);
+        _ = wm.window_to_node_id.remove(win);
+    }
+
+    // Now notify Lua – the ID is still valid, but window is no longer listed.
     if (dying_id) |id| {
         if (wm.lua) |lua| {
             if (wm.on_unmap_ref != 0) {
@@ -335,7 +356,9 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     // Remove from graph - this frees the node pointer
     if (dying) |d| {
-        wm.current_graph.remove_node(d);
+        if (d.owner_graph) |g| {
+            g.remove_node(d);
+        }
     }
 
     // Update focus - never touch the freed node

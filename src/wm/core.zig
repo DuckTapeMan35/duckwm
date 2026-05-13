@@ -195,10 +195,12 @@ pub const WM = struct {
         _ = c.XCloseDisplay(self.display);
     }
 
-    pub fn register_node(self: *WM, win: c.Window, node: *Node) !u32 {
+    pub fn register_node(self: *WM, win: ?c.Window, node: *Node) !u32 {
         const id = self.next_node_id;
         try self.node_registry.put(id, node);
-        try self.window_to_node_id.put(win, id);
+        if (win) |w| {
+            try self.window_to_node_id.put(w, id);
+        }
         self.next_node_id += 1;
         return id;
     }
@@ -424,6 +426,14 @@ pub const WM = struct {
 
     pub fn toggle_floating(self: *WM) !void { return float_mod.toggle_floating(self); }
 
+    pub fn get_id_for_node(self: *WM, node: *Node) ?u32 {
+        var it = self.node_registry.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.* == node) return entry.key_ptr.*;
+        }
+        return null;
+    }
+
     pub fn flush(self: *WM, g: *Graph) !void {
         for (g.nodes.items) |node| {
             switch (node.content) {
@@ -441,6 +451,10 @@ pub const WM = struct {
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {
                             _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
+                            const border_2x = 2 * @as(u32, @intCast(self.border_width));
+                            const client_w = if (node.width >= border_2x) node.width - border_2x else 0;
+                            const client_h = if (node.height >= border_2x) node.height - border_2x else 0;
+                            _ = c.XResizeWindow(self.display, pw, client_w, client_h);
                         }
                     }
                 },
@@ -470,7 +484,9 @@ pub const WM = struct {
         _ = c.XFlush(self.display);
 
         // 3. Remove from graph and registry
-        self.current_graph.remove_node(node);
+        if (node.owner_graph) |graph| {
+            graph.remove_node(node);
+        }
         _ = self.node_registry.remove(node_id);
         _ = self.window_to_node_id.remove(win);
 
@@ -567,12 +583,16 @@ pub const WM = struct {
         self.current_graph = sub;
         // show new graph
         show_graph_frames(self, sub);
-        // re‑layout and refresh
+        // re-layout and refresh
         try self.resolve(sub);
         try self.rebuild_focus_edges();
         try self.flush(sub);
         // focus something
-        if (focus_mod.top_left_window(self)) |n| self.focus(n);
+        if (focus_mod.top_left_window(self)) |n| {
+            self.focus(n);
+        } else {
+            self.focused = null;
+        }
     }
 
     pub fn leave_workspace(self: *WM) !void {
@@ -638,8 +658,73 @@ pub const WM = struct {
                 ev.xclient.data.l[1] = c.CurrentTime;
                 _ = c.XSendEvent(self.display, win, 0, c.NoEventMask, &ev);
             },
+            .workspace => {
+                 // If we're currently inside this workspace, leave it first.
+                if (node.content.workspace == self.current_graph) {
+                    try self.leave_workspace();
+                }
+                // Destroying the preview window will trigger DestroyNotify,
+                // which handles all cleanup (frame, Lua callback, graph removal).
+                if (node.preview_window) |pw| {
+                    _ = c.XDestroyWindow(self.display, pw);
+                }
+            },
             else => {},
         }
+    }
+
+    /// Create the very first workspace node in the top-level graph.
+    /// This is called once in `run` so that Super+Ctrl+1 always works
+    /// and the screen is never empty.
+    pub fn create_initial_workspace(self: *WM) !void {
+        // 1. Ensure the top-level graph has a root container that fills the screen.
+        const root_node = self.current_graph.add_node(.empty) catch return error.OutOfMemory;
+        root_node.width = self.screen_width;
+        root_node.height = self.screen_height;
+        root_node.x = 0;
+        root_node.y = 0;
+        _ = self.register_node(null, root_node) catch return error.OutOfMemory;
+
+        // 2. Create the workspace sub‑graph and its preview window.
+        const sub = self.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
+        sub.* = graph_mod.Graph.init(self.allocator);
+
+        const pw = c.XCreateSimpleWindow(
+            self.display, self.root,
+            0, 0, 200, 150, 0, 0, 0x4488ff
+        );
+        var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        wa.override_redirect = 1;
+        _ = c.XChangeWindowAttributes(self.display, pw, c.CWOverrideRedirect, &wa);
+
+        const ws_node = self.current_graph.add_node(.{ .workspace = sub }) catch return error.OutOfMemory;
+        sub.parent_node = ws_node;
+        ws_node.preview_window = pw;
+        ws_node.floating = false;
+
+        // 3. Frame and map the preview.
+        self.frame(pw, ws_node) catch return error.OutOfMemory;
+        _ = c.XMapWindow(self.display, pw);
+        _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+
+        // 4. Register the workspace node (keyed on the preview window).
+        _ = self.register_node(pw, ws_node) catch return error.OutOfMemory;
+
+        // 5. Constrain the workspace node to fill the entire root container.
+        const g = graph_mod.Constraint{ .grid_cell = .{
+            .col = 0,
+            .row = 0,
+            .cols = 1,
+            .rows = 1,
+            .container = root_node,
+        } };
+        self.current_graph.add_constraint(ws_node, g) catch return error.OutOfMemory;
+
+        // 6. Apply the constraint and enter the workspace.
+        self.resolve(self.current_graph) catch return error.OutOfMemory;
+        self.rebuild_focus_edges() catch {};
+        self.flush(self.current_graph) catch {};
+        try self.enter_workspace(ws_node);
     }
 
     pub fn run(self: *WM) !void {
@@ -654,6 +739,7 @@ pub const WM = struct {
             return;
         }
         _ = c.XSetErrorHandler(events_mod.on_x_error);
+        try self.create_initial_workspace();
         while (true) {
             var e: c.XEvent = undefined;
             _ = c.XNextEvent(self.display, &e);
