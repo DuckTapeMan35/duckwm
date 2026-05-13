@@ -112,6 +112,8 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     }
 
     const node = try wm.current_graph.add_node(.{ .window = req.window });
+    node.width  = @intCast(attrs.width);
+    node.height = @intCast(attrs.height);
     try wm.frame(req.window, node);
     _ = c.XMapWindow(wm.display, req.window);
     const prev_focused = wm.focused;
@@ -606,9 +608,8 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
             // Apply geometry changes to frame and client
             if (wm.frames.get(client)) |frame| {
                 _ = c.XMoveResizeWindow(wm.display, frame, focused.x, focused.y, focused.width, focused.height);
-                const border_2x = 2 * @as(u32, @intCast(wm.border_width));
-                const client_w = if (focused.width >= 2 * wm.border_width) focused.width - border_2x else 0;
-                const client_h = if (focused.height >= 2 * wm.border_width) focused.height - border_2x else 0;
+                const client_w = focused.width;
+                const client_h = focused.height;
                 _ = c.XResizeWindow(wm.display, client, client_w, client_h);
             }
             return;

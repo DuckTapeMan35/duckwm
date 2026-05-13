@@ -310,12 +310,9 @@ pub const WM = struct {
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
             c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
         _ = c.XAddToSaveSet(self.display, win);
-        _ = c.XReparentWindow(self.display, win, win_frame, self.border_width, self.border_width);
+        _ = c.XReparentWindow(self.display, win, win_frame, 0, 0);
         _ = c.XSetWindowBorderWidth(self.display, win, 0);
-        const client_w = if (node.width >= 2 * self.border_width) node.width - 2 * @as(u32, @intCast(self.border_width)) else 0;
-        const client_h = if (node.height >= 2 * self.border_width) node.height - 2 * @as(u32, @intCast(self.border_width)) else 0;
-        _ = c.XResizeWindow(self.display, win, client_w, client_h);
-        _ = c.XMoveWindow(self.display, win, self.border_width, self.border_width);
+        _ = c.XMoveResizeWindow(self.display, win, self.border_width, self.border_width, node.width, node.height);
         _ = c.XMapWindow(self.display, win_frame);
 
         try self.frames.put(win, win_frame);
@@ -365,6 +362,11 @@ pub const WM = struct {
 
     pub fn resolve(self: *WM, g: *Graph) !void {
         const work = self.get_work_area();
+        const bw = self.border_width;
+
+        const available_w = @as(u32, @intCast(@max(0, @as(i32, @intCast(work.width)) - (2 * bw))));
+        const available_h = @as(u32, @intCast(@max(0, @as(i32, @intCast(work.height)) - (2 * bw))));
+
         for (g.nodes.items) |node| {
             if (node.floating) continue;
             switch (node.content) {
@@ -386,7 +388,7 @@ pub const WM = struct {
         }
 
         // Step 2: run the layout solver in the relative coordinate space
-        try g.solve(work.width, work.height, self.border_width);
+        try g.solve(available_w, available_h, self.border_width);
 
         // Step 3: apply the new offset to tiled nodes
         for (g.nodes.items) |node| {
@@ -441,20 +443,16 @@ pub const WM = struct {
                     if (node.floating) continue;
                     if (self.frames.get(win)) |win_frame| {
                         _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
-                        const border_2x = 2 * @as(u32, @intCast(self.border_width));
-                        const client_w = if (node.width >= 2*self.border_width) node.width - border_2x else 0;
-                        const client_h = if (node.height >= 2*self.border_width) node.height - border_2x else 0;
-                        _ = c.XResizeWindow(self.display, win, client_w, client_h);
+                        _ = c.XMoveResizeWindow(self.display, win, 0, 0, node.width, node.height);
+                        _ = c.XSetWindowBorderWidth(self.display, win, 0);
                     }
                 },
                 .workspace => {
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {
                             _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
-                            const border_2x = 2 * @as(u32, @intCast(self.border_width));
-                            const client_w = if (node.width >= border_2x) node.width - border_2x else 0;
-                            const client_h = if (node.height >= border_2x) node.height - border_2x else 0;
-                            _ = c.XResizeWindow(self.display, pw, client_w, client_h);
+                            _ = c.XMoveResizeWindow(self.display, pw, 0, 0, node.width, node.height);
+                            _ = c.XResizeWindow(self.display, pw, node.width, node.height);
                         }
                     }
                 },
@@ -531,9 +529,8 @@ pub const WM = struct {
                 .window => |win| {
                     if (self.frames.get(win)) |win_frame| {
                         _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
-                        const border_2x = 2 * @as(u32, @intCast(self.border_width));
-                        const client_w = if (node.width >= 2*self.border_width) node.width - border_2x else 0;
-                        const client_h = if (node.height >= 2*self.border_width) node.height - border_2x else 0;
+                        const client_w = node.width;
+                        const client_h = node.height;
                         _ = c.XResizeWindow(self.display, win, client_w, client_h);
                     }
                 },
