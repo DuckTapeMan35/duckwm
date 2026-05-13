@@ -5,10 +5,7 @@ const wm_mod = @import("wm");
 const WM = wm_mod.WM;
 const graph_mod = @import("graph");
 const Constraint = graph_mod.Constraint;
-const c = @cImport({
-    @cInclude("X11/Xlib.h");
-    @cInclude("stdlib.h");
-});
+const c = @import("c").c;
 
 var global_wm: *WM = undefined;
 
@@ -235,7 +232,7 @@ fn l_remove_node(lua: *Lua) i32 {
         else => {},
     }
     _ = global_wm.node_registry.remove(id);
-    global_wm.graph.remove_node(node);
+    global_wm.current_graph.remove_node(node);
     return 0;
 }
 
@@ -260,7 +257,7 @@ fn l_get_node_info(lua: *Lua) i32 {
 }
 
 fn l_create_root_node(lua: *Lua) i32 {
-    const node = global_wm.graph.add_node(.empty) catch return luaL_error_str(lua, "failed to create root node");
+    const node = global_wm.current_graph.add_node(.empty) catch return luaL_error_str(lua, "failed to create root node");
     const w = @as(u32, @intCast(c.XDisplayWidth(@ptrCast(global_wm.display), 0)));
     const h = @as(u32, @intCast(c.XDisplayHeight(@ptrCast(global_wm.display), 0)));
     node.width = w;
@@ -281,7 +278,7 @@ fn l_left_of(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .left_of = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .left_of = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -290,7 +287,7 @@ fn l_right_of(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .right_of = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .right_of = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -299,7 +296,7 @@ fn l_above(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .above = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .above = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -308,7 +305,7 @@ fn l_below(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .below = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .below = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -317,7 +314,7 @@ fn l_align_left(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .align_left = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .align_left = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -326,7 +323,7 @@ fn l_align_top(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .align_top = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .align_top = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -335,7 +332,7 @@ fn l_align_right(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .align_right = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .align_right = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -344,7 +341,7 @@ fn l_align_bottom(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .align_bottom = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .align_bottom = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -353,7 +350,7 @@ fn l_equal_width(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .equal_width = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .equal_width = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -362,7 +359,7 @@ fn l_equal_height(lua: *Lua) i32 {
     const b_id = @as(u32, @intCast(lua.checkInteger(2)));
     const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
     const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
-    global_wm.graph.add_constraint(a, .{ .equal_height = b }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(a, .{ .equal_height = b }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -370,7 +367,7 @@ fn l_fixed_ratio(lua: *Lua) i32 {
     const id = @as(u32, @intCast(lua.checkInteger(1)));
     const ratio = lua.checkNumber(2);
     const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
-    global_wm.graph.add_constraint(node, .{ .fixed_ratio = @floatCast(ratio) }) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(node, .{ .fixed_ratio = @floatCast(ratio) }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -390,7 +387,7 @@ fn l_grid_cell(lua: *Lua) i32 {
         .rows = @intCast(rows),
         .container = container,
     } };
-    global_wm.graph.add_constraint(node, g) catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(node, g) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -425,7 +422,7 @@ fn l_get_node_geometry(lua: *Lua) i32 {
 fn l_get_all_windows(lua: *Lua) i32 {
     lua.newTable();
     var i: usize = 0;
-    for (global_wm.graph.nodes.items) |node| {
+    for (global_wm.current_graph.nodes.items) |node| {
         if (node.content == .window) {
             var it = global_wm.window_to_node_id.iterator();
             while (it.next()) |entry| {
@@ -546,6 +543,56 @@ fn l_set_border_width(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_create_nested_workspace(lua: *Lua) i32 {
+    // 1. Create a new Graph
+    const sub = global_wm.allocator.create(graph_mod.Graph) catch return luaL_error_str(lua, "OOM");
+    sub.* = graph_mod.Graph.init(global_wm.allocator);
+    // 2. Create a preview window
+    const pw = c.XCreateSimpleWindow(
+        global_wm.display, global_wm.root,
+        0, 0, 200, 150, 0, 0, 0x4488ff
+    );
+    // 3. Create a node in the current graph
+    const node = global_wm.current_graph.add_node(.{ .workspace = sub }) catch return luaL_error_str(lua, "OOM");
+    node.preview_window = pw;
+    node.floating = true;          // or false, you decide
+    node.x = 100; node.y = 100;   // default preview position
+    node.width = 200; node.height = 150;
+    // 4. Frame the preview window (reuse existing frame)
+    global_wm.frame(pw, node) catch return luaL_error_str(lua, "frame failed");
+    _ = c.XMapWindow(global_wm.display, pw);
+    _ = c.XSelectInput(global_wm.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+    // 5. Register node
+    const id = global_wm.register_node(pw, node) catch return luaL_error_str(lua, "register failed");
+    // 6. Return node id
+    lua.pushInteger(@intCast(id));
+    return 1;
+}
+
+fn l_enter_nested(lua: *Lua) i32 {
+    _ = lua;
+    if (global_wm.focused) |node| {
+        if (node.content == .workspace) {
+            global_wm.enter_workspace(node) catch return luaL_error_str(global_wm.lua.?, "enter failed");
+        }
+    }
+    return 0;
+}
+
+fn l_leave_nested(lua: *Lua) i32 {
+    _ = lua;
+    global_wm.leave_workspace() catch return luaL_error_str(global_wm.lua.?, "leave failed");
+    return 0;
+}
+
+fn l_switch_workspace(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
+    if (node.content != .workspace) return luaL_error_str(lua, "not a workspace");
+    global_wm.enter_workspace(node) catch return luaL_error_str(lua, "enter failed");
+    return 0;
+}
+
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
     _ = lua.pushString(msg);
     lua.raiseError();
@@ -617,6 +664,10 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_set_default_unfocused_border_color)); lua.setField(-2, "set_default_unfocused_border_color");
     lua.pushFunction(ziglua.wrap(l_get_node_geometry));       lua.setField(-2, "get_node_geometry");
     lua.pushFunction(ziglua.wrap(l_set_border_width));        lua.setField(-2, "set_border_width");
+    lua.pushFunction(ziglua.wrap(l_create_nested_workspace)); lua.setField(-2, "create_nested_workspace");
+    lua.pushFunction(ziglua.wrap(l_enter_nested));           lua.setField(-2, "enter_nested");
+    lua.pushFunction(ziglua.wrap(l_leave_nested));           lua.setField(-2, "leave_nested");
+    lua.pushFunction(ziglua.wrap(l_switch_workspace));       lua.setField(-2, "switch_workspace");
 
     lua.setGlobal("wm");
 

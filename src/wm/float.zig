@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const WM = @import("core.zig").WM;
 const graph_mod = @import("graph");
 const ziglua = @import("ziglua");
@@ -46,13 +46,13 @@ pub fn toggle_floating(wm: *WM) !void {
         }
     }
 
-    try wm.resolve(&wm.graph);
+    try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
-    try wm.flush(&wm.graph);
+    try wm.flush(wm.current_graph);
 }
 
 pub fn raise_floating_windows(wm: *WM) void {
-    for (wm.graph.nodes.items) |node| {
+    for (wm.current_graph.nodes.items) |node| {
         switch (node.content) {
             .window => |win| {
                 if (!node.floating) continue;

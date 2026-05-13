@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const WM = @import("core.zig").WM;
 const events_mod = @import("events.zig");
 const graph_mod = @import("graph");
@@ -7,11 +7,16 @@ const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
 pub fn rebuild_focus_edges(wm: *WM) !void {
-    wm.graph.focus_edges.clearRetainingCapacity();
-    const nodes = wm.graph.nodes.items;
+    wm.current_graph.focus_edges.clearRetainingCapacity();
+    const nodes = wm.current_graph.nodes.items;
 
     for (nodes) |a| {
-        switch (a.content) { .window => {}, else => continue }
+                const a_win = switch (a.content) {
+            .window => true,
+            .workspace => a.preview_window != null,
+            .empty => false,
+        };
+        if (!a_win) continue;
         const ax = a.x; const ay = a.y;
         const aw: i32 = @intCast(a.width); const ah: i32 = @intCast(a.height);
         const a_center_x = ax + @divTrunc(aw, 2);
@@ -33,10 +38,10 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
                 const v_overlap = @min(ay + ah, by + bh) - @max(ay, by);
                 if (v_overlap > 0) {
                     if (dx < 0)  {
-                        try wm.graph.add_focus_edge(a, b, .Left);
+                        try wm.current_graph.add_focus_edge(a, b, .Left);
                     }
                     else if (dx > 0) {
-                        try wm.graph.add_focus_edge(a, b, .Right);
+                        try wm.current_graph.add_focus_edge(a, b, .Right);
                     }
                 }
             }
@@ -45,10 +50,10 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
                 const h_overlap = @min(ax + aw, bx + bw) - @max(ax, bx);
                 if (h_overlap > 0) {
                     if (dy < 0)  {
-                        try wm.graph.add_focus_edge(a, b, .Up);
+                        try wm.current_graph.add_focus_edge(a, b, .Up);
                     }
                     else if (dy > 0)  {
-                        try wm.graph.add_focus_edge(a, b, .Down);
+                        try wm.current_graph.add_focus_edge(a, b, .Down);
                     }
                 }
             }
@@ -66,7 +71,7 @@ pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
     var best_primary: i32 = std.math.maxInt(i32);
     var best_overlap: i32 = 0;
 
-    for (wm.graph.focus_edges.items) |edge| {
+    for (wm.current_graph.focus_edges.items) |edge| {
         if (edge.from != focused) continue;
         if (edge.dir != dir) continue;
 
@@ -124,42 +129,39 @@ pub fn focus_down(wm: *WM)  anyerror!void { focus_via_edges(wm, .Down); }
 
 pub fn set_focus(wm: *WM, node: *Node) void {
     wm.focused = node;
-    switch (node.content) {
-        .window => |win| {
-            _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
-            if (wm.frames.get(win)) |win_frame| {
-                const focused_color = node.border_color_focused orelse wm.default_border_color_focused;
-                _ = c.XSetWindowBorder(wm.display, win_frame, focused_color);
-            }
-        },
-        else => {},
-    }
+    const win = switch (node.content) {
+        .window => |w| w,
+        .workspace => node.preview_window orelse return,  // no window → can't focus
+        .empty => return,
+    };
+    _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
+    // Update frame borders
     for (wm.graph.nodes.items) |n| {
-        if (n == node) continue;
-        switch (n.content) {
-            .window => |win| {
-                if (wm.frames.get(win)) |win_frame| {
-                    const unfocused_color = n.border_color_unfocused orelse wm.default_border_color_unfocused;
-                    _ = c.XSetWindowBorder(wm.display, win_frame, unfocused_color);
-                }
-            },
-            else => {},
+        const n_win = switch (n.content) {
+            .window => |w| w,
+            .workspace => n.preview_window orelse continue,
+            .empty => continue,
+        };
+        if (wm.frames.get(n_win)) |frame| {
+            const color = if (n == node)
+                n.border_color_focused orelse wm.default_border_color_focused
+            else
+                n.border_color_unfocused orelse wm.default_border_color_unfocused;
+            _ = c.XSetWindowBorder(wm.display, frame, color);
         }
     }
-    switch (node.content) {
-        .window => |win| {
-            events_mod.update_net_active_window(wm, win);
-        },
-        else => {
-            events_mod.update_net_active_window(wm, 0);
-        },
-    }
+    events_mod.update_net_active_window(wm, win);
 }
 
 pub fn top_left_window(wm: *WM) ?*Node {
     var best: ?*Node = null;
-    for (wm.graph.nodes.items) |node| {
-        switch (node.content) { .window => {}, else => continue }
+    for (wm.current_graph.nodes.items) |node| {
+        const node_win = switch (node.content) {
+            .window => true,
+            .workspace => node.preview_window != null,
+            .empty => false,
+        };
+        if (!node_win) continue;
         const b = best orelse { best = node; continue; };
         if (node.y < b.y or (node.y == b.y and node.x < b.x)) best = node;
     }

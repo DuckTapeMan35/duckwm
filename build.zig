@@ -41,6 +41,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const c_mod = b.addModule("c", .{
+        .root_source_file = b.path("src/c.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const ziglua = b.dependency("ziglua", .{
         .target = target,
         .optimize = optimize,
@@ -66,11 +72,14 @@ pub fn build(b: *std.Build) void {
     mod.addImport("config", config_mod);
     wm_mod.addImport("graph", graph_mod);
     wm_mod.addImport("ziglua", ziglua.module("zlua"));
+    wm_mod.addImport("c", c_mod);
     wm_mod.linkSystemLibrary("X11", .{});
     config_mod.addImport("ziglua", ziglua.module("zlua"));
     config_mod.addImport("wm", wm_mod);
     config_mod.addImport("graph", graph_mod);
+    config_mod.addImport("c", c_mod);
     config_mod.linkSystemLibrary("X11", .{});
+    graph_mod.addImport("c", c_mod);
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function

@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const WM = @import("core.zig").WM;
 const graph_mod = @import("graph");
 const Node = graph_mod.Node;
@@ -13,7 +13,7 @@ const gap_from_wm: fn(*WM) i32 = struct {
 
 pub fn find_edge_at(wm: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct { is_vertical: bool, coordinate: i32 } {
     const gap = gap_from_wm(wm);
-    const nodes = wm.graph.nodes.items;
+    const nodes = wm.current_graph.nodes.items;
     for (nodes) |a| {
         switch (a.content) { .window => {}, else => continue }
         for (nodes) |b| {
@@ -50,7 +50,7 @@ pub fn find_edge_at(wm: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct {
 
 pub fn find_corner_at(wm: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct { v_edge: i32, h_edge: i32 } {
     const gap = gap_from_wm(wm);
-    const nodes = wm.graph.nodes.items;
+    const nodes = wm.current_graph.nodes.items;
     for (nodes) |a| {
         if (a.content != .window) continue;
         for (nodes) |b| {
@@ -92,7 +92,7 @@ pub fn find_corner_at(wm: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct
 pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
     const gap = gap_from_wm(wm);
     // first pass: check limits
-    for (wm.graph.nodes.items) |node| {
+    for (wm.current_graph.nodes.items) |node| {
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (right == edge_x) { // left of the edge
             if (@as(i32, @intCast(node.width)) + delta < 2*wm.border_width + 10) return false;
@@ -102,7 +102,7 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
     }
     // second pass: apply changes
     var changed = false;
-    for (wm.graph.nodes.items) |node| {
+    for (wm.current_graph.nodes.items) |node| {
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (right == edge_x) {
             node.width = @intCast(@as(i32, @intCast(node.width)) + delta);
@@ -113,14 +113,14 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
             changed = true;
         }
     }
-    if (changed) try wm.flush(&wm.graph);
+    if (changed) try wm.flush(wm.current_graph);
     return changed;
 }
 
 pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32) !bool {
     const gap = gap_from_wm(wm);
     // first pass: check limits
-    for (wm.graph.nodes.items) |node| {
+    for (wm.current_graph.nodes.items) |node| {
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (bottom == edge_y) { // above the edge
             if (@as(i32, @intCast(node.height)) + delta < 2*wm.border_width + 10) return false;
@@ -130,7 +130,7 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32) !bool {
     }
     // second pass: apply changes
     var changed = false;
-    for (wm.graph.nodes.items) |node| {
+    for (wm.current_graph.nodes.items) |node| {
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (bottom == edge_y) {
             node.height = @intCast(@as(i32, @intCast(node.height)) + delta);
@@ -141,7 +141,7 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32) !bool {
             changed = true;
         }
     }
-    if (changed) try wm.flush(&wm.graph);
+    if (changed) try wm.flush(wm.current_graph);
     return changed;
 }
 

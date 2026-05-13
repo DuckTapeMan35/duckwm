@@ -1,4 +1,4 @@
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const std = @import("std");
 const graph_mod = @import("graph");
 const ziglua = @import("ziglua");
@@ -52,6 +52,9 @@ pub const WM = struct {
     // internal representation of the layout
     graph: Graph,
     focused: ?*Node,
+    current_graph: *Graph,
+    workspace_stack: std.ArrayListUnmanaged(*Graph),
+    workspace_previews: std.AutoHashMap(c.Window, void),
 
     // resize state fields
     resize_modifier: ?c_uint,
@@ -93,6 +96,7 @@ pub const WM = struct {
 
     pub fn create(allocator: std.mem.Allocator) !WM {
         const display = c.XOpenDisplay(null) orelse return error.CannotOpenDisplay;
+        const graph = Graph.init(allocator);
         const wm =  WM{
             .display = display,
             .root = c.XDefaultRootWindow(display),
@@ -105,8 +109,11 @@ pub const WM = struct {
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
-            .graph = Graph.init(allocator),
+            .graph = graph,
             .focused = null,
+            .workspace_stack = .{ .items = &.{}, .capacity = 0},
+            .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
+            .current_graph = undefined,
 
             .resize_modifier = null,
             .edge_resizing = false,
@@ -136,8 +143,8 @@ pub const WM = struct {
             .on_map_ref = 0,
             .on_unmap_ref = 0,
             .border_width = 2,
-            .default_border_color_focused = 0xFF0000,
-            .default_border_color_unfocused = 0x000000,
+            .default_border_color_focused = 0x0000FF,
+            .default_border_color_unfocused = 0x00FF00,
 
             .allocator = allocator,
         };
@@ -155,10 +162,32 @@ pub const WM = struct {
         return wm;
     }
 
+    fn free_graph(self: *WM, g: *Graph) void {
+        for (g.nodes.items) |node| {
+            if (node.content == .workspace) {
+                self.free_graph(node.content.workspace);
+            }
+            // destroy any preview window
+            if (node.preview_window) |pw| {
+                if (self.frames.get(pw)) |win_frame| {
+                    _ = c.XDestroyWindow(self.display, win_frame);
+                    _ = self.frames.remove(pw);
+                }
+                _ = c.XDestroyWindow(self.display, pw);
+            }
+            node.deinit(self.allocator);
+            self.allocator.destroy(node);
+        }
+        g.nodes.deinit(self.allocator);
+        g.focus_edges.deinit(self.allocator);
+    }
+
     pub fn deinit(self: *WM) void {
         if (self.lua) |lua| lua.deinit();
         self.keybinds.deinit();
-        self.graph.deinit();
+        self.free_graph(&self.graph);
+        self.workspace_stack.deinit(self.allocator);
+        self.workspace_previews.deinit();
         self.frames.deinit();
         self.node_registry.deinit();
         self.window_to_node_id.deinit();
@@ -408,7 +437,13 @@ pub const WM = struct {
                         _ = c.XResizeWindow(self.display, win, client_w, client_h);
                     }
                 },
-                .workspace => |child_graph| try self.flush(child_graph),
+                .workspace => {
+                    if (node.preview_window) |pw| {
+                        if (self.frames.get(pw)) |win_frame| {
+                            _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
+                        }
+                    }
+                },
                 .empty => {},
             }
         }
@@ -435,14 +470,14 @@ pub const WM = struct {
         _ = c.XFlush(self.display);
 
         // 3. Remove from graph and registry
-        self.graph.remove_node(node);
+        self.current_graph.remove_node(node);
         _ = self.node_registry.remove(node_id);
         _ = self.window_to_node_id.remove(win);
 
         // 4. Recalculate layout
-        try self.resolve(&self.graph);
+        try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
-        try self.flush(&self.graph);
+        try self.flush(self.current_graph);
     }
 
     pub fn exchange(self: *WM, a: *Node, b: *Node) !void {
@@ -491,7 +526,64 @@ pub const WM = struct {
         }
 
         // 7. Flush (also raises floating windows and redraws borders)
-        try self.flush(&self.graph);
+        try self.flush(self.current_graph);
+    }
+
+    fn hide_graph_frames(self: *WM, g: *Graph) void {
+        for (g.nodes.items) |node| {
+            const win = switch (node.content) {
+                .window => |w| w,
+                .workspace => if (node.preview_window) |pw| pw else continue,
+                .empty => continue,
+            };
+            if (self.frames.get(win)) |win_frame| {
+                _ = c.XUnmapWindow(self.display, win_frame);
+            }
+        }
+    }
+
+    fn show_graph_frames(self: *WM, g: *Graph) void {
+        for (g.nodes.items) |node| {
+            const win = switch (node.content) {
+                .window => |w| w,
+                .workspace => if (node.preview_window) |pw| pw else continue,
+                .empty => continue,
+            };
+            if (self.frames.get(win)) |win_frame| {
+                _ = c.XMapWindow(self.display, win_frame);
+            }
+        }
+    }
+
+    pub fn enter_workspace(self: *WM, node: *Node) !void {
+        if (node.content != .workspace) return error.NotWorkspace;
+        const sub = node.content.workspace;
+
+        // hide current graph
+        hide_graph_frames(self, self.current_graph);
+        // push parent
+        try self.workspace_stack.append(self.allocator, self.current_graph);
+        // switch
+        self.current_graph = sub;
+        // show new graph
+        show_graph_frames(self, sub);
+        // re‑layout and refresh
+        try self.resolve(sub);
+        try self.rebuild_focus_edges();
+        try self.flush(sub);
+        // focus something
+        if (focus_mod.top_left_window(self)) |n| self.focus(n);
+    }
+
+    pub fn leave_workspace(self: *WM) !void {
+        if (self.workspace_stack.items.len == 0) return;
+        hide_graph_frames(self, self.current_graph);
+        self.current_graph = self.workspace_stack.pop().?;
+        show_graph_frames(self, self.current_graph);
+        try self.resolve(self.current_graph);
+        try self.rebuild_focus_edges();
+        try self.flush(self.current_graph);
+        if (focus_mod.top_left_window(self)) |n| self.focus(n);
     }
 
     pub fn exchange_left(self: *WM) anyerror!void {
@@ -551,6 +643,7 @@ pub const WM = struct {
     }
 
     pub fn run(self: *WM) !void {
+        self.current_graph = &self.graph;
         events_mod.wm_detected = false;
         _ = c.XSetErrorHandler(events_mod.on_wm_detected);
         events_mod.announce_supported_hints(self);

@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const WM = @import("core.zig").WM;
 const graph_mod = @import("graph");
 const ziglua = @import("ziglua");
@@ -105,13 +105,13 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
         try wm.dock_struts.put(req.window, s);
         restack_docks(wm);
-        try wm.resolve(&wm.graph);
+        try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
-        try wm.flush(&wm.graph);
+        try wm.flush(wm.current_graph);
         return;
     }
 
-    const node = try wm.graph.add_node(.{ .window = req.window });
+    const node = try wm.current_graph.add_node(.{ .window = req.window });
     try wm.frame(req.window, node);
     _ = c.XMapWindow(wm.display, req.window);
     const prev_focused = wm.focused;
@@ -139,9 +139,9 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         }
     }
 
-    try wm.resolve(&wm.graph);
+    try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
-    try wm.flush(&wm.graph);
+    try wm.flush(wm.current_graph);
 
     // Listen for future property changes on client
     _ = c.XSelectInput(wm.display, req.window, c.PropertyChangeMask);
@@ -164,13 +164,13 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         }
         _ = c.XMapWindow(wm.display, req.window);
         // Remove from graph and registry
-        wm.graph.remove_node(node_dock);
+        wm.current_graph.remove_node(node_dock);
         _ = wm.node_registry.remove(node_id);
         _ = wm.window_to_node_id.remove(req.window);
         // Relayout
-        try wm.resolve(&wm.graph);
+        try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
-        try wm.flush(&wm.graph);
+        try wm.flush(wm.current_graph);
         return;
     }
 }
@@ -199,13 +199,13 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
                 }
                 _ = c.XMapWindow(wm.display, win);
 
-                wm.graph.remove_node(node);
+                wm.current_graph.remove_node(node);
                 _ = wm.node_registry.remove(node_id);
                 _ = wm.window_to_node_id.remove(win);
 
-                try wm.resolve(&wm.graph);
+                try wm.resolve(wm.current_graph);
                 try wm.rebuild_focus_edges();
-                try wm.flush(&wm.graph);
+                try wm.flush(wm.current_graph);
             }
         }
     }
@@ -218,9 +218,9 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
             } else {
                 _ = wm.dock_struts.remove(win);
             }
-            try wm.resolve(&wm.graph);
+            try wm.resolve(wm.current_graph);
             try wm.rebuild_focus_edges();
-            try wm.flush(&wm.graph);
+            try wm.flush(wm.current_graph);
         }
     }
 }
@@ -236,9 +236,9 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     // If it was a dock/toolbar, remove its strut and recalc
     if (wm.dock_struts.remove(win)) {
         restack_docks(wm);
-        try wm.resolve(&wm.graph);
+        try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
-        try wm.flush(&wm.graph);
+        try wm.flush(wm.current_graph);
         return;  // no frame cleanup needed
     }
 
@@ -279,7 +279,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (focused_is_dying) {
         // Try focus edges first
-        for (wm.graph.focus_edges.items) |edge| {
+        for (wm.current_graph.focus_edges.items) |edge| {
             if (edge.from == dying and edge.to != dying) {
                 next_focus = edge.to;
                 break;
@@ -288,7 +288,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         
         // Fallback: any other window node
         if (next_focus == null) {
-            for (wm.graph.nodes.items) |node| {
+            for (wm.current_graph.nodes.items) |node| {
                 if (node == dying) continue;
                 switch (node.content) {
                     .window => {
@@ -335,7 +335,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     // Remove from graph - this frees the node pointer
     if (dying) |d| {
-        wm.graph.remove_node(d);
+        wm.current_graph.remove_node(d);
     }
 
     // Update focus - never touch the freed node
@@ -352,13 +352,13 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     }
 
     // Only rebuild if we still have nodes
-    if (wm.graph.nodes.items.len > 0) {
-        try wm.resolve(&wm.graph);
+    if (wm.current_graph.nodes.items.len > 0) {
+        try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
-        try wm.flush(&wm.graph);
+        try wm.flush(wm.current_graph);
     } else {
         wm.reset_root_state();
-        wm.graph.focus_edges.clearRetainingCapacity();
+        wm.current_graph.focus_edges.clearRetainingCapacity();
     }
 }
 

@@ -1,8 +1,6 @@
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("X11/Xlib.h");
-});
+const c = @import("c").c;
 
 const NodeContent = union(enum) {
     window: c.Window,
@@ -66,6 +64,7 @@ const FocusEdge = struct {
 
 pub const Node = struct {
     content: NodeContent,
+    preview_window: ?c.Window, // non-null for workspace nodes
 
     x: i32,
     y: i32,
@@ -84,6 +83,7 @@ pub const Node = struct {
     pub fn init(content: NodeContent, allocator: std.mem.Allocator) !Node {
         return .{
             .content = content,
+            .preview_window = null,
             .x = 0,
             .y = 0,
             .width = 0,
@@ -133,6 +133,18 @@ pub const Graph = struct {
         return node;
     }
 
+    fn free_subgraph(self: *Graph, sub: *Graph) void {
+        for (sub.nodes.items) |child| {
+            if (child.content == .workspace) {
+                self.free_subgraph(child.content.workspace);
+            }
+            child.deinit(self.allocator);
+            self.allocator.destroy(child);
+        }
+        sub.nodes.deinit(self.allocator);
+        sub.focus_edges.deinit(self.allocator);
+    }
+
     pub fn remove_node(self: *Graph, node: *Node) void {
         if (node.dead) return; // Already removed
         node.dead = true;
@@ -157,6 +169,9 @@ pub const Graph = struct {
         }
 
         // 3. Deinit and free node
+        if (node.content == .workspace) {
+            self.free_subgraph(node.content.workspace);
+        }
         node.deinit(self.allocator);
         self.allocator.destroy(node);
     }
