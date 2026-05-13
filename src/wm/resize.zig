@@ -15,10 +15,8 @@ pub fn find_edge_at(wm: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct {
     const gap = gap_from_wm(wm);
     const nodes = wm.current_graph.nodes.items;
     for (nodes) |a| {
-        switch (a.content) { .window => {}, else => continue }
         for (nodes) |b| {
             if (a == b) continue;
-            switch (b.content) { .window => {}, else => continue }
 
             // Vertical edge: a's right edge + gap == b's left edge
             const a_right = a.x + @as(i32, @intCast(a.width));
@@ -52,27 +50,24 @@ pub fn find_corner_at(wm: *WM, root_x: i32, root_y: i32, threshold: i32) ?struct
     const gap = gap_from_wm(wm);
     const nodes = wm.current_graph.nodes.items;
     for (nodes) |a| {
-        if (a.content != .window) continue;
         for (nodes) |b| {
             if (a == b) continue;
-            if (b.content != .window) continue;
             const a_right = a.x + @as(i32, @intCast(a.width));
             if (a_right + gap == b.x) {
                 const vy_start = @max(a.y, b.y);
                 const vy_end = @min(a.y + @as(i32, @intCast(a.height)), b.y + @as(i32, @intCast(b.height)));
                 if (vy_end > vy_start) {
                     for (nodes) |cw| {
-                        if (cw.content != .window) continue;
                         for (nodes) |dw| {
                             if (cw == dw) continue;
-                            if (dw.content != .window) continue;
                             const cw_bottom = cw.y + @as(i32, @intCast(cw.height));
                             if (cw_bottom + gap == dw.y) {
                                 const hx_start = @max(cw.x, dw.x);
                                 const hx_end = @min(cw.x + @as(i32, @intCast(cw.width)), dw.x + @as(i32, @intCast(dw.width)));
                                 if (hx_end > hx_start) {
-                                    if (cw_bottom >= vy_start and cw_bottom <= vy_end and
-                                        a_right >= hx_start and a_right <= hx_end)
+                                    const epsilon = 2*@as(i32, @intCast(wm.border_width));
+                                    if (cw_bottom >= vy_start - epsilon and cw_bottom <= vy_end + epsilon and
+                                        a_right >= hx_start - epsilon and a_right <= hx_end + epsilon)
                                     {
                                         if (@abs(root_x - a_right) <= threshold and @abs(root_y - cw_bottom) <= threshold) {
                                             return .{ .v_edge = a_right, .h_edge = cw_bottom };

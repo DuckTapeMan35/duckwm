@@ -447,6 +447,22 @@ fn l_fixed_ratio(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_fixed_width(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const w:  u32 = @intCast(lua.checkInteger(2));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    global_wm.current_graph.add_constraint(node, .{ .fixed_width = w }) catch {};
+    return 0;
+}
+
+fn l_fixed_height(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const h:  u32 = @intCast(lua.checkInteger(2));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    global_wm.current_graph.add_constraint(node, .{ .fixed_height = h }) catch {};
+    return 0;
+}
+
 fn l_grid_cell(lua: *Lua) i32 {
     const id           = @as(u32, @intCast(lua.checkInteger(1)));
     const col          = lua.checkInteger(2);
@@ -454,6 +470,15 @@ fn l_grid_cell(lua: *Lua) i32 {
     const cols         = lua.checkInteger(4);
     const rows         = lua.checkInteger(5);
     const container_id = @as(u32, @intCast(lua.checkInteger(6)));
+    // Validate grid parameters
+    if (cols <= 0 or rows <= 0) {
+        _ = lua.pushString("grid_cell: cols and rows must be positive");
+        return lua.raiseError();
+    }
+    if (col < 0 or row < 0 or col >= cols or row >= rows) {
+        _ = lua.pushString("grid_cell: cell (col,row) out of range");
+        return lua.raiseError();
+    }
     const node      = global_wm.get_node_by_id(id)           orelse return luaL_error_str(lua, "invalid node");
     const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
     const g = Constraint{ .grid_cell = .{
@@ -467,18 +492,60 @@ fn l_grid_cell(lua: *Lua) i32 {
     return 0;
 }
 
-fn l_set_geometry(lua: *Lua) i32 {
-    const id     = @as(u32, @intCast(lua.checkInteger(1)));
-    const x      = @as(i32, @intCast(lua.checkInteger(2)));
-    const y      = @as(i32, @intCast(lua.checkInteger(3)));
-    const width  = @as(u32, @intCast(lua.checkInteger(4)));
-    const height = @as(u32, @intCast(lua.checkInteger(5)));
-    const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
-    node.x = x;
-    node.y = y;
-    node.width = width;
-    node.height = height;
+fn l_create_container(lua: *Lua) i32 {
+    const node = global_wm.current_graph.add_node(.empty) catch
+        return luaL_error_str(lua, "failed to create container");
+    const id = global_wm.register_node(null, node) catch
+        return luaL_error_str(lua, "failed to register container");
+    lua.pushInteger(@intCast(id));
+    return 1;
+}
+
+fn l_reparent(lua: *Lua) i32 {
+    const child_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const parent_id = @as(u32, @intCast(lua.checkInteger(2)));
+
+    const child = global_wm.get_node_by_id(child_id) orelse
+        return luaL_error_str(lua, "invalid child node");
+    const parent = global_wm.get_node_by_id(parent_id) orelse
+        return luaL_error_str(lua, "invalid parent node");
+
+    // Remove any existing grid_cell constraint from the child
+    var i: usize = 0;
+    while (i < child.constraints.items.len) {
+        if (child.constraints.items[i] == .grid_cell) {
+            _ = child.constraints.swapRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+
+    // Add a new constraint that makes the child fill the entire parent
+    const g = Constraint{ .grid_cell = .{
+        .col = 0,
+        .row = 0,
+        .cols = 1,
+        .rows = 1,
+        .container = parent,
+    } };
+    global_wm.current_graph.add_constraint(child, g) catch
+        return luaL_error_str(lua, "out of memory");
+
     return 0;
+}
+
+fn l_get_container_of(lua: *Lua) i32 {
+    const child_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const child = global_wm.get_node_by_id(child_id) orelse
+        return luaL_error_str(lua, "invalid node");
+    if (graph_mod.get_container(child)) |container| {
+        if (global_wm.get_id_for_node(container)) |id| {
+            lua.pushInteger(@intCast(id));
+            return 1;
+        }
+    }
+    lua.pushNil();
+    return 1;
 }
 
 fn l_get_node_geometry(lua: *Lua) i32 {
@@ -861,8 +928,9 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_equal_width));           lua.setField(-2, "equal_width");
     lua.pushFunction(ziglua.wrap(l_equal_height));          lua.setField(-2, "equal_height");
     lua.pushFunction(ziglua.wrap(l_fixed_ratio));           lua.setField(-2, "fixed_ratio");
+    lua.pushFunction(ziglua.wrap(l_fixed_width));           lua.setField(-2, "fixed_width");
+    lua.pushFunction(ziglua.wrap(l_fixed_height));          lua.setField(-2, "fixed_height");
     lua.pushFunction(ziglua.wrap(l_grid_cell));             lua.setField(-2, "grid_cell");
-    lua.pushFunction(ziglua.wrap(l_set_geometry));          lua.setField(-2, "set_geometry");
     lua.pushFunction(ziglua.wrap(l_get_all_windows));       lua.setField(-2, "get_all_windows");
     lua.pushFunction(ziglua.wrap(l_screen_width));          lua.setField(-2, "screen_width");
     lua.pushFunction(ziglua.wrap(l_screen_height));         lua.setField(-2, "screen_height");
@@ -889,6 +957,9 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_get_workspaces_at_level)); lua.setField(-2, "get_workspaces_at_level");
     lua.pushFunction(ziglua.wrap(l_enter_workspace_by_id));   lua.setField(-2, "enter_workspace_by_id");
     lua.pushFunction(ziglua.wrap(l_switch_to_workspace));   lua.setField(-2, "switch_to_workspace");
+    lua.pushFunction(ziglua.wrap(l_create_container));  lua.setField(-2, "create_container");
+    lua.pushFunction(ziglua.wrap(l_reparent));          lua.setField(-2, "reparent");
+    lua.pushFunction(ziglua.wrap(l_get_container_of));  lua.setField(-2, "get_container_of");
 
     lua.setGlobal("wm");
 

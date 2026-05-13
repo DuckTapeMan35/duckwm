@@ -28,6 +28,10 @@ pub const Constraint = union(enum) {
     // Aspect ratio (self)
     fixed_ratio: f32,      // width / height == ratio
 
+    // fixed size (self)
+    fixed_width:  u32,
+    fixed_height: u32,
+
     // Grid placement (requires container)
     grid_cell: struct {
         col: u32,
@@ -103,6 +107,15 @@ pub const Node = struct {
         self.constraints.deinit(allocator);
     }
 };
+
+pub fn get_container(node: *Node) ?*Node {
+    for (node.constraints.items) |con| {
+        if (con == .grid_cell) {
+            return con.grid_cell.container;
+        }
+    }
+    return null;
+}
 
 pub const Graph = struct {
     nodes: std.ArrayListUnmanaged(*Node),
@@ -196,6 +209,8 @@ pub const Graph = struct {
             .equal_height => |other| other == node,
             .fixed_ratio => false,
             .grid_cell => |g| g.container == node,
+            .fixed_width => false,
+            .fixed_height => false,
         };
     }
 
@@ -224,13 +239,6 @@ pub const Graph = struct {
                 break;
             }
         }
-    }
-
-    pub fn modify_geometry(_: *Graph, node: *Node, x: i32, y: i32, width: u32, height: u32) void {
-        node.x = x;
-        node.y = y;
-        node.width = width;
-        node.height = height;
     }
 
     pub fn solve(self: *Graph, screen_width: u32, screen_height: u32, border_width: i32) !void {
@@ -399,19 +407,27 @@ pub const Graph = struct {
             },
             .grid_cell => |g| {
                 if (g.container.floating) return false;
+                if (g.cols == 0 or g.rows == 0) return false;
 
                 const gap_u32: u32 = @intCast(gap);
-
-                // Reserve space for gaps between columns and rows
                 const total_gap_w = gap_u32 * (g.cols - 1);
                 const total_gap_h = gap_u32 * (g.rows - 1);
 
-                // Cell outer width/height
-                const cell_w = (g.container.width - total_gap_w) / g.cols;
-                const cell_h = (g.container.height - total_gap_h) / g.rows;
+                const base_cell_w = (g.container.width  -| total_gap_w) / g.cols;
+                const base_cell_h = (g.container.height -| total_gap_h) / g.rows;
 
-                const col_offset = g.col * (cell_w + gap_u32);
-                const row_offset = g.row * (cell_h + gap_u32);
+                const col_offset = g.col * (base_cell_w + gap_u32);
+                const row_offset = g.row * (base_cell_h + gap_u32);
+
+                const cell_w = if (g.col == g.cols - 1)
+                    g.container.width  -| col_offset
+                else
+                    base_cell_w;
+
+                const cell_h = if (g.row == g.rows - 1)
+                    g.container.height -| row_offset
+                else
+                    base_cell_h;
 
                 const new_x = g.container.x + @as(i32, @intCast(col_offset));
                 const new_y = g.container.y + @as(i32, @intCast(row_offset));
@@ -421,6 +437,18 @@ pub const Graph = struct {
                     src.y = new_y;
                     src.width = cell_w;
                     src.height = cell_h;
+                    return true;
+                }
+            },
+            .fixed_width => |w| {
+                if (src.width != w) {
+                    src.width = w;
+                    return true;
+                }
+            },
+            .fixed_height => |h| {
+                if (src.height != h) {
+                    src.height = h;
                     return true;
                 }
             },

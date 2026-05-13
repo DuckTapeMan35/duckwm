@@ -15,6 +15,7 @@ fn mainImpl() !void {
     defer _ = da.deinit();
     
     var wm = try WM.create(da.allocator());
+    wm.current_graph = &wm.graph;
     defer wm.deinit();
     
     try Config.load(&wm);
