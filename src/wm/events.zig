@@ -150,7 +150,12 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
             } else {
                 lua.pushNil();
             }
-            try lua.protectedCall(.{ .args = 2, .results = 0 });
+            lua.protectedCall(.{ .args = 2, .results = 0 }) catch |err| {
+                if (lua.toString(-1)) |msg| {
+                    std.debug.print("Lua on_map error: {s}\n", .{msg});
+                } else |_| {}
+                return err;
+            };
         }
     }
 
@@ -247,27 +252,39 @@ pub fn on_create_notify(_: *WM, event: *c.XCreateWindowEvent) void {
         .{ event.window, event.parent, event.x, event.y, event.width, event.height });
 }
 
-// Sweep dead containers: .empty nodes with no constraints that nothing references
 fn sweep_dead_containers(wm: *WM) void {
     const g = wm.current_graph;
     var i: usize = 0;
     while (i < g.nodes.items.len) {
         const node = g.nodes.items[i];
-        // Only collect unconstrained empty nodes that aren't the ws_root anchor
         if (node.content == .empty and node.constraints.items.len == 0) {
-            // Check nothing else references this node
+            // Don't sweep nodes still in the registry (e.g. anchor containers)
+            var in_registry = false;
+            var rit = wm.node_registry.iterator();
+            while (rit.next()) |entry| {
+                if (entry.value_ptr.* == node) {
+                    in_registry = true;
+                    break;
+                }
+            }
+            if (in_registry) {
+                i += 1;
+                continue;
+            }
+
             var referenced = false;
             for (g.nodes.items) |other| {
                 for (other.constraints.items) |con| {
-                    if (con == .grid_cell and con.grid_cell.container == node) {
-                        referenced = true;
-                        break;
-                    }
+                    const refs = switch (con) {
+                        .grid_cell     => |gc| gc.container == node,
+                        .grid_cell_abs => |gc| gc.container == node,
+                        else           => false,
+                    };
+                    if (refs) { referenced = true; break; }
                 }
                 if (referenced) break;
             }
             if (!referenced) {
-                // Remove from registry
                 var it = wm.node_registry.iterator();
                 while (it.next()) |entry| {
                     if (entry.value_ptr.* == node) {

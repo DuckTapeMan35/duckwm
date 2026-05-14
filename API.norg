@@ -112,6 +112,15 @@ categories: api reference
    - *rows* `integer`
    - *container* `integer`
 
+** `wm.grid_cell_abs(id: integer, x: integer, y: integer, w: integer, h: integer, container: integer)`
+   Place node in a grid cell of container, with absolute pixel sizes.
+   - *id* `integer`
+   - *x* `integer`
+   - *y* `integer`
+   - *w* `integer`
+   - *h* `integer`
+   - *container* `integer`
+
 ** `wm.left_of(a: integer, b: integer)`
    Constrain: a.right == b.left.
    - *a* `integer`
@@ -176,6 +185,16 @@ categories: api reference
    Constrain: height == h.
    - *id* `integer`
    - *h* `integer`
+
+** `wm.fixed_x(id: integer, x: integer)`
+   Constrain: x == x.
+   - *id* `integer`
+   - *x* `integer`
+
+** `wm.fixed_y(id: integer, y: integer)`
+   Constrain: y == y.
+   - *id* `integer`
+   - *y* `integer`
 
 ** `wm.reparent(child: integer, parent: integer)`
    Make child fill parent via a 1x1 grid_cell constraint.

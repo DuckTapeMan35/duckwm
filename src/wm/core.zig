@@ -362,11 +362,6 @@ pub const WM = struct {
 
     pub fn resolve(self: *WM, g: *Graph) !void {
         const work = self.get_work_area();
-        const bw = self.border_width;
-
-        const available_w = @as(u32, @intCast(@max(0, @as(i32, @intCast(work.width)) - (2 * bw))));
-        const available_h = @as(u32, @intCast(@max(0, @as(i32, @intCast(work.height)) - (2 * bw))));
-
         for (g.nodes.items) |node| {
             if (node.floating) continue;
             switch (node.content) {
@@ -388,7 +383,7 @@ pub const WM = struct {
         }
 
         // Step 2: run the layout solver in the relative coordinate space
-        try g.solve(available_w, available_h, self.border_width);
+        try g.solve(work.width, work.height);
 
         // Step 3: apply the new offset to tiled nodes
         for (g.nodes.items) |node| {
@@ -437,13 +432,18 @@ pub const WM = struct {
     }
 
     pub fn flush(self: *WM, g: *Graph) !void {
+        const bw: i32 = self.border_width;
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => |win| {
                     if (node.floating) continue;
                     if (self.frames.get(win)) |win_frame| {
-                        _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
-                        _ = c.XMoveResizeWindow(self.display, win, 0, 0, node.width, node.height);
+                        const fx: i32  = node.x + bw;
+                        const fy: i32  = node.y + bw;
+                        const fw: u32  = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
+                        const fh: u32  = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
+                        _ = c.XMoveResizeWindow(self.display, win_frame, fx, fy, fw, fh);
+                        _ = c.XMoveResizeWindow(self.display, win, 0, 0, fw, fh);
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
                     }
                 },

@@ -51,7 +51,10 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_fixed_ratio),                       .name = "fixed_ratio" },
     .{ .func = ziglua.wrap(l_fixed_width),                       .name = "fixed_width" },
     .{ .func = ziglua.wrap(l_fixed_height),                      .name = "fixed_height" },
+    .{ .func = ziglua.wrap(l_fixed_x),                           .name = "fixed_x" },
+    .{ .func = ziglua.wrap(l_fixed_y),                           .name = "fixed_y" },
     .{ .func = ziglua.wrap(l_grid_cell),                         .name = "grid_cell" },
+    .{ .func = ziglua.wrap(l_grid_cell_abs),                     .name = "grid_cell_abs" },
     .{ .func = ziglua.wrap(l_get_all_windows),                   .name = "get_all_windows" },
     .{ .func = ziglua.wrap(l_screen_width),                      .name = "screen_width" },
     .{ .func = ziglua.wrap(l_screen_height),                     .name = "screen_height" },
@@ -542,6 +545,22 @@ fn l_fixed_height(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_fixed_x(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const x: i32  = @intCast(lua.checkInteger(2));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    global_wm.current_graph.add_constraint(node, .{ .fixed_x = x }) catch {};
+    return 0;
+}
+
+fn l_fixed_y(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const y: i32  = @intCast(lua.checkInteger(2));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    global_wm.current_graph.add_constraint(node, .{ .fixed_y = y }) catch {};
+    return 0;
+}
+
 fn l_grid_cell(lua: *Lua) i32 {
     const id           = @as(u32, @intCast(lua.checkInteger(1)));
     const col          = lua.checkInteger(2);
@@ -568,6 +587,21 @@ fn l_grid_cell(lua: *Lua) i32 {
         .container = container,
     } };
     global_wm.current_graph.add_constraint(node, g) catch return luaL_error_str(lua, "out of memory");
+    return 0;
+}
+
+fn l_grid_cell_abs(lua: *Lua) i32 {
+    const id           = @as(u32, @intCast(lua.checkInteger(1)));
+    const x            = @as(i32, @intCast(lua.checkInteger(2)));
+    const y            = @as(i32, @intCast(lua.checkInteger(3)));
+    const w            = @as(u32, @intCast(lua.checkInteger(4)));
+    const h            = @as(u32, @intCast(lua.checkInteger(5)));
+    const container_id = @as(u32, @intCast(lua.checkInteger(6)));
+    const node      = global_wm.get_node_by_id(id)           orelse return luaL_error_str(lua, "invalid node");
+    const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
+    global_wm.current_graph.add_constraint(node, .{ .grid_cell_abs = .{
+        .x = x, .y = y, .w = w, .h = h, .container = container,
+    }}) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 

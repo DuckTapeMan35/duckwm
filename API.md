@@ -123,6 +123,10 @@ Remove all constraints from a node.
 
 Place node in a grid cell of container. col/row are 0-based.
 
+### `wm.grid_cell_abs(id: integer, x: integer, y: integer, w: integer, h: integer, container: integer)`
+
+Place node in a grid cell of container, with absolute pixel sizes.
+
 ### `wm.left_of(a: integer, b: integer)`
 
 Constrain: a.right == b.left.
@@ -174,6 +178,14 @@ Constrain: width == w.
 ### `wm.fixed_height(id: integer, h: integer)`
 
 Constrain: height == h.
+
+### `wm.fixed_x(id: integer, x: integer)`
+
+Constrain: x == x.
+
+### `wm.fixed_y(id: integer, y: integer)`
+
+Constrain: y == y.
 
 ### `wm.reparent(child: integer, parent: integer)`
 

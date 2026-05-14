@@ -28,9 +28,11 @@ pub const Constraint = union(enum) {
     // Aspect ratio (self)
     fixed_ratio: f32,      // width / height == ratio
 
-    // fixed size (self)
+    // fixed constraints
     fixed_width:  u32,
     fixed_height: u32,
+    fixed_x: i32,
+    fixed_y: i32,
 
     // Grid placement (requires container)
     grid_cell: struct {
@@ -40,6 +42,13 @@ pub const Constraint = union(enum) {
         rows: u32,
         container: *Node,   // the node that defines the grid area
     },
+    grid_cell_abs: struct {
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        container: *Node,
+    }
 };
 
 pub const Direction = enum {
@@ -281,8 +290,11 @@ pub const Graph = struct {
             .equal_height => |other| other == node,
             .fixed_ratio => false,
             .grid_cell => |g| g.container == node,
+            .grid_cell_abs => |g| g.container == node,
             .fixed_width => false,
             .fixed_height => false,
+            .fixed_x => false,
+            .fixed_y => false,
         };
     }
 
@@ -313,19 +325,7 @@ pub const Graph = struct {
         }
     }
 
-    pub fn solve(self: *Graph, screen_width: u32, screen_height: u32, border_width: i32) !void {
-        
-    for (self.nodes.items) |node| {
-        std.debug.print("  node content={s} constraints={}\n", 
-            .{@tagName(node.content), node.constraints.items.len});
-        for (node.constraints.items) |con| {
-            switch (con) {
-                .grid_cell => |g| std.debug.print("    grid_cell col={} row={} cols={} rows={}\n",
-                    .{g.col, g.row, g.cols, g.rows}),
-                else => std.debug.print("    other constraint\n", .{}),
-            }
-        }
-    }
+    pub fn solve(self: *Graph, screen_width: u32, screen_height: u32) !void {
         // 1. Initialize all nodes to a default size if they have zero area
         const default_w = screen_width;
         const default_h = screen_height;
@@ -352,7 +352,7 @@ pub const Graph = struct {
                     switch (con) {
                         .equal_width, .equal_height => continue,
                         else => {
-                            if (apply_one(node, con, border_width)) changed = true;
+                            if (apply_one(node, con)) changed = true;
                         },
                     }
                 }
@@ -416,127 +416,88 @@ pub const Graph = struct {
         }
     }
 
-    fn apply_one(src: *Node, con: Constraint, border_width: i32) bool {
-        const gap = 2*border_width;
+    fn apply_one(src: *Node, con: Constraint) bool {
         switch (con) {
             .left_of => |dst| {
                 if (dst.floating) return false;
-                const new_x = src.x + @as(i32, @intCast(src.width)) + gap;
-                if (dst.x != new_x) {
-                    dst.x = new_x;
-                    return true;
-                }
+                const new_x = src.x + @as(i32, @intCast(src.width));
+                if (dst.x != new_x) { dst.x = new_x; return true; }
             },
             .right_of => |dst| {
                 if (dst.floating) return false;
-                const new_x = dst.x + @as(i32, @intCast(dst.width)) + gap;
-                if (src.x != new_x) {
-                    src.x = new_x;
-                    return true;
-                }
+                const new_x = dst.x + @as(i32, @intCast(dst.width));
+                if (src.x != new_x) { src.x = new_x; return true; }
             },
             .above => |dst| {
                 if (dst.floating) return false;
-                const new_y = src.y + @as(i32, @intCast(src.height)) + gap;
-                if (dst.y != new_y) {
-                    dst.y = new_y;
-                    return true;
-                }
+                const new_y = src.y + @as(i32, @intCast(src.height));
+                if (dst.y != new_y) { dst.y = new_y; return true; }
             },
             .below => |dst| {
                 if (dst.floating) return false;
-                const new_y = dst.y + @as(i32, @intCast(dst.height)) + gap;
-                if (src.y != new_y) {
-                    src.y = new_y;
-                    return true;
-                }
+                const new_y = dst.y + @as(i32, @intCast(dst.height));
+                if (src.y != new_y) { src.y = new_y; return true; }
             },
             .align_left => |dst| {
                 if (dst.floating) return false;
-                if (dst.x != src.x) {
-                    dst.x = src.x;
-                    return true;
-                }
+                if (dst.x != src.x) { dst.x = src.x; return true; }
             },
             .align_top => |dst| {
                 if (dst.floating) return false;
-                if (dst.y != src.y) {
-                    dst.y = src.y;
-                    return true;
-                }
+                if (dst.y != src.y) { dst.y = src.y; return true; }
             },
             .align_right => |dst| {
                 if (dst.floating) return false;
                 const new_x = (src.x + @as(i32, @intCast(src.width))) - @as(i32, @intCast(dst.width));
-                if (dst.x != new_x) {
-                    dst.x = new_x;
-                    return true;
-                }
+                if (dst.x != new_x) { dst.x = new_x; return true; }
             },
             .align_bottom => |dst| {
                 if (dst.floating) return false;
                 const new_y = (src.y + @as(i32, @intCast(src.height))) - @as(i32, @intCast(dst.height));
-                if (dst.y != new_y) {
-                    dst.y = new_y;
-                    return true;
-                }
+                if (dst.y != new_y) { dst.y = new_y; return true; }
             },
             .fixed_ratio => |ratio| {
-                // Maintain width, adjust height (could also be the other way)
                 const new_h = @as(u32, @intFromFloat(@as(f32, @floatFromInt(src.width)) / ratio));
-                if (src.height != new_h) {
-                    src.height = new_h;
-                    return true;
-                }
+                if (src.height != new_h) { src.height = new_h; return true; }
             },
             .grid_cell => |g| {
                 if (g.container.floating) return false;
                 if (g.cols == 0 or g.rows == 0) return false;
-
-                const gap_u32: u32 = @intCast(gap);
-                const total_gap_w = gap_u32 * (g.cols - 1);
-                const total_gap_h = gap_u32 * (g.rows - 1);
-
-                const base_cell_w = (g.container.width  -| total_gap_w) / g.cols;
-                const base_cell_h = (g.container.height -| total_gap_h) / g.rows;
-
-                const col_offset = g.col * (base_cell_w + gap_u32);
-                const row_offset = g.row * (base_cell_h + gap_u32);
-
-                const cell_w = if (g.col == g.cols - 1)
-                    g.container.width  -| col_offset
-                else
-                    base_cell_w;
-
-                const cell_h = if (g.row == g.rows - 1)
-                    g.container.height -| row_offset
-                else
-                    base_cell_h;
-
+                const base_cell_w = g.container.width  / g.cols;
+                const base_cell_h = g.container.height / g.rows;
+                const col_offset  = g.col * base_cell_w;
+                const row_offset  = g.row * base_cell_h;
+                const cell_w = if (g.col == g.cols - 1) g.container.width  -| col_offset else base_cell_w;
+                const cell_h = if (g.row == g.rows - 1) g.container.height -| row_offset else base_cell_h;
                 const new_x = g.container.x + @as(i32, @intCast(col_offset));
                 const new_y = g.container.y + @as(i32, @intCast(row_offset));
-
                 if (src.x != new_x or src.y != new_y or src.width != cell_w or src.height != cell_h) {
-                    src.x = new_x;
-                    src.y = new_y;
-                    src.width = cell_w;
-                    src.height = cell_h;
+                    src.x = new_x; src.y = new_y; src.width = cell_w; src.height = cell_h;
+                    return true;
+                }
+            },
+            .grid_cell_abs => |g| {
+                if (g.container.floating) return false;
+                const new_x = g.container.x + g.x;
+                const new_y = g.container.y + g.y;
+                if (src.x != new_x or src.y != new_y or src.width != g.w or src.height != g.h) {
+                    src.x = new_x; src.y = new_y; src.width = g.w; src.height = g.h;
                     return true;
                 }
             },
             .fixed_width => |w| {
-                if (src.width != w) {
-                    src.width = w;
-                    return true;
-                }
+                if (src.width != w) { src.width = w; return true; }
             },
             .fixed_height => |h| {
-                if (src.height != h) {
-                    src.height = h;
-                    return true;
-                }
+                if (src.height != h) { src.height = h; return true; }
             },
-            else => { return false; }, // equal_width and equal_height are handled in phase 2
+            .fixed_x => |x| {
+                if (src.x != x) { src.x = x; return true; }
+            },
+            .fixed_y => |y| {
+                if (src.y != y) { src.y = y; return true; }
+            },
+            else => return false,
         }
         return false;
     }

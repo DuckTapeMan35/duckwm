@@ -118,6 +118,15 @@ function wm.clear_constraints(id) end
 ---@param container integer
 function wm.grid_cell(id, col, row, cols, rows, container) end
 
+--- Place node in a grid cell of container, with absolute pixel sizes.
+---@param id integer
+---@param x integer
+---@param y integer
+---@param w integer
+---@param h integer
+---@param container integer
+function wm.grid_cell_abs(id, x, y, w, h, container) end
+
 --- Constrain: a.right == b.left.
 ---@param a integer
 ---@param b integer
@@ -182,6 +191,16 @@ function wm.fixed_width(id, w) end
 ---@param id integer
 ---@param h integer
 function wm.fixed_height(id, h) end
+
+--- Constrain: x == x.
+---@param id integer
+---@param x integer
+function wm.fixed_x(id, x) end
+
+--- Constrain: y == y.
+---@param id integer
+---@param y integer
+function wm.fixed_y(id, y) end
 
 --- Make child fill parent via a 1x1 grid_cell constraint.
 ---@param child integer

@@ -185,6 +185,19 @@ pub const entries = [_]ApiEntry{
         .ret = "nil",
     },
     .{
+        .name   = "grid_cell_abs",
+        .desc   = "Place node in a grid cell of container, with absolute pixel sizes.",
+        .params = &.{
+            .{ .name = "id",        .typ = "integer" },
+            .{ .name = "x",         .typ = "integer" },
+            .{ .name = "y",         .typ = "integer" },
+            .{ .name = "w",         .typ = "integer" },
+            .{ .name = "h",         .typ = "integer" },
+            .{ .name = "container", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
         .name   = "left_of",
         .desc   = "Constrain: a.right == b.left.",
         .params = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
@@ -260,6 +273,18 @@ pub const entries = [_]ApiEntry{
         .name   = "fixed_height",
         .desc   = "Constrain: height == h.",
         .params = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "h", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "fixed_x",
+        .desc   = "Constrain: x == x.",
+        .params = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "x", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "fixed_y",
+        .desc   = "Constrain: y == y.",
+        .params = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "y", .typ = "integer" } },
         .ret    = "nil",
     },
     .{
