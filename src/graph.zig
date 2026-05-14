@@ -52,8 +52,9 @@ pub const Direction = enum {
 const ReparentStrategy = union(enum) {
     leave_empty,
     remove,
-    promote: Direction,
+    promote,
     custom: *const fn(*Node) void,
+    custom_l: i32,
 };
 
 const FocusEdge = struct {
@@ -165,9 +166,82 @@ pub const Graph = struct {
 
     pub fn remove_node(self: *Graph, node: *Node) void {
         std.debug.assert(node.owner_graph == self);
-        if (node.dead) return; // Already removed
+        if (node.dead) return;
         node.dead = true;
-        // 1. Remove any constraint from any node that references `node`
+
+        if (node.on_remove) |strategy| {
+            switch (strategy) {
+                .promote => {
+                    std.debug.print("promote: firing\n", .{});
+                    var container: ?*Node = null;
+                    for (node.constraints.items) |con| {
+                        if (con == .grid_cell) {
+                            container = con.grid_cell.container;
+                            break;
+                        }
+                    }
+                    std.debug.print("promote: container={}\n", .{container != null});
+                    if (container) |cont| {
+                        var sibling: ?*Node = null;
+                        for (self.nodes.items) |n| {
+                            if (n == node) continue;
+                            for (n.constraints.items) |con| {
+                                if (con == .grid_cell and con.grid_cell.container == cont) {
+                                    sibling = n;
+                                    break;
+                                }
+                            }
+                            if (sibling != null) break;
+                        }
+                        std.debug.print("promote: sibling={}\n", .{sibling != null});
+                        if (sibling) |sib| {
+                            var grandparent: ?*Node = null;
+                            var gp_col:  u32 = 0;
+                            var gp_row:  u32 = 0;
+                            var gp_cols: u32 = 1;
+                            var gp_rows: u32 = 1;
+                            for (cont.constraints.items) |con| {
+                                if (con == .grid_cell) {
+                                    grandparent = con.grid_cell.container;
+                                    gp_col  = con.grid_cell.col;
+                                    gp_row  = con.grid_cell.row;
+                                    gp_cols = con.grid_cell.cols;
+                                    gp_rows = con.grid_cell.rows;
+                                    break;
+                                }
+                            }
+                            std.debug.print("promote: grandparent={} gp_col={} gp_row={} gp_cols={} gp_rows={}\n",
+                                .{grandparent != null, gp_col, gp_row, gp_cols, gp_rows});
+                            // Remove sibling's old grid_cell pointing at cont
+                            var i: usize = 0;
+                            while (i < sib.constraints.items.len) {
+                                if (sib.constraints.items[i] == .grid_cell and
+                                    sib.constraints.items[i].grid_cell.container == cont)
+                                {
+                                    _ = sib.constraints.swapRemove(i);
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                            if (grandparent) |gp| {
+                                sib.constraints.append(self.allocator, .{ .grid_cell = .{
+                                    .col = gp_col,
+                                    .row = gp_row,
+                                    .cols = gp_cols,
+                                    .rows = gp_rows,
+                                    .container = gp,
+                                }}) catch {};
+                                std.debug.print("promote: appended grid_cell to sibling\n", .{});
+                            } else {
+                                std.debug.print("promote: no grandparent, sibling left unconstrained\n", .{});
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
         for (self.nodes.items) |n| {
             var i: usize = 0;
             while (i < n.constraints.items.len) {
@@ -179,7 +253,6 @@ pub const Graph = struct {
             }
         }
 
-        // 2. Remove node from nodes list
         for (self.nodes.items, 0..) |n, idx| {
             if (n == node) {
                 _ = self.nodes.swapRemove(idx);
@@ -187,7 +260,6 @@ pub const Graph = struct {
             }
         }
 
-        // 3. Deinit and free node
         if (node.content == .workspace) {
             self.free_subgraph(node.content.workspace);
         }
@@ -242,6 +314,18 @@ pub const Graph = struct {
     }
 
     pub fn solve(self: *Graph, screen_width: u32, screen_height: u32, border_width: i32) !void {
+        
+    for (self.nodes.items) |node| {
+        std.debug.print("  node content={s} constraints={}\n", 
+            .{@tagName(node.content), node.constraints.items.len});
+        for (node.constraints.items) |con| {
+            switch (con) {
+                .grid_cell => |g| std.debug.print("    grid_cell col={} row={} cols={} rows={}\n",
+                    .{g.col, g.row, g.cols, g.rows}),
+                else => std.debug.print("    other constraint\n", .{}),
+            }
+        }
+    }
         // 1. Initialize all nodes to a default size if they have zero area
         const default_w = screen_width;
         const default_h = screen_height;

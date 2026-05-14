@@ -247,6 +247,44 @@ pub fn on_create_notify(_: *WM, event: *c.XCreateWindowEvent) void {
         .{ event.window, event.parent, event.x, event.y, event.width, event.height });
 }
 
+// Sweep dead containers: .empty nodes with no constraints that nothing references
+fn sweep_dead_containers(wm: *WM) void {
+    const g = wm.current_graph;
+    var i: usize = 0;
+    while (i < g.nodes.items.len) {
+        const node = g.nodes.items[i];
+        // Only collect unconstrained empty nodes that aren't the ws_root anchor
+        if (node.content == .empty and node.constraints.items.len == 0) {
+            // Check nothing else references this node
+            var referenced = false;
+            for (g.nodes.items) |other| {
+                for (other.constraints.items) |con| {
+                    if (con == .grid_cell and con.grid_cell.container == node) {
+                        referenced = true;
+                        break;
+                    }
+                }
+                if (referenced) break;
+            }
+            if (!referenced) {
+                // Remove from registry
+                var it = wm.node_registry.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == node) {
+                        _ = wm.node_registry.remove(entry.key_ptr.*);
+                        break;
+                    }
+                }
+                g.nodes.items[i].deinit(wm.allocator);
+                wm.allocator.destroy(g.nodes.items[i]);
+                _ = g.nodes.swapRemove(i);
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
 pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     const win = event.window;
 
@@ -256,10 +294,10 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
-        return;  // no frame cleanup needed
+        return;
     }
 
-    // Check if this is a frame being destroyed (we initiated this)
+    // Ignore frame destroy events - we handle cleanup when the client is destroyed
     var is_frame = false;
     var frame_iter = wm.frames.iterator();
     while (frame_iter.next()) |entry| {
@@ -268,63 +306,44 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
             break;
         }
     }
-    
-    // Ignore frame destroy events - we handle cleanup when the client is destroyed
-    if (is_frame) {
-        return;
-    }
+    if (is_frame) return;
 
     // Find the dying node and its ID before any modifications
     var dying: ?*Node = null;
     var dying_id: ?u32 = null;
-    
+
     if (wm.window_to_node_id.get(win)) |id| {
         dying_id = id;
         if (wm.node_registry.get(id)) |node| {
             dying = node;
         }
     }
-    
-    // If this window isn't managed, nothing to do
-    if (dying == null) {
-        return;
-    }
+
+    if (dying == null) return;
 
     // Determine next focus BEFORE removing anything
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
 
     if (focused_is_dying) {
-        // Try focus edges first
         for (wm.current_graph.focus_edges.items) |edge| {
             if (edge.from == dying and edge.to != dying) {
                 next_focus = edge.to;
                 break;
             }
         }
-        
-        // Fallback: any other window node
         if (next_focus == null) {
             for (wm.current_graph.nodes.items) |node| {
                 if (node == dying) continue;
                 switch (node.content) {
-                    .window => {
-                        next_focus = node;
-                        break;
-                    },
+                    .window => { next_focus = node; break; },
                     else => continue,
                 }
             }
         }
     }
 
-    // Remove from registry EARLY so Lua callback sees the window as gone.
-    if (dying_id) |id| {
-        _ = wm.node_registry.remove(id);
-        _ = wm.window_to_node_id.remove(win);
-    }
-
-    // Now notify Lua – the ID is still valid, but window is no longer listed.
+    // Notify Lua BEFORE removing from registry so get_node_type still works
     if (dying_id) |id| {
         if (wm.lua) |lua| {
             if (wm.on_unmap_ref != 0) {
@@ -337,6 +356,12 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
+    // Now remove from registry
+    if (dying_id) |id| {
+        _ = wm.node_registry.remove(id);
+        _ = wm.window_to_node_id.remove(win);
+    }
+
     // Clean up frame
     if (wm.frames.get(win)) |win_frame| {
         _ = c.XUnmapWindow(wm.display, win_frame);
@@ -344,39 +369,71 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         _ = wm.frames.remove(win);
     }
 
-    // Clean up registry BEFORE removing from graph
-    if (dying_id) |id| {
-        _ = wm.node_registry.remove(id);
-        _ = wm.window_to_node_id.remove(win);
-    }
-
-    // if a window dies while resizing cancel the resize
+    // Cancel any in-progress resize
     if (wm.edge_resizing) {
         wm.edge_resizing = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
     }
 
-    // Remove from graph - this frees the node pointer
+    // Remove from graph
     if (dying) |d| {
+        std.debug.print("Destroying node for window {} (id {})\n", .{ win, dying_id orelse 0 });
         if (d.owner_graph) |g| {
             g.remove_node(d);
         }
     }
 
-    // Update focus - never touch the freed node
-    if (focused_is_dying) {
-        wm.focused = next_focus;
-        if (next_focus) |n| {
-            wm.focus(n);
+    // Sweep orphaned empty containers left behind by Lua
+    {
+        var i: usize = 0;
+        while (i < wm.current_graph.nodes.items.len) {
+            const node = wm.current_graph.nodes.items[i];
+            if (node.content != .empty or node.constraints.items.len != 0) {
+                i += 1;
+                continue;
+            }
+            var referenced = false;
+            for (wm.current_graph.nodes.items) |other| {
+                if (other == node) continue;
+                for (other.constraints.items) |con| {
+                    switch (con) {
+                        .grid_cell => |g| if (g.container == node) {
+                            referenced = true;
+                            break;
+                        },
+                        else => {},
+                    }
+                    if (referenced) break;
+                }
+                if (referenced) break;
+            }
+            if (!referenced) {
+                var it = wm.node_registry.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == node) {
+                        _ = wm.node_registry.remove(entry.key_ptr.*);
+                        break;
+                    }
+                }
+                node.deinit(wm.allocator);
+                wm.allocator.destroy(node);
+                _ = wm.current_graph.nodes.swapRemove(i);
+            } else {
+                i += 1;
+            }
         }
     }
 
-    // fallback input restoration
+    // Update focus
+    if (focused_is_dying) {
+        wm.focused = next_focus;
+        if (next_focus) |n| wm.focus(n);
+    }
+
     if (wm.focused == null) {
         _ = c.XSetInputFocus(wm.display, wm.root, c.RevertToParent, c.CurrentTime);
     }
 
-    // Only rebuild if we still have nodes
     if (wm.current_graph.nodes.items.len > 0) {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();

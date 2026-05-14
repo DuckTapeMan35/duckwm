@@ -11,19 +11,21 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
     const nodes = wm.current_graph.nodes.items;
 
     for (nodes) |a| {
-                const a_win = switch (a.content) {
+        const a_win = switch (a.content) {
             .window => true,
             .workspace => a.preview_window != null,
             .empty => false,
         };
         if (!a_win) continue;
-        const ax = a.x; const ay = a.y;
-        const aw: i32 = @intCast(a.width); const ah: i32 = @intCast(a.height);
-        const a_center_x = ax + @divTrunc(aw, 2);
-        const a_center_y = ay + @divTrunc(ah, 2);
+
+        const ax = a.x;
+        const ay = a.y;
+        const aw: i32 = @intCast(a.width);
+        const ah: i32 = @intCast(a.height);
+        const a_cx = ax + @divTrunc(aw, 2);
+        const a_cy = ay + @divTrunc(ah, 2);
 
         for (nodes) |b| {
-            if (a == b) continue;
             if (a == b) continue;
             const b_win = switch (b.content) {
                 .window => true,
@@ -31,36 +33,30 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
                 .empty => false,
             };
             if (!b_win) continue;
-            const bx = b.x; const by = b.y;
-            const bw: i32 = @intCast(b.width); const bh: i32 = @intCast(b.height);
-            const b_center_x = bx + @divTrunc(bw, 2);
-            const b_center_y = by + @divTrunc(bh, 2);
 
-            const dx = b_center_x - a_center_x;
-            const dy = b_center_y - a_center_y;
+            const bx = b.x;
+            const by = b.y;
+            const bw: i32 = @intCast(b.width);
+            const bh: i32 = @intCast(b.height);
+            const b_cx = bx + @divTrunc(bw, 2);
+            const b_cy = by + @divTrunc(bh, 2);
 
-            // ── Left / Right ─────────────────────────────────
+            const dx = b_cx - a_cx;
+            const dy = b_cy - a_cy;
+
+            if (dx == 0 and dy == 0) continue;
+
             if (@abs(dx) >= @abs(dy)) {
-                const v_overlap = @min(ay + ah, by + bh) - @max(ay, by);
-                if (v_overlap > 0) {
-                    if (dx < 0)  {
-                        try wm.current_graph.add_focus_edge(a, b, .Left);
-                    }
-                    else if (dx > 0) {
-                        try wm.current_graph.add_focus_edge(a, b, .Right);
-                    }
+                if (dx < 0) {
+                    try wm.current_graph.add_focus_edge(a, b, .Left);
+                } else {
+                    try wm.current_graph.add_focus_edge(a, b, .Right);
                 }
-            }
-            // ── Up / Down ────────────────────────────────────
-            else {
-                const h_overlap = @min(ax + aw, bx + bw) - @max(ax, bx);
-                if (h_overlap > 0) {
-                    if (dy < 0)  {
-                        try wm.current_graph.add_focus_edge(a, b, .Up);
-                    }
-                    else if (dy > 0)  {
-                        try wm.current_graph.add_focus_edge(a, b, .Down);
-                    }
+            } else {
+                if (dy < 0) {
+                    try wm.current_graph.add_focus_edge(a, b, .Up);
+                } else {
+                    try wm.current_graph.add_focus_edge(a, b, .Down);
                 }
             }
         }
@@ -69,56 +65,49 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
 
 pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
     const focused = wm.focused orelse return null;
-    const fx = focused.x; const fy = focused.y;
+    const fx = focused.x;
+    const fy = focused.y;
     const fw: i32 = @intCast(focused.width);
     const fh: i32 = @intCast(focused.height);
 
     var best: ?*Node = null;
-    var best_primary: i32 = std.math.maxInt(i32);
-    var best_overlap: i32 = 0;
+    var best_dist: i32 = std.math.maxInt(i32);
+    var best_overlap: i32 = std.math.minInt(i32);
 
     for (wm.current_graph.focus_edges.items) |edge| {
         if (edge.from != focused) continue;
         if (edge.dir != dir) continue;
 
         const node = edge.to;
-        const nx = node.x; const ny = node.y;
+        const nx = node.x;
+        const ny = node.y;
         const nw: i32 = @intCast(node.width);
         const nh: i32 = @intCast(node.height);
 
-        switch (dir) {
-            .Left => {
-                const dist = fx - (nx + nw);
-                const overlap = @min(fy + fh, ny + nh) - @max(fy, ny);
-                if (overlap <= 0) continue;
-                if (dist < best_primary or (dist == best_primary and overlap > best_overlap)) {
-                    best = node; best_primary = dist; best_overlap = overlap;
-                }
-            },
-            .Right => {
-                const dist = nx - (fx + fw);
-                const overlap = @min(fy + fh, ny + nh) - @max(fy, ny);
-                if (overlap <= 0) continue;
-                if (dist < best_primary or (dist == best_primary and overlap > best_overlap)) {
-                    best = node; best_primary = dist; best_overlap = overlap;
-                }
-            },
-            .Up => {
-                const dist = fy - (ny + nh);
-                const overlap = @min(fx + fw, nx + nw) - @max(fx, nx);
-                if (overlap <= 0) continue;
-                if (dist < best_primary or (dist == best_primary and overlap > best_overlap)) {
-                    best = node; best_primary = dist; best_overlap = overlap;
-                }
-            },
-            .Down => {
-                const dist = ny - (fy + fh);
-                const overlap = @min(fx + fw, nx + nw) - @max(fx, nx);
-                if (overlap <= 0) continue;
-                if (dist < best_primary or (dist == best_primary and overlap > best_overlap)) {
-                    best = node; best_primary = dist; best_overlap = overlap;
-                }
-            },
+        const dist: i32 = switch (dir) {
+            .Left  => fx - (nx + nw),
+            .Right => nx - (fx + fw),
+            .Up    => fy - (ny + nh),
+            .Down  => ny - (fy + fh),
+        };
+
+        const overlap: i32 = switch (dir) {
+            .Left, .Right => @min(fy + fh, ny + nh) - @max(fy, ny),
+            .Up,   .Down  => @min(fx + fw, nx + nw) - @max(fx, nx),
+        };
+
+        // Prefer: 1) any overlap over no overlap, 2) closer, 3) more overlap
+        const has_overlap = overlap > 0;
+        const best_has_overlap = best_overlap > 0;
+
+        if (best == null or
+            (has_overlap and !best_has_overlap) or
+            (has_overlap == best_has_overlap and dist < best_dist) or
+            (has_overlap == best_has_overlap and dist == best_dist and overlap > best_overlap))
+        {
+            best = node;
+            best_dist = dist;
+            best_overlap = overlap;
         }
     }
     return best;

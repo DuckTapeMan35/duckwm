@@ -501,6 +501,21 @@ fn l_create_container(lua: *Lua) i32 {
     return 1;
 }
 
+fn l_destroy_container(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    // Containers are .empty content — no X window to clean up
+    switch (node.content) {
+        .empty => {},
+        else => return luaL_error_str(lua, "destroy_container called on non-container"),
+    }
+    _ = global_wm.node_registry.remove(id);
+    if (node.owner_graph) |graph| {
+        graph.remove_node(node);
+    }
+    return 0;
+}
+
 fn l_reparent(lua: *Lua) i32 {
     const child_id = @as(u32, @intCast(lua.checkInteger(1)));
     const parent_id = @as(u32, @intCast(lua.checkInteger(2)));
@@ -876,6 +891,81 @@ fn l_switch_workspace(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_set_on_remove_promote(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        std.debug.print("set_on_remove_promote: id {} NOT FOUND\n", .{id});
+        return 0;
+    };
+    node.on_remove = .promote;
+    std.debug.print("set_on_remove_promote: id {} set OK, content={s}\n", .{id, @tagName(node.content)});
+    return 0;
+}
+
+fn l_unregister_node(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    _ = global_wm.node_registry.remove(id);
+    return 0;
+}
+
+fn l_get_cursor_pos(lua: *Lua) i32 {
+    var root_return: c.Window = undefined;
+    var child_return: c.Window = undefined;
+    var root_x: c_int = 0;
+    var root_y: c_int = 0;
+    var win_x: c_int = 0;
+    var win_y: c_int = 0;
+    var mask: c_uint = 0;
+    _ = c.XQueryPointer(
+        global_wm.display,
+        global_wm.root,
+        &root_return,
+        &child_return,
+        &root_x,
+        &root_y,
+        &win_x,
+        &win_y,
+        &mask,
+    );
+    lua.pushInteger(root_x);
+    lua.pushInteger(root_y);
+    return 2;
+}
+
+fn l_get_cursor_relative_to_focused(lua: *Lua) i32 {
+    var root_return: c.Window = undefined;
+    var child_return: c.Window = undefined;
+    var root_x: c_int = 0;
+    var root_y: c_int = 0;
+    var win_x: c_int = 0;
+    var win_y: c_int = 0;
+    var mask: c_uint = 0;
+    _ = c.XQueryPointer(
+        global_wm.display,
+        global_wm.root,
+        &root_return,
+        &child_return,
+        &root_x,
+        &root_y,
+        &win_x,
+        &win_y,
+        &mask,
+    );
+
+    const focused = global_wm.focused orelse {
+        lua.pushInteger(0);
+        lua.pushInteger(0);
+        return 2;
+    };
+
+    const cx = focused.x + @divTrunc(@as(i32, @intCast(focused.width)), 2);
+    const cy = focused.y + @divTrunc(@as(i32, @intCast(focused.height)), 2);
+
+    lua.pushInteger(root_x - cx);
+    lua.pushInteger(root_y - cy);
+    return 2;
+}
+
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
     _ = lua.pushString(msg);
     lua.raiseError();
@@ -958,8 +1048,13 @@ pub fn load(wm: *WM) !void {
     lua.pushFunction(ziglua.wrap(l_enter_workspace_by_id));   lua.setField(-2, "enter_workspace_by_id");
     lua.pushFunction(ziglua.wrap(l_switch_to_workspace));   lua.setField(-2, "switch_to_workspace");
     lua.pushFunction(ziglua.wrap(l_create_container));  lua.setField(-2, "create_container");
+    lua.pushFunction(ziglua.wrap(l_destroy_container)); lua.setField(-2, "destroy_container");
     lua.pushFunction(ziglua.wrap(l_reparent));          lua.setField(-2, "reparent");
     lua.pushFunction(ziglua.wrap(l_get_container_of));  lua.setField(-2, "get_container_of");
+    lua.pushFunction(ziglua.wrap(l_set_on_remove_promote)); lua.setField(-2, "set_on_remove_promote");
+    lua.pushFunction(ziglua.wrap(l_unregister_node)); lua.setField(-2, "unregister_node");
+    lua.pushFunction(ziglua.wrap(l_get_cursor_pos));                  lua.setField(-2, "get_cursor_pos");
+    lua.pushFunction(ziglua.wrap(l_get_cursor_relative_to_focused));  lua.setField(-2, "get_cursor_relative_to_focused");
 
     lua.setGlobal("wm");
 
