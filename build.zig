@@ -1,4 +1,133 @@
 const std = @import("std");
+const api = @import("src/api.zig");
+
+const MetaStep = struct {
+    step: std.Build.Step,
+    b: *std.Build,
+
+    pub fn create(b: *std.Build) *MetaStep {
+        const self = b.allocator.create(MetaStep) catch unreachable;
+        self.* = .{
+            .step = std.Build.Step.init(.{
+                .id = .custom,
+                .name = "generate meta",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .b = b,
+        };
+        return self;
+    }
+
+    fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+        const self: *MetaStep = @fieldParentPtr("step", step);
+        const b = self.b;
+        const io = b.graph.io;
+        const root = std.Io.Dir.cwd();
+
+        root.createDirPath(io, "meta") catch |e| if (e != error.PathAlreadyExists) return e;
+
+        // LuaLS meta
+        {
+            var buf: std.ArrayListUnmanaged(u8) = .empty;
+            defer buf.deinit(b.allocator);
+            try buf.appendSlice(b.allocator, "---@meta\nwm = {}\n\n");
+            inline for (api.constants) |con| {
+                try buf.print(b.allocator, "--- {s}\n---@type integer\nwm.{s} = 0\n\n", .{ con.desc, con.name });
+            }
+            inline for (api.entries) |entry| {
+                try buf.print(b.allocator, "--- {s}\n", .{entry.desc});
+                inline for (entry.params) |p| {
+                    try buf.print(b.allocator, "---@param {s} {s}\n", .{ p.name, p.typ });
+                }
+                if (!std.mem.eql(u8, entry.ret, "nil")) {
+                    try buf.print(b.allocator, "---@return {s}\n", .{entry.ret});
+                }
+                try buf.print(b.allocator, "function wm.{s}(", .{entry.name});
+                inline for (entry.params, 0..) |p, i| {
+                    if (i > 0) try buf.appendSlice(b.allocator, ", ");
+                    try buf.appendSlice(b.allocator, p.name);
+                }
+                try buf.appendSlice(b.allocator, ") end\n\n");
+            }
+            try root.writeFile(io, .{ .sub_path = "meta/wm.lua", .data = buf.items });
+        }
+
+        // Markdown
+        {
+            var buf: std.ArrayListUnmanaged(u8) = .empty;
+            defer buf.deinit(b.allocator);
+            try buf.appendSlice(b.allocator, "# duckwm Lua API\n\n## Constants\n\n");
+            inline for (api.constants) |con| {
+                try buf.print(b.allocator, "- **`wm.{s}`** — {s}\n", .{ con.name, con.desc });
+            }
+            try buf.appendSlice(b.allocator, "\n## Functions\n\n");
+            inline for (api.entries) |entry| {
+                var sig: std.ArrayListUnmanaged(u8) = .empty;
+                defer sig.deinit(b.allocator);
+                inline for (entry.params, 0..) |p, i| {
+                    if (i > 0) try sig.appendSlice(b.allocator, ", ");
+                    try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
+                }
+                try buf.print(b.allocator, "### `wm.{s}({s})`\n\n{s}\n\n", .{ entry.name, sig.items, entry.desc });
+                if (!std.mem.eql(u8, entry.ret, "nil")) {
+                    try buf.print(b.allocator, "**Returns:** `{s}`\n\n", .{entry.ret});
+                }
+            }
+            try root.writeFile(io, .{ .sub_path = "API.md", .data = buf.items });
+        }
+
+        // Norg
+        {
+            var buf: std.ArrayListUnmanaged(u8) = .empty;
+            defer buf.deinit(b.allocator);
+            try buf.appendSlice(b.allocator,
+                \\@document.meta
+                \\title: duckwm Lua API
+                \\categories: api reference
+                \\@end
+                \\
+                \\* Constants
+                \\
+            );
+            inline for (api.constants) |con| {
+                try buf.print(b.allocator,
+                    \\  - `wm.{s}` — {s}
+                    \\
+                , .{ con.name, con.desc });
+            }
+            try buf.appendSlice(b.allocator, "\n* Functions\n\n");
+            inline for (api.entries) |entry| {
+                var sig: std.ArrayListUnmanaged(u8) = .empty;
+                defer sig.deinit(b.allocator);
+                inline for (entry.params, 0..) |p, i| {
+                    if (i > 0) try sig.appendSlice(b.allocator, ", ");
+                    try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
+                }
+                try buf.print(b.allocator,
+                    \\** `wm.{s}({s})`
+                    \\   {s}
+                    \\
+                , .{ entry.name, sig.items, entry.desc });
+                inline for (entry.params) |p| {
+                    try buf.print(b.allocator,
+                        \\   - *{s}* `{s}`
+                        \\
+                    , .{ p.name, p.typ });
+                }
+                if (!std.mem.eql(u8, entry.ret, "nil")) {
+                    try buf.print(b.allocator,
+                        \\   - *Returns:* `{s}`
+                        \\
+                    , .{entry.ret});
+                }
+                try buf.appendSlice(b.allocator, "\n");
+            }
+            try root.writeFile(io, .{ .sub_path = "API.norg", .data = buf.items });
+        }
+    }
+
+};
 
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
@@ -67,6 +196,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const api_mod = b.addModule("api", .{
+        .root_source_file = b.path("src/api.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+
+    const meta_gen = MetaStep.create(b);
+    const meta_step = b.step("meta", "Regenerate LuaLS meta and API docs");
+    meta_step.dependOn(&meta_gen.step);
+
     mod.addImport("graph", graph_mod);
     mod.addImport("wm", wm_mod);
     mod.addImport("config", config_mod);
@@ -78,6 +217,7 @@ pub fn build(b: *std.Build) void {
     config_mod.addImport("wm", wm_mod);
     config_mod.addImport("graph", graph_mod);
     config_mod.addImport("c", c_mod);
+    config_mod.addImport("api", api_mod);
     config_mod.linkSystemLibrary("X11", .{});
     graph_mod.addImport("c", c_mod);
 

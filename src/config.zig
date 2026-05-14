@@ -6,8 +6,87 @@ const WM = wm_mod.WM;
 const graph_mod = @import("graph");
 const Constraint = graph_mod.Constraint;
 const c = @import("c").c;
+const api = @import("api");
 
 var global_wm: *WM = undefined;
+
+const Registration = struct {
+    func: ziglua.CFn,
+    name: [:0]const u8,
+};
+
+const registrations = [_]Registration{
+    .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
+    .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
+    .{ .func = ziglua.wrap(l_focus_left),                        .name = "focus_left" },
+    .{ .func = ziglua.wrap(l_focus_right),                       .name = "focus_right" },
+    .{ .func = ziglua.wrap(l_focus_up),                          .name = "focus_up" },
+    .{ .func = ziglua.wrap(l_focus_down),                        .name = "focus_down" },
+    .{ .func = ziglua.wrap(l_focus),                             .name = "focus" },
+    .{ .func = ziglua.wrap(l_exchange_left),                     .name = "exchange_left" },
+    .{ .func = ziglua.wrap(l_exchange_right),                    .name = "exchange_right" },
+    .{ .func = ziglua.wrap(l_exchange_up),                       .name = "exchange_up" },
+    .{ .func = ziglua.wrap(l_exchange_down),                     .name = "exchange_down" },
+    .{ .func = ziglua.wrap(l_on_map),                            .name = "on_map" },
+    .{ .func = ziglua.wrap(l_on_unmap),                          .name = "on_unmap" },
+    .{ .func = ziglua.wrap(l_get_focused),                       .name = "get_focused" },
+    .{ .func = ziglua.wrap(l_remove_node),                       .name = "remove_node" },
+    .{ .func = ziglua.wrap(l_kill_client),                       .name = "kill_client" },
+    .{ .func = ziglua.wrap(l_get_node_info),                     .name = "get_node_info" },
+    .{ .func = ziglua.wrap(l_resize_edge),                       .name = "resize_edge" },
+    .{ .func = ziglua.wrap(l_resize_corner),                     .name = "resize_corner" },
+    .{ .func = ziglua.wrap(l_resize_focused_edge),               .name = "resize_focused_edge" },
+    .{ .func = ziglua.wrap(l_resize_focused_corner),             .name = "resize_focused_corner" },
+    .{ .func = ziglua.wrap(l_create_root_node),                  .name = "create_root_node" },
+    .{ .func = ziglua.wrap(l_left_of),                           .name = "left_of" },
+    .{ .func = ziglua.wrap(l_right_of),                          .name = "right_of" },
+    .{ .func = ziglua.wrap(l_above),                             .name = "above" },
+    .{ .func = ziglua.wrap(l_below),                             .name = "below" },
+    .{ .func = ziglua.wrap(l_align_left),                        .name = "align_left" },
+    .{ .func = ziglua.wrap(l_align_top),                         .name = "align_top" },
+    .{ .func = ziglua.wrap(l_align_right),                       .name = "align_right" },
+    .{ .func = ziglua.wrap(l_align_bottom),                      .name = "align_bottom" },
+    .{ .func = ziglua.wrap(l_equal_width),                       .name = "equal_width" },
+    .{ .func = ziglua.wrap(l_equal_height),                      .name = "equal_height" },
+    .{ .func = ziglua.wrap(l_fixed_ratio),                       .name = "fixed_ratio" },
+    .{ .func = ziglua.wrap(l_fixed_width),                       .name = "fixed_width" },
+    .{ .func = ziglua.wrap(l_fixed_height),                      .name = "fixed_height" },
+    .{ .func = ziglua.wrap(l_grid_cell),                         .name = "grid_cell" },
+    .{ .func = ziglua.wrap(l_get_all_windows),                   .name = "get_all_windows" },
+    .{ .func = ziglua.wrap(l_screen_width),                      .name = "screen_width" },
+    .{ .func = ziglua.wrap(l_screen_height),                     .name = "screen_height" },
+    .{ .func = ziglua.wrap(l_clear_constraints),                 .name = "clear_constraints" },
+    .{ .func = ziglua.wrap(l_set_node_empty),                    .name = "set_node_empty" },
+    .{ .func = ziglua.wrap(l_set_node_window),                   .name = "set_node_window" },
+    .{ .func = ziglua.wrap(l_get_node_type),                     .name = "get_node_type" },
+    .{ .func = ziglua.wrap(l_move_window_to_node),               .name = "move_window_to_node" },
+    .{ .func = ziglua.wrap(l_set_resize_modifier),               .name = "set_resize_modifier" },
+    .{ .func = ziglua.wrap(l_set_float_modifier),                .name = "set_float_modifier" },
+    .{ .func = ziglua.wrap(l_toggle_floating),                   .name = "toggle_floating" },
+    .{ .func = ziglua.wrap(l_set_node_focused_border_color),     .name = "set_node_focused_border_color" },
+    .{ .func = ziglua.wrap(l_set_node_unfocused_border_color),   .name = "set_node_unfocused_border_color" },
+    .{ .func = ziglua.wrap(l_set_default_focus_border_color),    .name = "set_default_focus_border_color" },
+    .{ .func = ziglua.wrap(l_set_default_unfocused_border_color),.name = "set_default_unfocused_border_color" },
+    .{ .func = ziglua.wrap(l_get_node_geometry),                 .name = "get_node_geometry" },
+    .{ .func = ziglua.wrap(l_set_border_width),                  .name = "set_border_width" },
+    .{ .func = ziglua.wrap(l_create_nested_workspace),           .name = "create_nested_workspace" },
+    .{ .func = ziglua.wrap(l_enter_nested),                      .name = "enter_nested" },
+    .{ .func = ziglua.wrap(l_leave_nested),                      .name = "leave_nested" },
+    .{ .func = ziglua.wrap(l_switch_workspace),                  .name = "switch_workspace" },
+    .{ .func = ziglua.wrap(l_get_workspace),                     .name = "get_workspace" },
+    .{ .func = ziglua.wrap(l_create_empty_node),                 .name = "create_empty_node" },
+    .{ .func = ziglua.wrap(l_get_workspaces_at_level),           .name = "get_workspaces_at_level" },
+    .{ .func = ziglua.wrap(l_enter_workspace_by_id),             .name = "enter_workspace_by_id" },
+    .{ .func = ziglua.wrap(l_switch_to_workspace),               .name = "switch_to_workspace" },
+    .{ .func = ziglua.wrap(l_create_container),                  .name = "create_container" },
+    .{ .func = ziglua.wrap(l_destroy_container),                 .name = "destroy_container" },
+    .{ .func = ziglua.wrap(l_reparent),                          .name = "reparent" },
+    .{ .func = ziglua.wrap(l_get_container_of),                  .name = "get_container_of" },
+    .{ .func = ziglua.wrap(l_set_on_remove_promote),             .name = "set_on_remove_promote" },
+    .{ .func = ziglua.wrap(l_unregister_node),                   .name = "unregister_node" },
+    .{ .func = ziglua.wrap(l_get_cursor_pos),                    .name = "get_cursor_pos" },
+    .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused),    .name = "get_cursor_relative_to_focused" },
+};
 
 fn create_workspace_node(lua: *Lua, call_on_map: bool) !u32 {
     const sub = global_wm.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
@@ -985,76 +1064,30 @@ pub fn load(wm: *WM) !void {
     lua.pushInteger(c.ShiftMask);   lua.setField(-2, "MOD_SHIFT");
     lua.pushInteger(c.ControlMask); lua.setField(-2, "MOD_CTRL");
 
-    lua.pushFunction(ziglua.wrap(l_bind));                  lua.setField(-2, "bind");
-    lua.pushFunction(ziglua.wrap(l_spawn));                 lua.setField(-2, "spawn");
-    lua.pushFunction(ziglua.wrap(l_focus_left));            lua.setField(-2, "focus_left");
-    lua.pushFunction(ziglua.wrap(l_focus_right));           lua.setField(-2, "focus_right");
-    lua.pushFunction(ziglua.wrap(l_focus_up));              lua.setField(-2, "focus_up");
-    lua.pushFunction(ziglua.wrap(l_focus_down));            lua.setField(-2, "focus_down");
-    lua.pushFunction(ziglua.wrap(l_focus));                 lua.setField(-2, "focus");
-    lua.pushFunction(ziglua.wrap(l_exchange_left));         lua.setField(-2, "exchange_left");
-    lua.pushFunction(ziglua.wrap(l_exchange_right));        lua.setField(-2, "exchange_right");
-    lua.pushFunction(ziglua.wrap(l_exchange_up));           lua.setField(-2, "exchange_up");
-    lua.pushFunction(ziglua.wrap(l_exchange_down));         lua.setField(-2, "exchange_down");
-    lua.pushFunction(ziglua.wrap(l_on_map));                lua.setField(-2, "on_map");
-    lua.pushFunction(ziglua.wrap(l_on_unmap));              lua.setField(-2, "on_unmap");
-    lua.pushFunction(ziglua.wrap(l_get_focused));           lua.setField(-2, "get_focused");
-    lua.pushFunction(ziglua.wrap(l_remove_node));           lua.setField(-2, "remove_node");
-    lua.pushFunction(ziglua.wrap(l_kill_client));           lua.setField(-2, "kill_client");
-    lua.pushFunction(ziglua.wrap(l_get_node_info));         lua.setField(-2, "get_node_info");
-    lua.pushFunction(ziglua.wrap(l_resize_edge));           lua.setField(-2, "resize_edge");
-    lua.pushFunction(ziglua.wrap(l_resize_corner));         lua.setField(-2, "resize_corner");
-    lua.pushFunction(ziglua.wrap(l_resize_focused_edge));   lua.setField(-2, "resize_focused_edge");
-    lua.pushFunction(ziglua.wrap(l_resize_focused_corner)); lua.setField(-2, "resize_focused_corner");
-    lua.pushFunction(ziglua.wrap(l_create_root_node));      lua.setField(-2, "create_root_node");
-    lua.pushFunction(ziglua.wrap(l_left_of));               lua.setField(-2, "left_of");
-    lua.pushFunction(ziglua.wrap(l_right_of));              lua.setField(-2, "right_of");
-    lua.pushFunction(ziglua.wrap(l_above));                 lua.setField(-2, "above");
-    lua.pushFunction(ziglua.wrap(l_below));                 lua.setField(-2, "below");
-    lua.pushFunction(ziglua.wrap(l_align_left));            lua.setField(-2, "align_left");
-    lua.pushFunction(ziglua.wrap(l_align_top));             lua.setField(-2, "align_top");
-    lua.pushFunction(ziglua.wrap(l_align_right));           lua.setField(-2, "align_right");
-    lua.pushFunction(ziglua.wrap(l_align_bottom));          lua.setField(-2, "align_bottom");
-    lua.pushFunction(ziglua.wrap(l_equal_width));           lua.setField(-2, "equal_width");
-    lua.pushFunction(ziglua.wrap(l_equal_height));          lua.setField(-2, "equal_height");
-    lua.pushFunction(ziglua.wrap(l_fixed_ratio));           lua.setField(-2, "fixed_ratio");
-    lua.pushFunction(ziglua.wrap(l_fixed_width));           lua.setField(-2, "fixed_width");
-    lua.pushFunction(ziglua.wrap(l_fixed_height));          lua.setField(-2, "fixed_height");
-    lua.pushFunction(ziglua.wrap(l_grid_cell));             lua.setField(-2, "grid_cell");
-    lua.pushFunction(ziglua.wrap(l_get_all_windows));       lua.setField(-2, "get_all_windows");
-    lua.pushFunction(ziglua.wrap(l_screen_width));          lua.setField(-2, "screen_width");
-    lua.pushFunction(ziglua.wrap(l_screen_height));         lua.setField(-2, "screen_height");
-    lua.pushFunction(ziglua.wrap(l_clear_constraints));     lua.setField(-2, "clear_constraints");
-    lua.pushFunction(ziglua.wrap(l_set_node_empty));        lua.setField(-2, "set_node_empty");
-    lua.pushFunction(ziglua.wrap(l_set_node_window));       lua.setField(-2, "set_node_window");
-    lua.pushFunction(ziglua.wrap(l_get_node_type));         lua.setField(-2, "get_node_type");
-    lua.pushFunction(ziglua.wrap(l_move_window_to_node));   lua.setField(-2, "move_window_to_node");
-    lua.pushFunction(ziglua.wrap(l_set_resize_modifier));   lua.setField(-2, "set_resize_modifier");
-    lua.pushFunction(ziglua.wrap(l_set_float_modifier));    lua.setField(-2, "set_float_modifier");
-    lua.pushFunction(ziglua.wrap(l_toggle_floating));       lua.setField(-2, "toggle_floating");
-    lua.pushFunction(ziglua.wrap(l_set_node_focused_border_color));   lua.setField(-2, "set_node_focused_border_color");
-    lua.pushFunction(ziglua.wrap(l_set_node_unfocused_border_color)); lua.setField(-2, "set_node_unfocused_border_color");
-    lua.pushFunction(ziglua.wrap(l_set_default_focus_border_color));   lua.setField(-2, "set_default_focus_border_color");
-    lua.pushFunction(ziglua.wrap(l_set_default_unfocused_border_color)); lua.setField(-2, "set_default_unfocused_border_color");
-    lua.pushFunction(ziglua.wrap(l_get_node_geometry));       lua.setField(-2, "get_node_geometry");
-    lua.pushFunction(ziglua.wrap(l_set_border_width));        lua.setField(-2, "set_border_width");
-    lua.pushFunction(ziglua.wrap(l_create_nested_workspace)); lua.setField(-2, "create_nested_workspace");
-    lua.pushFunction(ziglua.wrap(l_enter_nested));           lua.setField(-2, "enter_nested");
-    lua.pushFunction(ziglua.wrap(l_leave_nested));           lua.setField(-2, "leave_nested");
-    lua.pushFunction(ziglua.wrap(l_switch_workspace));       lua.setField(-2, "switch_workspace");
-    lua.pushFunction(ziglua.wrap(l_get_workspace));        lua.setField(-2, "get_workspace");
-    lua.pushFunction(ziglua.wrap(l_create_empty_node)); lua.setField(-2, "create_empty_node");
-    lua.pushFunction(ziglua.wrap(l_get_workspaces_at_level)); lua.setField(-2, "get_workspaces_at_level");
-    lua.pushFunction(ziglua.wrap(l_enter_workspace_by_id));   lua.setField(-2, "enter_workspace_by_id");
-    lua.pushFunction(ziglua.wrap(l_switch_to_workspace));   lua.setField(-2, "switch_to_workspace");
-    lua.pushFunction(ziglua.wrap(l_create_container));  lua.setField(-2, "create_container");
-    lua.pushFunction(ziglua.wrap(l_destroy_container)); lua.setField(-2, "destroy_container");
-    lua.pushFunction(ziglua.wrap(l_reparent));          lua.setField(-2, "reparent");
-    lua.pushFunction(ziglua.wrap(l_get_container_of));  lua.setField(-2, "get_container_of");
-    lua.pushFunction(ziglua.wrap(l_set_on_remove_promote)); lua.setField(-2, "set_on_remove_promote");
-    lua.pushFunction(ziglua.wrap(l_unregister_node)); lua.setField(-2, "unregister_node");
-    lua.pushFunction(ziglua.wrap(l_get_cursor_pos));                  lua.setField(-2, "get_cursor_pos");
-    lua.pushFunction(ziglua.wrap(l_get_cursor_relative_to_focused));  lua.setField(-2, "get_cursor_relative_to_focused");
+    // Comptime sync check: every api.entries name must appear in registrations
+    comptime {
+        @setEvalBranchQuota(100000);
+        for (api.entries) |entry| {
+            var found = false;
+            for (registrations) |reg| {
+                if (std.mem.eql(u8, entry.name, reg.name)) { found = true; break; }
+            }
+            if (!found) @compileError("api.entries has '" ++ entry.name ++ "' but it is not registered");
+        }
+        for (registrations) |reg| {
+            var found = false;
+            for (api.entries) |entry| {
+                if (std.mem.eql(u8, entry.name, reg.name)) { found = true; break; }
+            }
+            if (!found) @compileError("registration '" ++ reg.name ++ "' has no entry in api.entries");
+        }
+    }
+
+    // Register all functions
+    for (registrations) |reg| {
+        lua.pushFunction(reg.func);
+        lua.setField(-2, reg.name);
+    }
 
     lua.setGlobal("wm");
 
