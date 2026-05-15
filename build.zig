@@ -283,7 +283,8 @@ pub fn build(b: *std.Build) void {
         b.path("config/default.lua"),
         "../etc/duckwm/config.lua",  // relative to prefix, so /etc/duckwm/config.lua when prefix=/usr
     );
-    b.getInstallStep().dependOn(&install_config.step);
+    const install_step = b.step("install-config", "Install default config to etc/duckwm/");
+    install_step.dependOn(&install_config.step);
 
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
