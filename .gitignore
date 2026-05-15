@@ -19,6 +19,9 @@ meta/
 API.md
 API.norg
 
+# Dist
+dist/
+
 # Editors
 .vscode/
 .idea/
