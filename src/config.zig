@@ -18,6 +18,7 @@ const Registration = struct {
 const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
+    .{ .func = ziglua.wrap(l_exec_once),                         .name = "exec_once" },
     .{ .func = ziglua.wrap(l_set_default_arranger),              .name = "set_default_arranger" },
     .{ .func = ziglua.wrap(l_register_arranger),                 .name = "register_arranger" },
     .{ .func = ziglua.wrap(l_focus_left),                        .name = "focus_left" },
@@ -977,6 +978,30 @@ fn l_enter_workspace_by_id(lua: *Lua) i32 {
     }
     global_wm.enter_workspace(node) catch {
         _ = lua.pushString("enter_workspace failed");
+        return lua.raiseError();
+    };
+    return 0;
+}
+
+fn l_exec_once(lua: *Lua) i32 {
+    if (global_wm.startup_done) return 0;
+    lua.checkType(1, .table);
+    const len = lua.lenRaw(1);
+    var args = global_wm.allocator.alloc([]const u8, len) catch {
+        _ = lua.pushString("wm.exec_once: out of memory");
+        return lua.raiseError();
+    };
+    defer global_wm.allocator.free(args);
+    for (0..len) |i| {
+        _ = lua.getIndexRaw(1, @intCast(i + 1));
+        args[i] = lua.toString(-1) catch {
+            _ = lua.pushString("wm.exec_once: expected string in argv table");
+            return lua.raiseError();
+        };
+        lua.pop(1);
+    }
+    global_wm.spawn(args) catch {
+        _ = lua.pushString("wm.exec_once: failed to spawn process");
         return lua.raiseError();
     };
     return 0;

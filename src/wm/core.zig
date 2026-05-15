@@ -99,6 +99,7 @@ pub const WM = struct {
     config_error_count: u32,
     last_reload_time: i64,
     error_bar_win: c.Window,
+    startup_done: bool,
 
     // error
     post_load_error: ?[]u8,
@@ -162,6 +163,7 @@ pub const WM = struct {
             .config_error_count = 0,
             .last_reload_time = 0,
             .error_bar_win = 0,
+            .startup_done = false,
 
             .post_load_error = null,
 
@@ -934,6 +936,8 @@ pub const WM = struct {
             self.allocator.free(msg);
             self.post_load_error = null;
         }
+
+        self.startup_done = true;
 
         const x11_fd = c.XConnectionNumber(self.display);
 

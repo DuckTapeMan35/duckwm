@@ -64,6 +64,12 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
+        .name   = "exec_once",
+        .desc   = "Execute a command at startup only",
+        .params = &.{ .{ .name = "argv", .typ = "string[]" } },
+        .ret    = "nil",
+    },
+    .{
         .name   = "focus",
         .desc   = "Focus a specific node by ID.",
         .params = &.{ .{ .name = "id", .typ = "integer" } },
