@@ -1086,19 +1086,126 @@ fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
     lua.raiseError();
 }
 
-pub fn load(wm: *WM) !void {
-    global_wm = wm;
-
-    var lua = try Lua.init(wm.allocator);
-    wm.lua = lua;
-
+fn setup_lua(wm: *WM, lua: *Lua) void {
     lua.openLibs();
     lua.newTable();
-
     lua.pushInteger(c.Mod4Mask);    lua.setField(-2, "MOD_SUPER");
     lua.pushInteger(c.Mod1Mask);    lua.setField(-2, "MOD_ALT");
     lua.pushInteger(c.ShiftMask);   lua.setField(-2, "MOD_SHIFT");
     lua.pushInteger(c.ControlMask); lua.setField(-2, "MOD_CTRL");
+    for (registrations) |reg| {
+        lua.pushFunction(reg.func);
+        lua.setField(-2, reg.name);
+    }
+    lua.setGlobal("wm");
+    _ = wm;
+}
+
+fn reset_vm(wm: *WM) !*Lua {
+    if (wm.lua) |old| old.deinit();
+    const lua = try Lua.init(wm.allocator);
+    wm.lua = lua;
+    setup_lua(wm, lua);
+    wm.ungrab_keys();
+    wm.keybinds.clearRetainingCapacity();
+    wm.default_arranger_ref = 0;
+    wm.reset_arranger_refs(&wm.graph);
+    return lua;
+}
+
+fn resolve_user_path(wm: *WM) ?[]const u8 {
+    if (c.getenv("XDG_CONFIG_HOME")) |xdg| {
+        const base: []const u8 = std.mem.span(xdg);
+        if (base.len > 0)
+            return std.fmt.allocPrint(wm.allocator, "{s}/duckwm/config.lua", .{base}) catch null;
+    }
+    if (c.getenv("HOME")) |home_ptr| {
+        const home: []const u8 = std.mem.span(home_ptr);
+        if (home.len > 0)
+            return std.fmt.allocPrint(wm.allocator, "{s}/.config/duckwm/config.lua", .{home}) catch null;
+    }
+    return null;
+}
+
+fn watch_config(wm: *WM, path: []const u8) void {
+    const dir = std.fs.path.dirname(path) orelse {
+        std.debug.print("watch_config: could not get dirname of '{s}'\n", .{path});
+        return;
+    };
+    std.debug.print("watch_config: watching dir '{s}'\n", .{dir});
+    const dir_z = std.mem.concatWithSentinel(wm.allocator, u8, &[_][]const u8{dir}, 0) catch return;
+    defer wm.allocator.free(dir_z);
+    wm.watch_config_dir(dir_z);
+}
+
+pub fn reload(wm: *WM) void {
+    const user_path = resolve_user_path(wm) orelse {
+        std.debug.print("duckwm: no user config path found for reload\n", .{});
+        return;
+    };
+    defer wm.allocator.free(user_path);
+    const path_z = std.mem.concatWithSentinel(wm.allocator, u8, &[_][]const u8{user_path}, 0) catch return;
+    defer wm.allocator.free(path_z);
+
+    // Syntax check only — compile without executing
+    const old_lua = wm.lua orelse return;
+    std.debug.print("reload: attempting to load '{s}'\n", .{path_z});
+    var load_err: ?anyerror = null;
+    for (0..5) |_| {
+        old_lua.loadFile(path_z, .text) catch |err| {
+            load_err = err;
+            _ = c.usleep(10_000);
+            continue;
+        };
+        load_err = null;
+        break;
+    }
+    if (load_err) |err| {
+        const lua_msg = old_lua.toString(-1) catch null;
+        const msg = lua_msg orelse @errorName(err);
+        const owned = wm.allocator.dupe(u8, msg) catch null;
+        old_lua.pop(1);
+        if (owned) |m| {
+            wm_mod.notify_error(wm, m);
+            wm.allocator.free(m);
+        }
+        return;
+    }
+    old_lua.pop(1);
+
+    // Syntax clean — full reset and execute
+    var lua = reset_vm(wm) catch {
+        std.debug.print("reload: failed to init Lua VM\n", .{});
+        return;
+    };
+    lua.doFile(path_z) catch |err| {
+        const lua_msg_raw = lua.toString(-1) catch null;
+        const owned_msg: ?[]u8 = if (lua_msg_raw) |msg|
+            wm.allocator.dupe(u8, msg) catch null
+        else
+            null;
+        lua.pop(1);
+        wm_mod.notify_error(wm, owned_msg orelse @errorName(err));
+        if (owned_msg) |m| wm.allocator.free(m);
+        // Fall through to default
+        lua = reset_vm(wm) catch return;
+        lua.doFile("/etc/duckwm/config.lua") catch |err2| {
+            std.debug.print("default config also failed: {}\n", .{err2});
+            lua.pop(1);
+        };
+        return;
+    };
+    wm.config_error_count = 0;
+    std.debug.print("config reloaded successfully\n", .{});
+}
+
+pub fn load(wm: *WM) !void {
+    std.debug.print("load: starting\n", .{});
+    global_wm = wm;
+
+    var lua = try Lua.init(wm.allocator);
+    wm.lua = lua;
+    setup_lua(wm, lua);
 
     comptime {
         @setEvalBranchQuota(100000);
@@ -1118,43 +1225,24 @@ pub fn load(wm: *WM) !void {
         }
     }
 
-    for (registrations) |reg| {
-        lua.pushFunction(reg.func);
-        lua.setField(-2, reg.name);
-    }
-
-    lua.setGlobal("wm");
-
-    const user_path: ?[]const u8 = blk: {
-        if (c.getenv("XDG_CONFIG_HOME")) |xdg| {
-            const base: []const u8 = std.mem.span(xdg);
-            if (base.len > 0) {
-                break :blk std.fmt.allocPrint(wm.allocator, "{s}/duckwm/config.lua", .{base}) catch null;
-            }
-        }
-        if (c.getenv("HOME")) |home_ptr| {
-            const home: []const u8 = std.mem.span(home_ptr);
-            if (home.len > 0) {
-                break :blk std.fmt.allocPrint(wm.allocator, "{s}/.config/duckwm/config.lua", .{home}) catch null;
-            }
-        }
-        break :blk null;
-    };
+    const user_path = resolve_user_path(wm);
     defer if (user_path) |p| wm.allocator.free(p);
 
-    // pending_error is transferred to wm.post_load_error on failure;
-    // if not transferred it is freed by this defer.
     var pending_error: ?[]u8 = null;
     defer if (pending_error) |msg| wm.allocator.free(msg);
 
     const paths_to_try = [_]?[]const u8{ user_path, "/etc/duckwm/config.lua" };
     for (paths_to_try) |maybe_path| {
-        const path = maybe_path orelse continue;
+        const path = maybe_path orelse {
+            std.debug.print("load: skipping null path\n", .{});
+            continue;
+        };
+        std.debug.print("load: trying path '{s}'\n", .{path});
         const path_z = std.mem.concatWithSentinel(wm.allocator, u8, &[_][]const u8{path}, 0) catch continue;
         defer wm.allocator.free(path_z);
 
         lua.doFile(path_z) catch |err| {
-            // Copy the error message out of Lua's memory before we potentially reset the VM
+            std.debug.print("load: doFile failed: {}\n", .{err});
             const lua_msg_raw = lua.toString(-1) catch null;
             const owned_msg: ?[]u8 = if (lua_msg_raw) |msg|
                 wm.allocator.dupe(u8, msg) catch null
@@ -1169,44 +1257,36 @@ pub fn load(wm: *WM) !void {
                 err == error.FileNotFound;
 
             lua.pop(1);
-
-            // Tear down the broken VM and start fresh
-            lua.deinit();
-            lua = try Lua.init(wm.allocator);
-            wm.lua = lua;
-            lua.openLibs();
-            lua.newTable();
-            lua.pushInteger(c.Mod4Mask);    lua.setField(-2, "MOD_SUPER");
-            lua.pushInteger(c.Mod1Mask);    lua.setField(-2, "MOD_ALT");
-            lua.pushInteger(c.ShiftMask);   lua.setField(-2, "MOD_SHIFT");
-            lua.pushInteger(c.ControlMask); lua.setField(-2, "MOD_CTRL");
-            for (registrations) |reg| {
-                lua.pushFunction(reg.func);
-                lua.setField(-2, reg.name);
-            }
-            lua.setGlobal("wm");
-
-            wm.ungrab_keys();
-            wm.keybinds.clearRetainingCapacity();
-            wm.default_arranger_ref = 0;
-            wm.reset_arranger_refs(&wm.graph);
+            lua = reset_vm(wm) catch continue;
 
             if (is_missing) continue;
 
-            if (pending_error == null) {
+            if (pending_error == null)
                 pending_error = std.fmt.allocPrint(wm.allocator, "{s}", .{owned_msg orelse @errorName(err)}) catch null;
-            }
             continue;
         };
-        // Loaded successfully — transfer any pending error to wm for deferred notification
+         std.debug.print("load: doFile succeeded for '{s}'\n", .{path});
+
+        // Loaded successfully
         if (pending_error) |msg| {
             wm.post_load_error = msg;
-            pending_error = null; // prevent defer from freeing it
+            pending_error = null;
         }
+        // Watch user config dir for live reload (only if we loaded the user config)
+        std.debug.print("load: successful path='{s}' user_path='{s}'\n", .{
+            path,
+            user_path orelse "(null)",
+        });
+        if (user_path != null and std.mem.eql(u8, path, user_path.?)) {
+            watch_config(wm, path);
+        } else {
+            std.debug.print("load: skipping watch (loaded system config)\n", .{});
+        }
+
+        wm.reload_fn = reload;
         return;
     }
 
-    // No config loaded at all
     wm.post_load_error = pending_error
         orelse std.fmt.allocPrint(wm.allocator, "no config found at $XDG_CONFIG_HOME/duckwm/config.lua or /etc/duckwm/config.lua", .{}) catch null;
     pending_error = null;

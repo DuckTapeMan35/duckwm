@@ -495,6 +495,13 @@ fn find_float_edge_or_corner(node: *Node, x: i32, y: i32, threshold: i32) struct
 }
 
 pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
+    // Dismiss error bar on click
+    if (wm.error_bar_win != 0 and ev.window == wm.error_bar_win) {
+        _ = c.XDestroyWindow(wm.display, wm.error_bar_win);
+        _ = c.XFlush(wm.display);
+        wm.error_bar_win = 0;
+        return;
+    }
     const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
     if (lookup_win == 0) return;
 

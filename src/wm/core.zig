@@ -12,17 +12,8 @@ const events_mod = @import("events.zig");
 const float_mod = @import("float.zig");
 
 pub fn notify_error(wm: *WM, msg: []const u8) void {
-    std.debug.print("duckwm lua error: {s}\n", .{msg});
-    // Spawn an xterm with the error message so the user sees it even without
-    // a terminal already open.
-    const full = std.fmt.allocPrint(wm.allocator,
-        "xterm -e 'echo \"duckwm config error:\"; echo \"{s}\"; echo; echo \"Press enter to close.\"; read'",
-        .{msg}) catch return;
-    defer wm.allocator.free(full);
-    const argv = [_][]const u8{ "sh", "-c", full };
-    wm.spawn(&argv) catch {};
+    wm.show_error_bar(msg);
 }
-
 
 pub const Strut = struct {
     left: u32,
@@ -93,7 +84,7 @@ pub const WM = struct {
     float_win_start_y: i32,
 
 
-    // data for the lua API and callbacks
+    // data for the lua API
     node_registry: std.AutoHashMap(u32, *Node),
     window_to_node_id: std.AutoHashMap(c.Window, u32),
     next_node_id: u32,
@@ -102,6 +93,12 @@ pub const WM = struct {
     border_width: i32,
     default_border_color_focused: u32,
     default_border_color_unfocused: u32,
+    inotify_fd: i32,
+    inotify_wd: i32,
+    reload_fn: ?*const fn(*WM) void,
+    config_error_count: u32,
+    last_reload_time: i64,
+    error_bar_win: c.Window,
 
     // error
     post_load_error: ?[]u8,
@@ -159,6 +156,12 @@ pub const WM = struct {
             .border_width = 2,
             .default_border_color_focused = 0x0000FF,
             .default_border_color_unfocused = 0x00FF00,
+            .inotify_fd = -1,
+            .inotify_wd = -1,
+            .reload_fn = null,
+            .config_error_count = 0,
+            .last_reload_time = 0,
+            .error_bar_win = 0,
 
             .post_load_error = null,
 
@@ -217,6 +220,48 @@ pub const WM = struct {
             if (node.content == .workspace) {
                 self.reset_arranger_refs(node.content.workspace);
             }
+        }
+    }
+
+    pub fn watch_file(self: *WM, path: [:0]const u8) void {
+        if (self.inotify_fd < 0) {
+            self.inotify_fd = @intCast(std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC) catch return);
+        }
+        if (self.inotify_wd >= 0) {
+            _ = std.os.linux.inotify_rm_watch(self.inotify_fd, self.inotify_wd);
+        }
+        self.inotify_wd = @intCast(std.os.linux.inotify_add_watch(
+            self.inotify_fd,
+            path,
+            std.os.linux.IN.CLOSE_WRITE | std.os.linux.IN.MOVED_TO,
+        ));
+    }
+
+    pub fn watch_config_dir(self: *WM, dir_path: [:0]const u8) void {
+        if (self.inotify_fd < 0) {
+            const fd = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC);
+            if (fd < 0) return;
+            self.inotify_fd = @intCast(fd);
+        }
+        if (self.inotify_wd >= 0) {
+            _ = std.os.linux.inotify_rm_watch(self.inotify_fd, self.inotify_wd);
+        }
+        const wd = std.os.linux.inotify_add_watch(
+            self.inotify_fd,
+            dir_path,
+            std.os.linux.IN.CLOSE_WRITE | std.os.linux.IN.MOVED_TO,
+        );
+        if (wd >= 0) self.inotify_wd = @intCast(wd);
+    }
+
+    pub fn unwatch_file(self: *WM) void {
+        if (self.inotify_fd >= 0) {
+            if (self.inotify_wd >= 0) {
+                _ = std.os.linux.inotify_rm_watch(self.inotify_fd, self.inotify_wd);
+                self.inotify_wd = -1;
+            }
+            std.posix.close(self.inotify_fd);
+            self.inotify_fd = -1;
         }
     }
 
@@ -503,11 +548,9 @@ pub const WM = struct {
                 .window => |win| {
                     if (node.floating) continue;
                     if (self.frames.get(win)) |win_frame| {
-                        const fx: i32  = node.x + bw;
-                        const fy: i32  = node.y + bw;
                         const fw: u32  = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
                         const fh: u32  = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
-                        _ = c.XMoveResizeWindow(self.display, win_frame, fx, fy, fw, fh);
+                        _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
                         _ = c.XMoveResizeWindow(self.display, win, 0, 0, fw, fh);
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
                     }
@@ -515,11 +558,9 @@ pub const WM = struct {
                 .workspace => {
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {
-                            const fx: i32 = node.x + bw;
-                            const fy: i32 = node.y + bw;
                             const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
                             const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
-                            _ = c.XMoveResizeWindow(self.display, win_frame, fx, fy, fw, fh);
+                            _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
                             _ = c.XMoveResizeWindow(self.display, pw, 0, 0, fw, fh);
                             _ = c.XResizeWindow(self.display, pw, fw, fh);
                         }
@@ -739,6 +780,84 @@ pub const WM = struct {
         }
     }
 
+    pub fn show_error_bar(self: *WM, msg: []const u8) void {
+        std.debug.print("duckwm error: {s}\n", .{msg});
+
+        // Destroy any existing error bar first
+        if (self.error_bar_win != 0) {
+            _ = c.XDestroyWindow(self.display, self.error_bar_win);
+            self.error_bar_win = 0;
+        }
+
+        const bar_height: c_uint = 20;
+        const win = c.XCreateSimpleWindow(
+            self.display, self.root,
+            0, 0,
+            self.screen_width, bar_height,
+            0, 0, 0xCC0000,
+        );
+
+        const net_wm_window_type = c.XInternAtom(self.display, "_NET_WM_WINDOW_TYPE", 0);
+        const net_wm_window_type_dock = c.XInternAtom(self.display, "_NET_WM_WINDOW_TYPE_DOCK", 0);
+        const xa_atom = c.XInternAtom(self.display, "ATOM", 0);
+        _ = c.XChangeProperty(self.display, win,
+            net_wm_window_type, xa_atom, 32, c.PropModeReplace,
+            @ptrCast(&net_wm_window_type_dock), 1);
+
+        const strut_partial = c.XInternAtom(self.display, "_NET_WM_STRUT_PARTIAL", 0);
+        const XA_CARDINAL = c.XInternAtom(self.display, "CARDINAL", 0);
+        const strut = [12]c_ulong{ 0, 0, bar_height, 0,
+            0, 0, 0, 0,
+            0, self.screen_width, 0, 0 };
+        _ = c.XChangeProperty(self.display, win,
+            strut_partial, XA_CARDINAL, 32, c.PropModeReplace,
+            @ptrCast(&strut), 12);
+
+        var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        wa.override_redirect = 1;
+        _ = c.XChangeWindowAttributes(self.display, win, c.CWOverrideRedirect, &wa);
+
+        _ = c.XSelectInput(self.display, win, c.ButtonPressMask);
+        _ = c.XMapRaised(self.display, win);
+
+        const gc = c.XCreateGC(self.display, win, 0, null);
+        defer _ = c.XFreeGC(self.display, gc);
+        _ = c.XSetForeground(self.display, gc, 0xFFFFFF);
+        const font = c.XLoadQueryFont(self.display, "fixed");
+        if (font) |f| {
+            _ = c.XSetFont(self.display, gc, f.*.fid);
+            defer _ = c.XFreeFont(self.display, f);
+        }
+
+        const prefix = "duckwm: ";
+        const full_len = @min(prefix.len + msg.len, 200);
+        var buf: [200]u8 = undefined;
+        @memcpy(buf[0..prefix.len], prefix);
+        @memcpy(buf[prefix.len..full_len], msg[0..full_len - prefix.len]);
+        _ = c.XDrawString(self.display, win, gc, 4, 14,
+            buf[0..full_len].ptr, @intCast(full_len));
+
+        const x_label = "[x]";
+        _ = c.XDrawString(self.display, win, gc,
+            @intCast(self.screen_width - 30), 14,
+            x_label.ptr, x_label.len);
+
+        _ = c.XFlush(self.display);
+
+        self.dock_struts.put(win, .{
+            .left = 0, .right = 0,
+            .top = @intCast(bar_height), .bottom = 0,
+        }) catch {};
+        self.resolve(self.current_graph) catch {};
+        self.rebuild_focus_edges() catch {};
+        self.flush(self.current_graph) catch {};
+
+        self.error_bar_win = win;
+        _ = c.XGrabButton(self.display, 1, c.AnyModifier, win, 0,
+            c.ButtonPressMask,
+            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    }
+
     /// Create the very first workspace node in the top-level graph.
     /// This is called once in `run` so that Super+Ctrl+1 always works
     /// and the screen is never empty.
@@ -798,7 +917,10 @@ pub const WM = struct {
         events_mod.wm_detected = false;
         _ = c.XSetErrorHandler(events_mod.on_wm_detected);
         events_mod.announce_supported_hints(self);
-        _ = c.XSelectInput(self.display, self.root, c.SubstructureRedirectMask | c.SubstructureNotifyMask | c.KeyPressMask |  c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
+        _ = c.XSelectInput(self.display, self.root,
+            c.SubstructureRedirectMask | c.SubstructureNotifyMask |
+            c.KeyPressMask | c.ButtonPressMask | c.ButtonReleaseMask |
+            c.PointerMotionMask);
         _ = c.XSync(self.display, 0);
         if (events_mod.wm_detected) {
             std.debug.print("Another window manager is already running. Exiting.\n", .{});
@@ -806,26 +928,66 @@ pub const WM = struct {
         }
         _ = c.XSetErrorHandler(events_mod.on_x_error);
         try self.create_initial_workspace();
+
         if (self.post_load_error) |msg| {
-            notify_error(self, msg);
+            self.show_error_bar(msg);
             self.allocator.free(msg);
             self.post_load_error = null;
         }
+
+        const x11_fd = c.XConnectionNumber(self.display);
+
         while (true) {
-            var e: c.XEvent = undefined;
-            _ = c.XNextEvent(self.display, &e);
-            switch (e.type) {
-                c.CreateNotify => events_mod.on_create_notify(self, &e.xcreatewindow),
-                c.DestroyNotify => try events_mod.on_destroy_notify(self, &e.xdestroywindow),
-                c.ReparentNotify => events_mod.on_reparent_notify(self, &e.xreparent),
-                c.ConfigureRequest => events_mod.on_configure_request(self, &e.xconfigurerequest),
-                c.MapRequest => try events_mod.on_map_request(self, &e.xmaprequest),
-                c.KeyPress => events_mod.on_key_press(self, &e.xkey),
-                c.ButtonPress => events_mod.on_button_press(self, &e.xbutton),
-                c.MotionNotify => events_mod.on_motion_notify(self, &e.xmotion),
-                c.ButtonRelease => events_mod.on_button_release(self, &e.xbutton),
-                c.PropertyNotify => try events_mod.on_property_notify(self, &e.xproperty),
-                else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
+            var fds_buf: [2]std.posix.pollfd = undefined;
+            fds_buf[0] = .{ .fd = x11_fd, .events = std.posix.POLL.IN, .revents = 0 };
+
+            const fds: []std.posix.pollfd = if (self.inotify_fd >= 0) blk: {
+                fds_buf[1] = .{ .fd = self.inotify_fd, .events = std.posix.POLL.IN, .revents = 0 };
+                break :blk fds_buf[0..2];
+            } else fds_buf[0..1];
+
+            _ = std.posix.poll(fds, -1) catch continue;
+
+            // Handle inotify events
+            if (self.inotify_fd >= 0 and fds_buf[1].revents & std.posix.POLL.IN != 0) {
+                var ibuf: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
+                while (true) {
+                    const n = std.posix.read(self.inotify_fd, &ibuf) catch break;
+                    if (n == 0) break;
+                    var drain_fds = [1]std.posix.pollfd{.{
+                        .fd = self.inotify_fd,
+                        .events = std.posix.POLL.IN,
+                        .revents = 0,
+                    }};
+                    const ready = std.posix.poll(&drain_fds, 0) catch break;
+                    if (ready == 0 or drain_fds[0].revents & std.posix.POLL.IN == 0) break;
+                }
+                var ts: std.os.linux.timespec = undefined;
+                _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+                const now_ms: i64 = ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+                if (now_ms - self.last_reload_time > 200) {
+                    self.last_reload_time = now_ms;
+                    if (self.reload_fn) |f| f(self);
+                }
+            }
+
+            // Handle X11 events
+            while (c.XPending(self.display) > 0) {
+                var e: c.XEvent = undefined;
+                _ = c.XNextEvent(self.display, &e);
+                switch (e.type) {
+                    c.CreateNotify     => events_mod.on_create_notify(self, &e.xcreatewindow),
+                    c.DestroyNotify    => try events_mod.on_destroy_notify(self, &e.xdestroywindow),
+                    c.ReparentNotify   => events_mod.on_reparent_notify(self, &e.xreparent),
+                    c.ConfigureRequest => events_mod.on_configure_request(self, &e.xconfigurerequest),
+                    c.MapRequest       => try events_mod.on_map_request(self, &e.xmaprequest),
+                    c.KeyPress         => events_mod.on_key_press(self, &e.xkey),
+                    c.ButtonPress      => events_mod.on_button_press(self, &e.xbutton),
+                    c.MotionNotify     => events_mod.on_motion_notify(self, &e.xmotion),
+                    c.ButtonRelease    => events_mod.on_button_release(self, &e.xbutton),
+                    c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
+                    else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
+                }
             }
         }
     }
