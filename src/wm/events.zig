@@ -735,9 +735,12 @@ pub fn on_key_press(wm: *WM, event: *c.XKeyEvent) void {
             },
             .lua => |ref| {
                 if (wm.lua) |lua| {
+                    const top = lua.getTop();
                     _ = lua.getIndexRaw(ziglua.registry_index, ref);
                     lua.protectedCall(.{ .args = 0, .results = 0 }) catch |err| {
-                        std.debug.print("Lua keybinding error: {}\n", .{err});
+                        const msg = lua.toString(-1) catch null;
+                        std.debug.print("Lua keybinding error: {} {s}\n", .{ err, msg orelse "" });
+                        lua.setTop(top);
                     };
                 }
             },

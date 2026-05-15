@@ -11,6 +11,19 @@ const resize_mod = @import("resize.zig");
 const events_mod = @import("events.zig");
 const float_mod = @import("float.zig");
 
+pub fn notify_error(wm: *WM, msg: []const u8) void {
+    std.debug.print("duckwm lua error: {s}\n", .{msg});
+    // Spawn an xterm with the error message so the user sees it even without
+    // a terminal already open.
+    const full = std.fmt.allocPrint(wm.allocator,
+        "xterm -e 'echo \"duckwm config error:\"; echo \"{s}\"; echo; echo \"Press enter to close.\"; read'",
+        .{msg}) catch return;
+    defer wm.allocator.free(full);
+    const argv = [_][]const u8{ "sh", "-c", full };
+    wm.spawn(&argv) catch {};
+}
+
+
 pub const Strut = struct {
     left: u32,
     right: u32,
@@ -90,6 +103,9 @@ pub const WM = struct {
     default_border_color_focused: u32,
     default_border_color_unfocused: u32,
 
+    // error
+    post_load_error: ?[]u8,
+
     // allocator
     allocator: std.mem.Allocator,
 
@@ -144,6 +160,8 @@ pub const WM = struct {
             .default_border_color_focused = 0x0000FF,
             .default_border_color_unfocused = 0x00FF00,
 
+            .post_load_error = null,
+
             .allocator = allocator,
         };
 
@@ -193,7 +211,16 @@ pub const WM = struct {
         _ = c.XCloseDisplay(self.display);
     }
 
-    /// Call the arranger for `graph` (or the default) with the given event.
+    pub fn reset_arranger_refs(self: *WM, g: *graph_mod.Graph) void {
+        g.arranger_ref = 0;
+        for (g.nodes.items) |node| {
+            if (node.content == .workspace) {
+                self.reset_arranger_refs(node.content.workspace);
+            }
+        }
+    }
+
+    // Call the arranger for `graph` (or the default) with the given event.
     pub fn call_arranger(
         self: *WM,
         graph: *graph_mod.Graph,
@@ -202,16 +229,21 @@ pub const WM = struct {
         prev_id: ?u32,
     ) void {
         const lua = self.lua orelse return;
+        const top_before = lua.getTop();
 
-        // If this graph has no arranger yet, call the default factory (no args)
-        // to get a fresh closure and store it on the graph.
         if (graph.arranger_ref == 0) {
             if (self.default_arranger_ref == 0) return;
             _ = lua.getIndexRaw(ziglua.registry_index, self.default_arranger_ref);
             lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
                 std.debug.print("arranger factory error: {}\n", .{err});
+                lua.setTop(top_before);
                 return;
             };
+            if (lua.typeOf(-1) != .function) {
+                std.debug.print("arranger factory did not return a function (got {})\n", .{lua.typeOf(-1)});
+                lua.setTop(top_before);
+                return;
+            }
             graph.arranger_ref = lua.ref(ziglua.registry_index);
         }
 
@@ -220,7 +252,10 @@ pub const WM = struct {
         lua.pushInteger(@intCast(node_id));
         if (prev_id) |pid| lua.pushInteger(@intCast(pid)) else lua.pushNil();
         lua.protectedCall(.{ .args = 3, .results = 0 }) catch |err| {
-            std.debug.print("arranger callback error: {}\n", .{err});
+            const lua_msg = lua.toString(-1) catch null;
+            std.debug.print("arranger callback error: {} msg={s}\n",
+                .{ err, lua_msg orelse "none" });
+            lua.setTop(top_before);
         };
     }
 
@@ -771,6 +806,11 @@ pub const WM = struct {
         }
         _ = c.XSetErrorHandler(events_mod.on_x_error);
         try self.create_initial_workspace();
+        if (self.post_load_error) |msg| {
+            notify_error(self, msg);
+            self.allocator.free(msg);
+            self.post_load_error = null;
+        }
         while (true) {
             var e: c.XEvent = undefined;
             _ = c.XNextEvent(self.display, &e);

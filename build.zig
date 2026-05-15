@@ -279,6 +279,12 @@ pub fn build(b: *std.Build) void {
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
 
+    const install_config = b.addInstallFile(
+        b.path("config/default.lua"),
+        "../etc/duckwm/config.lua",  // relative to prefix, so /etc/duckwm/config.lua when prefix=/usr
+    );
+    b.getInstallStep().dependOn(&install_config.step);
+
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
     // This will evaluate the `run` step rather than the default step.
