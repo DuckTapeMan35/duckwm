@@ -145,9 +145,12 @@ fn l_set_resize_modifier(lua: *Lua) i32 {
     if (global_wm.resize_modifier) |old|
         _ = c.XUngrabButton(@ptrCast(global_wm.display), c.AnyButton, old, global_wm.root);
     global_wm.resize_modifier = mod;
-    _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod, global_wm.root, 0,
-        c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
-        c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    const locks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
+    for (locks) |lock| {
+        _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod | lock, global_wm.root, 0,
+            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
+            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    }
     return 0;
 }
 
@@ -156,9 +159,12 @@ fn l_set_float_modifier(lua: *Lua) i32 {
     if (global_wm.float_move_modifier) |old|
         _ = c.XUngrabButton(@ptrCast(global_wm.display), c.AnyButton, old, global_wm.root);
     global_wm.float_move_modifier = mod;
-    _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod, global_wm.root, 0,
-        c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
-        c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    const locks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
+    for (locks) |lock| {
+        _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod | lock, global_wm.root, 0,
+            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
+            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    }
     return 0;
 }
 

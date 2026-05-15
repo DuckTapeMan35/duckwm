@@ -498,9 +498,11 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
     const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
     if (lookup_win == 0) return;
 
+    const clean_state = ev.state & ~@as(c_uint, c.LockMask | c.Mod2Mask | c.Mod3Mask | c.Mod5Mask);
+
     // ----- Floating handling -----
     if (wm.float_move_modifier) |float_modifier| {
-        if (ev.state & float_modifier != 0) {
+        if (clean_state & float_modifier != 0) {
             const client = wm.get_client_from_frame(lookup_win) orelse return;
             const node_id = wm.window_to_node_id.get(client) orelse return;
             const node = wm.node_registry.get(node_id) orelse return;
@@ -518,7 +520,6 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
                     wm.resize_h_edge   = info.corner_h;
                     wm.resize_end_x    = ev.x_root;
                     wm.resize_end_y    = ev.y_root;
-                    // fixed point is the opposite corner
                     wm.resize_fixed_x = if (info.corner_v == left) right else left;
                     wm.resize_fixed_y = if (info.corner_h == top) bottom else top;
                 } else if (info.is_edge) {
@@ -535,7 +536,7 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
                     wm.resize_end_y = ev.y_root;
                 } else {
                     wm.float_moving       = true;
-                    wm.float_move_frame   = lookup_win;   // <-- FIX: store the frame window
+                    wm.float_move_frame   = lookup_win;
                     wm.float_move_start_x = ev.x_root;
                     wm.float_move_start_y = ev.y_root;
                     wm.float_win_start_x  = node.x;
@@ -551,7 +552,7 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
 
     // ----- Tiling resize -----
     if (wm.resize_modifier) |resize_modifier| {
-        if (ev.state & resize_modifier == 0) return;
+        if (clean_state & resize_modifier == 0) return;
     } else return;
 
     if (resize_mod.find_corner_at(wm, ev.x_root, ev.y_root, 8)) |corner| {
