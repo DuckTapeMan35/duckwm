@@ -24,6 +24,8 @@ pkg/
 src/
 *.pkg.tar.zst
 *.pkg.tar.xz
+*.log
+duckwm-git/
 
 # Editors
 .vscode/
