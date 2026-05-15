@@ -11,7 +11,7 @@ local LAYOUT = "grid"  -- "dwindle", "grid", or "meridian"
 --  Common keybindings
 -- ==================================================================
 
-wm.bind(M,     "z",         function() wm.spawn({"xterm"}) end)
+wm.bind(M,     "Return",         function() wm.spawn({"xterm"}) end)
 wm.bind(M,     "q",         wm.kill_client)
 wm.bind(M,     "h",         wm.focus_left)
 wm.bind(M,     "l",         wm.focus_right)
@@ -28,7 +28,7 @@ wm.bind(M | C, "j",         function() wm.resize_focused_edge("down",  20) end)
 wm.bind(M | C, "r",         function() wm.resize_focused_corner(10, 10) end)
 wm.bind(M,     "f",         wm.toggle_floating)
 wm.bind(M,     "y",         wm.enter_nested)
-wm.bind(M,     "BackSpace", wm.leave_nested)
+wm.bind(M,     "Escape", wm.leave_nested)
 
 wm.bind(M, "w", function()
     wm.create_nested_workspace()
@@ -36,7 +36,7 @@ end)
 
 for i = 1, 9 do
     local idx = i
-    wm.bind(M | C, tostring(idx), function() wm.switch_to_workspace(idx) end)
+    wm.bind(M, tostring(idx), function() wm.switch_to_workspace(idx) end)
 end
 
 -- ==================================================================
