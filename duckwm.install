@@ -11,13 +11,30 @@ post_install() {
     echo ""
 }
 
-post_upgrade() {
+post_install() {
     echo ""
-    echo "==> duckwm upgraded."
-    echo "    Refresh your LuaLS meta and docs:"
+    echo "==> duckwm installed."
+    echo "    Run the following as your user to set up your config:"
     echo ""
+    echo "      mkdir -p ~/.config/duckwm/meta ~/.config/duckwm/docs"
+    echo "      cp /etc/duckwm/config.lua ~/.config/duckwm/config.lua"
     echo "      cp /usr/share/duckwm/meta/wm.lua ~/.config/duckwm/meta/wm.lua"
     echo "      cp /usr/share/doc/duckwm/API.md ~/.config/duckwm/docs/API.md"
     echo "      cp /usr/share/doc/duckwm/API.norg ~/.config/duckwm/docs/API.norg"
     echo ""
+}
+
+post_upgrade() {
+    # Refresh meta and docs for all users who have duckwm configured
+    for user_home in /home/*; do
+        if [ -d "$user_home/.config/duckwm/meta" ]; then
+            cp /usr/share/duckwm/meta/wm.lua "$user_home/.config/duckwm/meta/wm.lua"
+            echo "==> Refreshed LuaLS meta for $(basename $user_home)"
+        fi
+        if [ -d "$user_home/.config/duckwm/docs" ]; then
+            cp /usr/share/doc/duckwm/API.md "$user_home/.config/duckwm/docs/API.md"
+            cp /usr/share/doc/duckwm/API.norg "$user_home/.config/duckwm/docs/API.norg"
+            echo "==> Refreshed API docs for $(basename $user_home)"
+        fi
+    done
 }
