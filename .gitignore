@@ -19,6 +19,12 @@ meta/
 API.md
 API.norg
 
+# makepkg artifacts
+pkg/
+src/
+*.pkg.tar.zst
+*.pkg.tar.xz
+
 # Dist
 dist/
 
