@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "Lua.workspace.library": [
+    "meta"
+  ],
+  "Lua.runtime.version": "Lua 5.4",
+  "Lua.diagnostics.globals": [
+    "wm"
+  ],
+  "Lua.workspace.checkThirdParty": false
+}

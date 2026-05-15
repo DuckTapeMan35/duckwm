@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=duckwm
+Comment=A constraint-based tiling window manager
+Exec=duckwm
+Type=XSession
+DesktopNames=duckwm

@@ -25,9 +25,6 @@ src/
 *.pkg.tar.zst
 *.pkg.tar.xz
 
-# Dist
-dist/
-
 # Editors
 .vscode/
 .idea/
