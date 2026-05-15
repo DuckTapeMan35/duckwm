@@ -21,29 +21,14 @@ pub fn toggle_floating(wm: *WM) !void {
         // ── Un-float ──────────────────────────────────────────────────────
         focused.floating = false;
         // Re-integrate into the tiling layout exactly like a new window
-        if (wm.lua) |lua| {
-            if (wm.on_map_ref != 0) {
-                _ = lua.getIndexRaw(ziglua.registry_index, wm.on_map_ref);
-                lua.pushInteger(@intCast(id));
-                lua.pushNil(); // no "previously focused" hint needed here
-                lua.protectedCall(.{ .args = 2, .results = 0 }) catch |err|
-                    std.debug.print("toggle_floating on_map error: {}\n", .{err});
-            }
-        }
+        wm.call_arranger(wm.current_graph, "map", id, null);
     } else {
         // ── Float ─────────────────────────────────────────────────────────
         focused.floating = true;
         // Clear constraints so the solver never touches this node again
         focused.constraints.clearRetainingCapacity();
         // Let Lua remove it from the grid and reflow the remaining windows
-        if (wm.lua) |lua| {
-            if (wm.on_unmap_ref != 0) {
-                _ = lua.getIndexRaw(ziglua.registry_index, wm.on_unmap_ref);
-                lua.pushInteger(@intCast(id));
-                lua.protectedCall(.{ .args = 1, .results = 0 }) catch |err|
-                    std.debug.print("toggle_floating on_unmap error: {}\n", .{err});
-            }
-        }
+        wm.call_arranger(wm.current_graph, "unmap", id, null);
     }
 
     try wm.resolve(wm.current_graph);

@@ -18,6 +18,8 @@ const Registration = struct {
 const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
+    .{ .func = ziglua.wrap(l_set_default_arranger),              .name = "set_default_arranger" },
+    .{ .func = ziglua.wrap(l_register_arranger),                 .name = "register_arranger" },
     .{ .func = ziglua.wrap(l_focus_left),                        .name = "focus_left" },
     .{ .func = ziglua.wrap(l_focus_right),                       .name = "focus_right" },
     .{ .func = ziglua.wrap(l_focus_up),                          .name = "focus_up" },
@@ -27,8 +29,6 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_exchange_right),                    .name = "exchange_right" },
     .{ .func = ziglua.wrap(l_exchange_up),                       .name = "exchange_up" },
     .{ .func = ziglua.wrap(l_exchange_down),                     .name = "exchange_down" },
-    .{ .func = ziglua.wrap(l_on_map),                            .name = "on_map" },
-    .{ .func = ziglua.wrap(l_on_unmap),                          .name = "on_unmap" },
     .{ .func = ziglua.wrap(l_get_focused),                       .name = "get_focused" },
     .{ .func = ziglua.wrap(l_remove_node),                       .name = "remove_node" },
     .{ .func = ziglua.wrap(l_kill_client),                       .name = "kill_client" },
@@ -91,7 +91,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused),    .name = "get_cursor_relative_to_focused" },
 };
 
-fn create_workspace_node(lua: *Lua, call_on_map: bool) !u32 {
+fn create_workspace_node(_: *Lua, call_on_map: bool) !u32 {
     const sub = global_wm.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
     sub.* = graph_mod.Graph.init(global_wm.allocator);
 
@@ -115,33 +115,21 @@ fn create_workspace_node(lua: *Lua, call_on_map: bool) !u32 {
     const id = global_wm.register_node(pw, node) catch return error.OutOfMemory;
 
     if (call_on_map) {
-        if (global_wm.on_map_ref != 0) {
-            _ = lua.getIndexRaw(ziglua.registry_index, global_wm.on_map_ref);
-            lua.pushInteger(@intCast(id));
-            // previous focused node ID logic
-            if (global_wm.focused) |prev_focused| {
-                var in_current = false;
-                for (global_wm.current_graph.nodes.items) |n| {
-                    if (n == prev_focused) { in_current = true; break; }
-                }
-                if (in_current) {
-                    var focused_id: ?u32 = null;
-                    var it = global_wm.node_registry.iterator();
-                    while (it.next()) |entry| {
-                        if (entry.value_ptr.* == prev_focused) {
-                            focused_id = entry.key_ptr.*;
-                            break;
-                        }
-                    }
-                    if (focused_id) |fid| lua.pushInteger(@intCast(fid)) else lua.pushNil();
-                } else {
-                    lua.pushNil();
-                }
-            } else {
-                lua.pushNil();
+        // Resolve prev focused id in the current graph
+        var prev_id: ?u32 = null;
+        if (global_wm.focused) |prev_focused| {
+            var in_current = false;
+            for (global_wm.current_graph.nodes.items) |n| {
+                if (n == prev_focused) { in_current = true; break; }
             }
-            lua.protectedCall(.{ .args = 2, .results = 0 }) catch return error.LuaError;
+            if (in_current) {
+                var it = global_wm.node_registry.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == prev_focused) { prev_id = entry.key_ptr.*; break; }
+                }
+            }
         }
+        global_wm.call_arranger(global_wm.current_graph, "map", id, prev_id);
     }
 
     global_wm.resolve(global_wm.current_graph) catch return error.OutOfMemory;
@@ -268,19 +256,26 @@ fn l_exchange_down(lua: *Lua) i32 {
     return 0;
 }
 
-fn l_on_map(lua: *Lua) i32 {
+fn l_set_default_arranger(lua: *Lua) i32 {
     lua.checkType(1, .function);
     lua.pushValue(1);
-    const ref = lua.ref(ziglua.registry_index);
-    global_wm.on_map_ref = ref;
+    global_wm.default_arranger_ref = lua.ref(ziglua.registry_index);
     return 0;
 }
 
-fn l_on_unmap(lua: *Lua) i32 {
-    lua.checkType(1, .function);
-    lua.pushValue(1);
-    const ref = lua.ref(ziglua.registry_index);
-    global_wm.on_unmap_ref = ref;
+fn l_register_arranger(lua: *Lua) i32 {
+    const workspace_id: u32 = @intCast(lua.checkInteger(1));
+    lua.checkType(2, .function);
+    const node = global_wm.get_node_by_id(workspace_id) orelse {
+        _ = lua.pushString("register_arranger: invalid workspace id");
+        return lua.raiseError();
+    };
+    if (node.content != .workspace) {
+        _ = lua.pushString("register_arranger: node is not a workspace");
+        return lua.raiseError();
+    }
+    lua.pushValue(2);
+    node.content.workspace.arranger_ref = lua.ref(ziglua.registry_index);
     return 0;
 }
 

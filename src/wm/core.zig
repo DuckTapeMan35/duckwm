@@ -85,8 +85,7 @@ pub const WM = struct {
     window_to_node_id: std.AutoHashMap(c.Window, u32),
     next_node_id: u32,
     lua: ?*Lua,
-    on_map_ref: i32,
-    on_unmap_ref: i32,
+    default_arranger_ref: i32,
     border_width: i32,
     default_border_color_focused: u32,
     default_border_color_unfocused: u32,
@@ -140,8 +139,7 @@ pub const WM = struct {
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),
             .next_node_id = 1,
             .lua = null,
-            .on_map_ref = 0,
-            .on_unmap_ref = 0,
+            .default_arranger_ref = 0,
             .border_width = 2,
             .default_border_color_focused = 0x0000FF,
             .default_border_color_unfocused = 0x00FF00,
@@ -194,6 +192,38 @@ pub const WM = struct {
         self.dock_struts.deinit();
         _ = c.XCloseDisplay(self.display);
     }
+
+    /// Call the arranger for `graph` (or the default) with the given event.
+    pub fn call_arranger(
+        self: *WM,
+        graph: *graph_mod.Graph,
+        event_str: [:0]const u8,
+        node_id: u32,
+        prev_id: ?u32,
+    ) void {
+        const lua = self.lua orelse return;
+
+        // If this graph has no arranger yet, call the default factory (no args)
+        // to get a fresh closure and store it on the graph.
+        if (graph.arranger_ref == 0) {
+            if (self.default_arranger_ref == 0) return;
+            _ = lua.getIndexRaw(ziglua.registry_index, self.default_arranger_ref);
+            lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
+                std.debug.print("arranger factory error: {}\n", .{err});
+                return;
+            };
+            graph.arranger_ref = lua.ref(ziglua.registry_index);
+        }
+
+        _ = lua.getIndexRaw(ziglua.registry_index, graph.arranger_ref);
+        _ = lua.pushString(event_str);
+        lua.pushInteger(@intCast(node_id));
+        if (prev_id) |pid| lua.pushInteger(@intCast(pid)) else lua.pushNil();
+        lua.protectedCall(.{ .args = 3, .results = 0 }) catch |err| {
+            std.debug.print("arranger callback error: {}\n", .{err});
+        };
+    }
+
 
     pub fn register_node(self: *WM, win: ?c.Window, node: *Node) !u32 {
         const id = self.next_node_id;
@@ -450,9 +480,13 @@ pub const WM = struct {
                 .workspace => {
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {
-                            _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
-                            _ = c.XMoveResizeWindow(self.display, pw, 0, 0, node.width, node.height);
-                            _ = c.XResizeWindow(self.display, pw, node.width, node.height);
+                            const fx: i32 = node.x + bw;
+                            const fy: i32 = node.y + bw;
+                            const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
+                            const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
+                            _ = c.XMoveResizeWindow(self.display, win_frame, fx, fy, fw, fh);
+                            _ = c.XMoveResizeWindow(self.display, pw, 0, 0, fw, fh);
+                            _ = c.XResizeWindow(self.display, pw, fw, fh);
                         }
                     }
                 },

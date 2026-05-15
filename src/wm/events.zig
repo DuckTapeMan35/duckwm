@@ -120,43 +120,22 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     if (wm.focused == null) wm.focus(node);
     const id = try wm.register_node(req.window, node);
 
-    if (wm.lua) |lua| {
-        if (wm.on_map_ref != 0) {
-            _ = lua.getIndexRaw(ziglua.registry_index, wm.on_map_ref);
-            lua.pushInteger(@intCast(id));
-            if (prev_focused) |f| {
-                // Only pass the ID if the previously-focused node is actually in the
-                // current (possibly nested) graph.  If the user just entered an empty
-                // workspace, wm.focused still points at a node from the parent graph;
-                // passing that ID to Lua would make the config think there is already a
-                // sibling window to arrange against.
-                var in_current = false;
-                for (wm.current_graph.nodes.items) |n| {
-                    if (n == f) { in_current = true; break; }
-                }
-                if (in_current) {
-                    var focused_id: ?u32 = null;
-                    var it = wm.node_registry.iterator();
-                    while (it.next()) |entry| {
-                        if (entry.value_ptr.* == f) {
-                            focused_id = entry.key_ptr.*;
-                            break;
-                        }
-                    }
-                    if (focused_id) |fid| lua.pushInteger(@intCast(fid)) else lua.pushNil();
-                } else {
-                    lua.pushNil();
-                }
-            } else {
-                lua.pushNil();
+    {
+        // Resolve prev_focused id, but only if it's in the current graph
+        var prev_id: ?u32 = null;
+        if (prev_focused) |f| {
+            var in_current = false;
+            for (wm.current_graph.nodes.items) |n| {
+                if (n == f) { in_current = true; break; }
             }
-            lua.protectedCall(.{ .args = 2, .results = 0 }) catch |err| {
-                if (lua.toString(-1)) |msg| {
-                    std.debug.print("Lua on_map error: {s}\n", .{msg});
-                } else |_| {}
-                return err;
-            };
+            if (in_current) {
+                var it = wm.node_registry.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == f) { prev_id = entry.key_ptr.*; break; }
+                }
+            }
         }
+        wm.call_arranger(wm.current_graph, "map", id, prev_id);
     }
 
     try wm.resolve(wm.current_graph);
@@ -360,17 +339,9 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Notify Lua BEFORE removing from registry so get_node_type still works
+    // Notify Lua before unmapping or destroying anything, so it can query properties if needed
     if (dying_id) |id| {
-        if (wm.lua) |lua| {
-            if (wm.on_unmap_ref != 0) {
-                _ = lua.getIndexRaw(ziglua.registry_index, wm.on_unmap_ref);
-                lua.pushInteger(@intCast(id));
-                lua.protectedCall(.{ .args = 1, .results = 0 }) catch |err| {
-                    std.debug.print("Lua on_unmap callback error: {}\n", .{err});
-                };
-            }
-        }
+        wm.call_arranger(wm.current_graph, "unmap", id, null);
     }
 
     // Now remove from registry

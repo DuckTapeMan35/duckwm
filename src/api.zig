@@ -94,15 +94,15 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
-        .name   = "on_map",
-        .desc   = "Register callback fired when a window maps. focused is nil for the first window.",
-        .params = &.{ .{ .name = "fn", .typ = "fun(id: integer, focused: integer|nil)" } },
-        .ret    = "nil",
+        .name = "set_default_arranger",
+        .desc = "Set the default layout function for new workspaces.",
+        .params = &.{ .{ .name = "fn", .typ = "function" } },
+        .ret  = "nil",
     },
     .{
-        .name   = "on_unmap",
-        .desc   = "Register callback fired when a window unmaps.",
-        .params = &.{ .{ .name = "fn", .typ = "fun(id: integer)" } },
+        .name   = "register_arranger",
+        .desc   = "Register a new layout function to a workspace.",
+        .params = &.{ .{ .name = "workspace_id", .typ = "integer" }, .{ .name = "fn", .typ = "function" } },
         .ret    = "nil",
     },
     .{

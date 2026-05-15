@@ -131,8 +131,9 @@ pub const Graph = struct {
     nodes: std.ArrayListUnmanaged(*Node),
     focus_edges: std.ArrayListUnmanaged(FocusEdge),
     active_workspace: usize,
-    allocator: std.mem.Allocator,
     parent_node: ?*Node,
+    arranger_ref: i32,
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
         return .{
@@ -140,6 +141,7 @@ pub const Graph = struct {
             .focus_edges = .{ .items = &.{}, .capacity = 0 },
             .active_workspace = 0,
             .parent_node = null,
+            .arranger_ref = 0,
             .allocator = allocator,
         };
     }
