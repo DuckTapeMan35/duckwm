@@ -1,17 +1,20 @@
-pkgbase = duckwm
-	pkgdesc = A constraint-based tiling window manager with Lua configuration
-	pkgver = 0.1.0
+pkgbase = duckwm-git
+	pkgdesc = A graph-based tiling window manager with Lua configuration
+	pkgver = 0.1.0.r0.g0000000
 	pkgrel = 1
 	url = https://github.com/DuckTapeMan35/duckwm
 	install = duckwm.install
 	arch = x86_64
 	license = GPL-3.0-or-later
 	makedepends = zig>=0.16.0
+	makedepends = git
 	depends = libx11
 	optdepends = lua-language-server: LuaLS completion for config editing
 	optdepends = xterm: default terminal emulator in fallback config
+	provides = duckwm
+	conflicts = duckwm
 	backup = etc/duckwm/config.lua
-	source = duckwm-0.1.0.tar.gz::https://github.com/DuckTapeMan35/duckwm/archive/v0.1.0.tar.gz
+	source = duckwm-git::git+https://github.com/DuckTapeMan35/duckwm.git
 	sha256sums = SKIP
 
-pkgname = duckwm
+pkgname = duckwm-git

@@ -1,30 +1,40 @@
-# Maintainer: DuckTapeMan35 <luis.tomas.nogueira@gmail.com>
-pkgname=duckwm
-pkgver=0.1.0
+# Maintainer: duck <luis.tomas.nogueira@gmail.com>
+pkgname=duckwm-git
+pkgver=0.1.0.r0.g0000000
 pkgrel=1
-pkgdesc="A constraint-based tiling window manager with Lua configuration"
+pkgdesc="A graph-based tiling window manager with Lua configuration"
 arch=('x86_64')
 url="https://github.com/DuckTapeMan35/duckwm"
 license=('GPL-3.0-or-later')
 depends=('libx11')
-makedepends=('zig>=0.16.0')
+makedepends=('zig>=0.16.0' 'git')
 optdepends=(
     'lua-language-server: LuaLS completion for config editing'
     'xterm: default terminal emulator in fallback config'
 )
+provides=('duckwm')
+conflicts=('duckwm')
 backup=('etc/duckwm/config.lua')
 install=duckwm.install
-source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+source=("$pkgname::git+$url.git")
 sha256sums=('SKIP')
 
+pkgver() {
+    cd "$pkgname"
+    printf "%s.r%s.g%s" \
+        "$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")" \
+        "$(git rev-list --count HEAD)" \
+        "$(git rev-parse --short HEAD)"
+}
+
 build() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
     zig build -Doptimize=ReleaseFast
     zig build meta
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+    cd "$pkgname"
     install -Dm755 zig-out/bin/duckwm \
         "$pkgdir/usr/bin/duckwm"
     install -Dm644 config/default.lua \
