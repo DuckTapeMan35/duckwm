@@ -558,6 +558,16 @@ pub const WM = struct {
                     }
                 },
                 .workspace => {
+                    // Don't flush preview for workspaces we're currently inside
+                    const sub = node.content.workspace;
+                    var is_active = (sub == self.current_graph);
+                    if (!is_active) {
+                        for (self.workspace_stack.items) |stacked| {
+                            if (stacked == sub) { is_active = true; break; }
+                        }
+                    }
+                    if (is_active) continue;
+
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {
                             const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
@@ -692,6 +702,9 @@ pub const WM = struct {
         self.current_graph = sub;
         // show new graph
         show_graph_frames(self, sub);
+        // Reset work offset so struts are applied cleanly on next resolve
+        self.work_x = 0;
+        self.work_y = 0;
         // re-layout and refresh
         try self.resolve(sub);
         try self.rebuild_focus_edges();
@@ -709,10 +722,84 @@ pub const WM = struct {
         hide_graph_frames(self, self.current_graph);
         self.current_graph = self.workspace_stack.pop().?;
         show_graph_frames(self, self.current_graph);
+        // Reset work offset so struts are applied cleanly on next resolve
+        self.work_x = 0;
+        self.work_y = 0;
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
         if (focus_mod.top_left_window(self)) |n| self.focus(n);
+    }
+
+    pub fn send_to_workspace(self: *WM, node_id: u32, target_graph: *graph_mod.Graph) !void {
+        const node = self.node_registry.get(node_id) orelse return error.InvalidNode;
+        const src_graph = node.owner_graph orelse return error.InvalidNode;
+        if (src_graph == target_graph) return;
+
+        // Remove from source graph
+        for (src_graph.nodes.items, 0..) |n, i| {
+            if (n == node) { _ = src_graph.nodes.swapRemove(i); break; }
+        }
+        for (src_graph.nodes.items) |n| {
+            var i: usize = 0;
+            while (i < n.constraints.items.len) {
+                if (graph_mod.Graph.constraint_involves_node(n.constraints.items[i], node)) {
+                    _ = n.constraints.swapRemove(i);
+                } else i += 1;
+            }
+        }
+        node.constraints.clearRetainingCapacity();
+        node.owner_graph = target_graph;
+        try target_graph.nodes.append(self.allocator, node);
+
+        if (self.focused == node) {
+            self.focused = null;
+            _ = c.XSetInputFocus(self.display, self.root, c.RevertToParent, c.CurrentTime);
+        }
+
+        // Call source arranger in source graph context
+        const saved_graph = self.current_graph;
+        self.current_graph = src_graph;
+        self.call_arranger(src_graph, "unmap", node_id, null);
+        self.work_x = 0;
+        self.work_y = 0;
+        self.resolve(src_graph) catch {};
+        self.rebuild_focus_edges() catch {};
+        self.flush(src_graph) catch {};
+
+        // Call target arranger in target graph context
+        self.current_graph = target_graph;
+        var target_prev_id: ?u32 = null;
+        for (target_graph.nodes.items) |n| {
+            if (n == node) continue;
+            if (n.content == .window or n.content == .workspace) {
+                if (self.get_id_for_node(n)) |id| {
+                    target_prev_id = id;
+                    break;
+                }
+            }
+        }
+        self.call_arranger(target_graph, "map", node_id, target_prev_id);
+
+        // Hide frame if target is not visible
+        if (target_graph != saved_graph) {
+            switch (node.content) {
+                .window => |win| {
+                    if (self.frames.get(win)) |win_frame| {
+                        _ = c.XUnmapWindow(self.display, win_frame);
+                    }
+                },
+                else => {},
+            }
+        } else {
+            self.work_x = 0;
+            self.work_y = 0;
+            self.resolve(target_graph) catch {};
+            self.rebuild_focus_edges() catch {};
+            self.flush(target_graph) catch {};
+        }
+
+        self.current_graph = saved_graph;
     }
 
     pub fn exchange_left(self: *WM) anyerror!void {
@@ -858,6 +945,34 @@ pub const WM = struct {
         _ = c.XGrabButton(self.display, 1, c.AnyModifier, win, 0,
             c.ButtonPressMask,
             c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    }
+
+    pub fn create_workspace_graph(self: *WM) !*graph_mod.Graph {
+        const sub = try self.allocator.create(graph_mod.Graph);
+        sub.* = graph_mod.Graph.init(self.allocator);
+        return sub;
+    }
+
+    pub fn create_workspace_node_with_preview(self: *WM, owner_graph: *graph_mod.Graph) !*Node {
+        const sub = try self.create_workspace_graph();
+        const pw = c.XCreateSimpleWindow(
+            self.display, self.root,
+            0, 0, 200, 150, 0, 0, 0x4488ff
+        );
+        var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        wa.override_redirect = 1;
+        _ = c.XChangeWindowAttributes(self.display, pw, c.CWOverrideRedirect, &wa);
+
+        const node = try owner_graph.add_node(.{ .workspace = sub });
+        sub.parent_node = node;
+        node.preview_window = pw;
+        node.floating = false;
+
+        try self.frame(pw, node);
+        _ = c.XMapWindow(self.display, pw);
+        _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+
+        return node;
     }
 
     /// Create the very first workspace node in the top-level graph.

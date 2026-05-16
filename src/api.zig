@@ -452,6 +452,12 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
+        .name   = "send_to_workspace",
+        .desc   = "Move the focused window to a workspace node by ID.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
         .name   = "get_workspace",
         .desc   = "Return the nth workspace node ID (1-based) in the current graph.",
         .params = &.{ .{ .name = "index", .typ = "integer" } },

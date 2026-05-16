@@ -82,6 +82,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_workspaces_at_level),           .name = "get_workspaces_at_level" },
     .{ .func = ziglua.wrap(l_enter_workspace_by_id),             .name = "enter_workspace_by_id" },
     .{ .func = ziglua.wrap(l_switch_to_workspace),               .name = "switch_to_workspace" },
+    .{ .func = ziglua.wrap(l_send_to_workspace),                 .name = "send_to_workspace" },
     .{ .func = ziglua.wrap(l_create_container),                  .name = "create_container" },
     .{ .func = ziglua.wrap(l_destroy_container),                 .name = "destroy_container" },
     .{ .func = ziglua.wrap(l_reparent),                          .name = "reparent" },
@@ -1028,6 +1029,93 @@ fn l_switch_workspace(lua: *Lua) i32 {
     const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
     if (node.content != .workspace) return luaL_error_str(lua, "not a workspace");
     global_wm.enter_workspace(node) catch return luaL_error_str(lua, "enter failed");
+    return 0;
+}
+
+fn l_send_to_workspace(lua: *Lua) i32 {
+    const node_id: u32 = @intCast(lua.checkInteger(1));
+    const index: usize = @intCast(lua.checkInteger(2));
+    if (index < 1) return 0;
+
+    // Walk up to top-level graph
+    const top_graph = blk: {
+        var g = global_wm.current_graph;
+        while (g.parent_node) |pn| {
+            g = pn.owner_graph orelse break;
+        }
+        break :blk g;
+    };
+
+    // Collect existing workspace nodes sorted by creation ID
+    var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
+    defer list.deinit(global_wm.allocator);
+    for (top_graph.nodes.items) |node| {
+        if (node.content == .workspace) {
+            list.append(global_wm.allocator, node) catch
+                return luaL_error_str(lua, "out of memory");
+        }
+    }
+    std.sort.heap(*graph_mod.Node, list.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    if (index > list.items.len) {
+        const needed = index - list.items.len;
+        const saved_graph = global_wm.current_graph;
+        global_wm.current_graph = top_graph;
+        for (0..needed) |_| {
+            // Create workspace without preview window
+            const sub = global_wm.allocator.create(graph_mod.Graph) catch {
+                global_wm.current_graph = saved_graph;
+                return luaL_error_str(lua, "out of memory");
+            };
+            sub.* = graph_mod.Graph.init(global_wm.allocator);
+
+            const node = top_graph.add_node(.{ .workspace = sub }) catch {
+                global_wm.current_graph = saved_graph;
+                return luaL_error_str(lua, "out of memory");
+            };
+            sub.parent_node = node;
+            node.preview_window = null;
+            node.floating = false;
+
+            _ = global_wm.register_node(null, node) catch {
+                global_wm.current_graph = saved_graph;
+                return luaL_error_str(lua, "out of memory");
+            };
+        }
+        global_wm.current_graph = saved_graph;
+
+        // Rebuild list
+        list.clearRetainingCapacity();
+        for (top_graph.nodes.items) |node| {
+            if (node.content == .workspace) {
+                list.append(global_wm.allocator, node) catch
+                    return luaL_error_str(lua, "out of memory");
+            }
+        }
+        std.sort.heap(*graph_mod.Node, list.items, {}, struct {
+            fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+                const id_a = global_wm.get_id_for_node(a) orelse return false;
+                const id_b = global_wm.get_id_for_node(b) orelse return false;
+                return id_a < id_b;
+            }
+        }.lt);
+    }
+
+    const target_ws_node = list.items[index - 1];
+    const target_graph = target_ws_node.content.workspace;
+
+    global_wm.send_to_workspace(node_id, target_graph) catch |err|
+        return luaL_error_str(lua, @errorName(err));
+        std.debug.print("send_to_workspace: node_id={} index={} top_graph={*} current_graph={*}\n",
+            .{ node_id, index, top_graph, global_wm.current_graph });
+        std.debug.print("send_to_workspace: list.len={}\n", .{ list.items.len });
+
     return 0;
 }
 

@@ -278,7 +278,7 @@ pub const Graph = struct {
         self.allocator.destroy(node);
     }
 
-    fn constraint_involves_node(con: Constraint, node: *Node) bool {
+    pub fn constraint_involves_node(con: Constraint, node: *Node) bool {
         return switch (con) {
             .left_of => |other| other == node,
             .right_of => |other| other == node,
