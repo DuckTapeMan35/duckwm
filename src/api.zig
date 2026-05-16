@@ -137,15 +137,15 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .name   = "get_node_geometry",
-        .desc   = "Return {x, y, width, height} for a node, or nil if not found.",
+        .desc   = "Return geometry table for a node: x, y, width, height.",
         .params = &.{ .{ .name = "id", .typ = "integer" } },
         .ret    = "{ x: integer, y: integer, width: integer, height: integer }|nil",
     },
     .{
         .name   = "get_node_info",
-        .desc   = "Return geometry table for a node.",
+        .desc   = "Return full info table for a node: x, y, width, height, type, floating.",
         .params = &.{ .{ .name = "id", .typ = "integer" } },
-        .ret    = "{ x: integer, y: integer, width: integer, height: integer }",
+        .ret    = "{ x: integer, y: integer, width: integer, height: integer, type: string, floating: boolean }|nil",
     },
     .{
         .name   = "create_container",
@@ -452,10 +452,13 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
-        .name   = "send_to_workspace",
-        .desc   = "Move the focused window to a workspace node by ID.",
-        .params = &.{ .{ .name = "id", .typ = "integer" } },
-        .ret    = "nil",
+    .name   = "send_to_workspace",
+        .desc   = "Send a window node to a workspace by 1-based index, creating it if needed.",
+        .params = &.{
+            .{ .name = "node_id", .typ = "integer" },
+            .{ .name = "index",   .typ = "integer" },
+        },
+        .ret = "nil",
     },
     .{
         .name   = "get_workspace",

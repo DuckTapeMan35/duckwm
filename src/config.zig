@@ -393,14 +393,21 @@ fn l_kill_client(lua: *Lua) i32 {
 fn l_get_node_info(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
     const node = global_wm.get_node_by_id(id) orelse {
-        _ = lua.pushString("wm.get_node_info: invalid node id");
-        return lua.raiseError();
+        lua.pushNil();
+        return 1;
     };
     lua.newTable();
-    lua.pushInteger(node.x);      lua.setField(-2, "x");
-    lua.pushInteger(node.y);      lua.setField(-2, "y");
-    lua.pushInteger(node.width);  lua.setField(-2, "width");
-    lua.pushInteger(node.height); lua.setField(-2, "height");
+    lua.pushInteger(node.x);       lua.setField(-2, "x");
+    lua.pushInteger(node.y);       lua.setField(-2, "y");
+    lua.pushInteger(node.width);   lua.setField(-2, "width");
+    lua.pushInteger(node.height);  lua.setField(-2, "height");
+    lua.pushBoolean(node.floating); lua.setField(-2, "floating");
+    _ = switch (node.content) {
+        .window    => lua.pushString("window"),
+        .empty     => lua.pushString("empty"),
+        .workspace => lua.pushString("workspace"),
+    };
+    lua.setField(-2, "type");
     return 1;
 }
 

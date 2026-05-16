@@ -20,6 +20,7 @@ const MetaStep = struct {
     }
 
     fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+        @setEvalBranchQuota(10000);
         const self: *MetaStep = @fieldParentPtr("step", step);
         const b = self.b;
         const io = b.graph.io;
