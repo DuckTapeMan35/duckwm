@@ -92,6 +92,8 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_unregister_node),                   .name = "unregister_node" },
     .{ .func = ziglua.wrap(l_get_cursor_pos),                    .name = "get_cursor_pos" },
     .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused),    .name = "get_cursor_relative_to_focused" },
+    .{ .func = ziglua.wrap(l_warp_cursor),                       .name = "warp_cursor" },
+    .{ .func = ziglua.wrap(l_warp_cursor_to_node),               .name = "warp_cursor_to_node" },
 };
 
 
@@ -1184,6 +1186,22 @@ fn l_set_on_remove_promote(lua: *Lua) i32 {
 fn l_unregister_node(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
     _ = global_wm.node_registry.remove(id);
+    return 0;
+}
+
+fn l_warp_cursor(lua: *Lua) i32 {
+    const x: i32 = @intCast(lua.checkInteger(1));
+    const y: i32 = @intCast(lua.checkInteger(2));
+    _ = c.XWarpPointer(global_wm.display, c.None, global_wm.root, 0, 0, 0, 0, x, y);
+    return 0;
+}
+
+fn l_warp_cursor_to_node(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
+    const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
+    _ = c.XWarpPointer(global_wm.display, c.None, global_wm.root, 0, 0, 0, 0, cx, cy);
     return 0;
 }
 

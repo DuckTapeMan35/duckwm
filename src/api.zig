@@ -519,4 +519,19 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .name   = "warp_cursor",
+        .desc   = "Warp the cursor to absolute screen coordinates.",
+        .params = &.{
+            .{ .name = "x", .typ = "integer" },
+            .{ .name = "y", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name   = "warp_cursor_to_node",
+        .desc   = "Warp the cursor to the center of a node.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "nil",
+    },
 };
