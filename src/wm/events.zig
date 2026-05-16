@@ -712,22 +712,49 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
     if (wm.float_moving) {
         wm.float_moving = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
-        // Raise all floating windows to keep them on top after moving
         float_mod.raise_floating_windows(wm);
     }
     if (wm.corner_resizing) {
         wm.corner_resizing = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
-        // For floating resize, raise after completion
         if (wm.focused) |node| {
-            if (node.floating) float_mod.raise_floating_windows(wm);
+            if (node.floating) {
+                float_mod.raise_floating_windows(wm);
+            } else {
+                for (wm.current_graph.nodes.items) |n| {
+                    if (n.floating) continue;
+                    switch (n.content) {
+                        .window, .workspace => {
+                            if (wm.get_id_for_node(n)) |node_id| {
+                                wm.call_arranger(wm.current_graph, "resize", node_id, null);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
         }
     }
     if (wm.edge_resizing) {
         wm.edge_resizing = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
         if (wm.focused) |node| {
-            if (node.floating) float_mod.raise_floating_windows(wm);
+            if (node.floating) {
+                float_mod.raise_floating_windows(wm);
+            } else {
+                // Fire resize on all tiled window nodes in current graph
+                for (wm.current_graph.nodes.items) |n| {
+                    if (n.floating) continue;
+                    switch (n.content) {
+                        .window, .workspace => {
+                            if (wm.get_id_for_node(n)) |node_id| {
+                                wm.call_arranger(wm.current_graph, "resize", node_id, null);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
         }
     }
 }

@@ -56,6 +56,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_fixed_y),                           .name = "fixed_y" },
     .{ .func = ziglua.wrap(l_grid_cell),                         .name = "grid_cell" },
     .{ .func = ziglua.wrap(l_grid_cell_abs),                     .name = "grid_cell_abs" },
+    .{ .func = ziglua.wrap(l_split),                             .name = "split" },
     .{ .func = ziglua.wrap(l_get_all_windows),                   .name = "get_all_windows" },
     .{ .func = ziglua.wrap(l_screen_width),                      .name = "screen_width" },
     .{ .func = ziglua.wrap(l_screen_height),                     .name = "screen_height" },
@@ -612,6 +613,29 @@ fn l_grid_cell_abs(lua: *Lua) i32 {
     const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
     global_wm.current_graph.add_constraint(node, .{ .grid_cell_abs = .{
         .x = x, .y = y, .w = w, .h = h, .container = container,
+    }}) catch return luaL_error_str(lua, "out of memory");
+    return 0;
+}
+
+fn l_split(lua: *Lua) i32 {
+    const container_id: u32 = @intCast(lua.checkInteger(1));
+    const axis_str            = lua.checkString(2);
+    const ratio: f32          = @floatCast(lua.checkNumber(3));
+    const first_id:  u32      = @intCast(lua.checkInteger(4));
+    const second_id: u32      = @intCast(lua.checkInteger(5));
+
+    const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
+    const first     = global_wm.get_node_by_id(first_id)     orelse return luaL_error_str(lua, "invalid first node");
+    const second    = global_wm.get_node_by_id(second_id)    orelse return luaL_error_str(lua, "invalid second node");
+
+    const axis: graph_mod.SplitAxis = if (std.mem.eql(u8, axis_str, "h")) .horizontal else .vertical;
+
+    global_wm.current_graph.add_constraint(container, .{ .split = .{
+        .container = container,
+        .axis = axis,
+        .ratio = ratio,
+        .first = first,
+        .second = second,
     }}) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }

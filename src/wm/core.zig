@@ -1105,6 +1105,7 @@ pub const WM = struct {
                     c.MotionNotify     => events_mod.on_motion_notify(self, &e.xmotion),
                     c.ButtonRelease    => events_mod.on_button_release(self, &e.xbutton),
                     c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
+                    c.ConfigureNotify  => {},
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }

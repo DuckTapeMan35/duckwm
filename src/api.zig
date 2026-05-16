@@ -508,4 +508,10 @@ pub const entries = [_]ApiEntry{
         .params = &.{},
         .ret    = "integer, integer",
     },
+    .{
+        .name   = "split",
+        .desc   = "Split a container into two, moving its children to the new one.",
+        .params = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "dir", .typ = "'horizontal'|'vertical'" } },
+        .ret    = "integer",
+    }
 };
