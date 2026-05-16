@@ -534,4 +534,10 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "id", .typ = "integer" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "get_mouse_node",
+        .desc   = "Return the ID of the smallest node under the cursor, or nil.",
+        .params = &.{},
+        .ret    = "integer|nil",
+    },
 };

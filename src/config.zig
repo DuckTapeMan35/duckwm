@@ -94,6 +94,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused),    .name = "get_cursor_relative_to_focused" },
     .{ .func = ziglua.wrap(l_warp_cursor),                       .name = "warp_cursor" },
     .{ .func = ziglua.wrap(l_warp_cursor_to_node),               .name = "warp_cursor_to_node" },
+    .{ .func = ziglua.wrap(l_get_mouse_node),                    .name = "get_mouse_node" },
 };
 
 
@@ -1187,6 +1188,57 @@ fn l_unregister_node(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
     _ = global_wm.node_registry.remove(id);
     return 0;
+}
+
+fn l_get_mouse_node(lua: *Lua) i32 {
+    var root_return: c.Window = undefined;
+    var child_return: c.Window = undefined;
+    var root_x: c_int = 0;
+    var root_y: c_int = 0;
+    var win_x: c_int = 0;
+    var win_y: c_int = 0;
+    var mask: c_uint = 0;
+    _ = c.XQueryPointer(
+        global_wm.display,
+        global_wm.root,
+        &root_return,
+        &child_return,
+        &root_x,
+        &root_y,
+        &win_x,
+        &win_y,
+        &mask,
+    );
+
+    var best: ?*graph_mod.Node = null;
+    for (global_wm.current_graph.nodes.items) |node| {
+        if (node.width == 0 or node.height == 0) continue;
+        const nx = node.x;
+        const ny = node.y;
+        const nw = @as(i32, @intCast(node.width));
+        const nh = @as(i32, @intCast(node.height));
+        if (root_x >= nx and root_x < nx + nw and
+            root_y >= ny and root_y < ny + nh)
+        {
+            // Prefer the smallest node (most specific hit)
+            if (best) |b| {
+                if (nw * nh < @as(i32, @intCast(b.width)) * @as(i32, @intCast(b.height))) {
+                    best = node;
+                }
+            } else {
+                best = node;
+            }
+        }
+    }
+
+    if (best) |node| {
+        if (global_wm.get_id_for_node(node)) |id| {
+            lua.pushInteger(@intCast(id));
+            return 1;
+        }
+    }
+    lua.pushNil();
+    return 1;
 }
 
 fn l_warp_cursor(lua: *Lua) i32 {
