@@ -619,24 +619,44 @@ fn l_grid_cell_abs(lua: *Lua) i32 {
 
 fn l_split(lua: *Lua) i32 {
     const container_id: u32 = @intCast(lua.checkInteger(1));
-    const axis_str            = lua.checkString(2);
-    const ratio: f32          = @floatCast(lua.checkNumber(3));
-    const first_id:  u32      = @intCast(lua.checkInteger(4));
-    const second_id: u32      = @intCast(lua.checkInteger(5));
+    const axis_str           = lua.checkString(2);
+    // arg 3: ratios table, arg 4: children table
+    lua.checkType(3, .table);
+    lua.checkType(4, .table);
 
-    const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
-    const first     = global_wm.get_node_by_id(first_id)     orelse return luaL_error_str(lua, "invalid first node");
-    const second    = global_wm.get_node_by_id(second_id)    orelse return luaL_error_str(lua, "invalid second node");
+    const container = global_wm.get_node_by_id(container_id)
+        orelse return luaL_error_str(lua, "invalid container");
+    const axis: graph_mod.SplitAxis = if (std.mem.eql(u8, axis_str, "h"))
+        .horizontal else .vertical;
 
-    const axis: graph_mod.SplitAxis = if (std.mem.eql(u8, axis_str, "h")) .horizontal else .vertical;
+    const count: u8 = @intCast(lua.lenRaw(3));
+    if (count == 0 or count > 16)
+        return luaL_error_str(lua, "split: need 1-16 children");
 
-    global_wm.current_graph.add_constraint(container, .{ .split = .{
+    var con: graph_mod.Constraint = .{ .split = .{
         .container = container,
-        .axis = axis,
-        .ratio = ratio,
-        .first = first,
-        .second = second,
-    }}) catch return luaL_error_str(lua, "out of memory");
+        .axis      = axis,
+        .count     = count,
+        .ratios    = undefined,
+        .children  = undefined,
+    }};
+
+    for (0..count) |i| {
+        _ = lua.getIndexRaw(3, @intCast(i + 1));
+        con.split.ratios[i] = @floatCast(lua.toNumber(-1) catch
+            return luaL_error_str(lua, "split: ratios must be numbers"));
+        lua.pop(1);
+
+        _ = lua.getIndexRaw(4, @intCast(i + 1));
+        const child_id: u32 = @intCast(lua.toInteger(-1) catch
+            return luaL_error_str(lua, "split: children must be integers"));
+        lua.pop(1);
+        con.split.children[i] = global_wm.get_node_by_id(child_id)
+            orelse return luaL_error_str(lua, "split: invalid child id");
+    }
+
+    global_wm.current_graph.add_constraint(container, con)
+        catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 

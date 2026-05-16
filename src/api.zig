@@ -510,8 +510,13 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .name   = "split",
-        .desc   = "Split a container into two, moving its children to the new one.",
-        .params = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "dir", .typ = "'horizontal'|'vertical'" } },
-        .ret    = "integer",
-    }
+        .desc   = "Split a container atomically into N children along an axis. Ratios must sum to 1.0. Last child absorbs rounding.",
+        .params = &.{
+            .{ .name = "container", .typ = "integer" },
+            .{ .name = "axis",      .typ = "'h'|'v'" },
+            .{ .name = "ratios",    .typ = "number[]" },
+            .{ .name = "children",  .typ = "integer[]" },
+        },
+        .ret = "nil",
+    },
 };

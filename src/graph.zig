@@ -55,13 +55,12 @@ pub const Constraint = union(enum) {
         container: *Node,
     },
 
-    // split constraints (for when a node is split into two, and we want to maintain the ratio between them)
     split: struct {
         container: *Node,
         axis: SplitAxis,
-        ratio: f32,
-        first: *Node,   // the node that gets ratio
-        second: *Node,  // the node that gets 1-ratio
+        count: u8,
+        ratios: [16]f32,
+        children: [16]*Node,
     },
 };
 
@@ -307,11 +306,17 @@ pub const Graph = struct {
             .fixed_ratio => false,
             .grid_cell => |g| g.container == node,
             .grid_cell_abs => |g| g.container == node,
-            .split => |s| s.container == node or s.first == node or s.second == node,
             .fixed_width => false,
             .fixed_height => false,
             .fixed_x => false,
             .fixed_y => false,
+            .split => |s| blk: {
+                if (s.container == node) break :blk true;
+                for (0..s.count) |i| {
+                    if (s.children[i] == node) break :blk true;
+                }
+                break :blk false;
+            },
         };
     }
 
@@ -515,38 +520,38 @@ pub const Graph = struct {
                 if (src.y != y) { src.y = y; return true; }
             },
             .split => |s| {
-                if (s.container.floating) return false;
                 const cont = s.container;
-                const ratio = @max(0.0, @min(1.0, s.ratio));
-                if (s.axis == .horizontal) {
-                    const w1: u32 = @intFromFloat(@as(f32, @floatFromInt(cont.width)) * ratio);
-                    const w2: u32 = cont.width -| w1;
-                    var did_change = false;
-                    if (s.first.x  != cont.x)      { s.first.x  = cont.x;      did_change = true; }
-                    if (s.first.y  != cont.y)      { s.first.y  = cont.y;      did_change = true; }
-                    if (s.first.width  != w1)      { s.first.width  = w1;       did_change = true; }
-                    if (s.first.height != cont.height) { s.first.height = cont.height; did_change = true; }
-                    const x2 = cont.x + @as(i32, @intCast(w1));
-                    if (s.second.x != x2)         { s.second.x  = x2;          did_change = true; }
-                    if (s.second.y != cont.y)     { s.second.y  = cont.y;      did_change = true; }
-                    if (s.second.width  != w2)    { s.second.width  = w2;       did_change = true; }
-                    if (s.second.height != cont.height) { s.second.height = cont.height; did_change = true; }
-                    return did_change;
-                } else {
-                    const h1: u32 = @intFromFloat(@as(f32, @floatFromInt(cont.height)) * ratio);
-                    const h2: u32 = cont.height -| h1;
-                    var did_change = false;
-                    if (s.first.x  != cont.x)     { s.first.x  = cont.x;       did_change = true; }
-                    if (s.first.y  != cont.y)     { s.first.y  = cont.y;       did_change = true; }
-                    if (s.first.width  != cont.width)  { s.first.width  = cont.width;  did_change = true; }
-                    if (s.first.height != h1)     { s.first.height = h1;        did_change = true; }
-                    if (s.second.x != cont.x)    { s.second.x  = cont.x;       did_change = true; }
-                    const y2 = cont.y + @as(i32, @intCast(h1));
-                    if (s.second.y != y2)        { s.second.y  = y2;           did_change = true; }
-                    if (s.second.width  != cont.width)  { s.second.width  = cont.width;  did_change = true; }
-                    if (s.second.height != h2)   { s.second.height = h2;       did_change = true; }
-                    return did_change;
+                if (cont.floating) return false;
+                var offset: u32 = 0;
+                var changed = false;
+                for (0..s.count) |i| {
+                    const child = s.children[i];
+                    const clamped = @max(0.0, @min(1.0, s.ratios[i]));
+                    if (s.axis == .horizontal) {
+                        const w: u32 = if (i == s.count - 1)
+                            cont.width -| offset
+                        else
+                            @intFromFloat(@as(f32, @floatFromInt(cont.width)) * clamped);
+                        const new_x = cont.x + @as(i32, @intCast(offset));
+                        if (child.x != new_x)        { child.x = new_x;        changed = true; }
+                        if (child.y != cont.y)        { child.y = cont.y;        changed = true; }
+                        if (child.width  != w)        { child.width  = w;        changed = true; }
+                        if (child.height != cont.height) { child.height = cont.height; changed = true; }
+                        offset += w;
+                    } else {
+                        const h: u32 = if (i == s.count - 1)
+                            cont.height -| offset
+                        else
+                            @intFromFloat(@as(f32, @floatFromInt(cont.height)) * clamped);
+                        const new_y = cont.y + @as(i32, @intCast(offset));
+                        if (child.x != cont.x)        { child.x = cont.x;        changed = true; }
+                        if (child.y != new_y)          { child.y = new_y;          changed = true; }
+                        if (child.width  != cont.width)  { child.width  = cont.width;  changed = true; }
+                        if (child.height != h)         { child.height = h;         changed = true; }
+                        offset += h;
+                    }
                 }
+                return changed;
             },
             else => return false,
         }
