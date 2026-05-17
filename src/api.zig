@@ -16,10 +16,18 @@ pub const Constant = struct {
 };
 
 pub const constants = [_]Constant{
-    .{ .name = "MOD_SUPER", .desc = "Mod4 (Super/Win key)" },
-    .{ .name = "MOD_ALT",   .desc = "Mod1 (Alt key)" },
-    .{ .name = "MOD_SHIFT", .desc = "Shift modifier" },
-    .{ .name = "MOD_CTRL",  .desc = "Control modifier" },
+    .{ .name = "MOD_SUPER",        .desc = "Mod4 (Super/Win key)" },
+    .{ .name = "MOD_ALT",          .desc = "Mod1 (Alt key)" },
+    .{ .name = "MOD_SHIFT",        .desc = "Shift modifier" },
+    .{ .name = "MOD_CTRL",         .desc = "Control modifier" },
+    .{ .name = "MOD_MOD2",         .desc = "Mod2 (usually NumLock)" },
+    .{ .name = "MOD_MOD3",         .desc = "Mod3" },
+    .{ .name = "MOD_MOD5",         .desc = "Mod5 (usually AltGr)" },
+    .{ .name = "BUTTON_LEFT",       .desc = "Left mouse button (1)" },
+    .{ .name = "BUTTON_MIDDLE",     .desc = "Middle mouse button (2)" },
+    .{ .name = "BUTTON_RIGHT",      .desc = "Right mouse button (3)" },
+    .{ .name = "BUTTON_SCROLL_UP",  .desc = "Scroll wheel up (4)" },
+    .{ .name = "BUTTON_SCROLL_DOWN",.desc = "Scroll wheel down (5)" },
 };
 
 pub const entries = [_]ApiEntry{
@@ -545,5 +553,17 @@ pub const entries = [_]ApiEntry{
         .desc   = "Set whether focus follows mouse movements.",
         .params = &.{ .{ .name = "enabled", .typ = "boolean" } },
         .ret    = "nil",
-    }
+    },
+    .{
+        .name   = "set_float_move_button",
+        .desc   = "Set the mouse button used to move floating windows (default: BUTTON_LEFT).",
+        .params = &.{ .{ .name = "button", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "set_float_resize_button",
+        .desc   = "Set the mouse button used to resize floating windows (default: BUTTON_RIGHT).",
+        .params = &.{ .{ .name = "button", .typ = "integer" } },
+        .ret    = "nil",
+    },
 };

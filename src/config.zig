@@ -96,6 +96,8 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_warp_cursor_to_node),               .name = "warp_cursor_to_node" },
     .{ .func = ziglua.wrap(l_get_mouse_node),                    .name = "get_mouse_node" },
     .{ .func = ziglua.wrap(l_set_focus_follows_mouse),           .name = "set_focus_follows_mouse" },
+    .{ .func = ziglua.wrap(l_set_float_move_button),   .name = "set_float_move_button" },
+    .{ .func = ziglua.wrap(l_set_float_resize_button), .name = "set_float_resize_button" },
 };
 
 
@@ -172,6 +174,16 @@ fn l_set_float_modifier(lua: *Lua) i32 {
             c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
             c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
     }
+    return 0;
+}
+
+fn l_set_float_move_button(lua: *Lua) i32 {
+    global_wm.float_move_button = @intCast(lua.checkInteger(1));
+    return 0;
+}
+
+fn l_set_float_resize_button(lua: *Lua) i32 {
+    global_wm.float_resize_button = @intCast(lua.checkInteger(1));
     return 0;
 }
 
@@ -1333,6 +1345,14 @@ fn setup_lua(wm: *WM, lua: *Lua) void {
     lua.pushInteger(c.Mod1Mask);    lua.setField(-2, "MOD_ALT");
     lua.pushInteger(c.ShiftMask);   lua.setField(-2, "MOD_SHIFT");
     lua.pushInteger(c.ControlMask); lua.setField(-2, "MOD_CTRL");
+    lua.pushInteger(c.Mod2Mask);    lua.setField(-2, "MOD_MOD2");
+    lua.pushInteger(c.Mod3Mask);    lua.setField(-2, "MOD_MOD3");
+    lua.pushInteger(c.Mod5Mask);    lua.setField(-2, "MOD_MOD5");
+    lua.pushInteger(c.Button1);     lua.setField(-2, "BUTTON_LEFT");
+    lua.pushInteger(c.Button2);     lua.setField(-2, "BUTTON_MIDDLE");
+    lua.pushInteger(c.Button3);     lua.setField(-2, "BUTTON_RIGHT");
+    lua.pushInteger(c.Button4);     lua.setField(-2, "BUTTON_SCROLL_UP");
+    lua.pushInteger(c.Button5);     lua.setField(-2, "BUTTON_SCROLL_DOWN");
     for (registrations) |reg| {
         lua.pushFunction(reg.func);
         lua.setField(-2, reg.name);

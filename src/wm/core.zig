@@ -87,6 +87,8 @@ pub const WM = struct {
     float_move_start_y: i32,
     float_win_start_x: i32,
     float_win_start_y: i32,
+    float_move_button: c_uint,
+    float_resize_button: c_uint,
 
 
     // data for the lua API
@@ -158,6 +160,8 @@ pub const WM = struct {
             .float_move_start_y = 0,
             .float_win_start_x = 0,
             .float_win_start_y = 0,
+            .float_move_button = 1, // left mouse button
+            .float_resize_button = 3, // right mouse button
 
             .node_registry = std.AutoHashMap(u32, *Node).init(allocator),
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),

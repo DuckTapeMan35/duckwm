@@ -458,46 +458,60 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
             const node_id = wm.window_to_node_id.get(client) orelse return;
             const node = wm.node_registry.get(node_id) orelse return;
             if (node.floating) {
-                const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
-                const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
-                const right_half  = ev.x_root > cx;
-                const bottom_half = ev.y_root > cy;
+                const is_move   = ev.button == wm.float_move_button;
+                const is_resize = ev.button == wm.float_resize_button;
+                if (!is_move and !is_resize) return;
 
-                const left   = node.x;
-                const right  = node.x + @as(i32, @intCast(node.width));
-                const top    = node.y;
-                const bottom = node.y + @as(i32, @intCast(node.height));
-
-                if (right_half and bottom_half) {
-                    wm.corner_resizing = true;
-                    wm.resize_v_edge   = right;
-                    wm.resize_h_edge   = bottom;
-                    wm.resize_end_x    = ev.x_root;
-                    wm.resize_end_y    = ev.y_root;
-                    wm.resize_fixed_x  = left;
-                    wm.resize_fixed_y  = top;
-                } else if (!right_half and !bottom_half) {
-                    wm.corner_resizing = true;
-                    wm.resize_v_edge   = left;
-                    wm.resize_h_edge   = top;
-                    wm.resize_end_x    = ev.x_root;
-                    wm.resize_end_y    = ev.y_root;
-                    wm.resize_fixed_x  = right;
-                    wm.resize_fixed_y  = bottom;
-                } else if (right_half) {
-                    wm.edge_resizing    = true;
-                    wm.edge_is_vertical = true;
-                    wm.edge_x           = right;
-                    wm.resize_fixed_x   = left;
-                    wm.resize_end_x     = ev.x_root;
-                    wm.resize_end_y     = ev.y_root;
+                if (is_move) {
+                    wm.float_moving       = true;
+                    wm.float_move_frame   = lookup_win;
+                    wm.float_move_start_x = ev.x_root;
+                    wm.float_move_start_y = ev.y_root;
+                    wm.float_win_start_x  = node.x;
+                    wm.float_win_start_y  = node.y;
                 } else {
-                    wm.edge_resizing    = true;
-                    wm.edge_is_vertical = false;
-                    wm.edge_y           = bottom;
-                    wm.resize_fixed_y   = top;
-                    wm.resize_end_x     = ev.x_root;
-                    wm.resize_end_y     = ev.y_root;
+                    // resize — quadrant based
+                    const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
+                    const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
+                    const right_half  = ev.x_root > cx;
+                    const bottom_half = ev.y_root > cy;
+
+                    const left   = node.x;
+                    const right  = node.x + @as(i32, @intCast(node.width));
+                    const top    = node.y;
+                    const bottom = node.y + @as(i32, @intCast(node.height));
+
+                    if (right_half and bottom_half) {
+                        wm.corner_resizing = true;
+                        wm.resize_v_edge   = right;
+                        wm.resize_h_edge   = bottom;
+                        wm.resize_end_x    = ev.x_root;
+                        wm.resize_end_y    = ev.y_root;
+                        wm.resize_fixed_x  = left;
+                        wm.resize_fixed_y  = top;
+                    } else if (!right_half and !bottom_half) {
+                        wm.corner_resizing = true;
+                        wm.resize_v_edge   = left;
+                        wm.resize_h_edge   = top;
+                        wm.resize_end_x    = ev.x_root;
+                        wm.resize_end_y    = ev.y_root;
+                        wm.resize_fixed_x  = right;
+                        wm.resize_fixed_y  = bottom;
+                    } else if (right_half) {
+                        wm.edge_resizing    = true;
+                        wm.edge_is_vertical = true;
+                        wm.edge_x           = right;
+                        wm.resize_fixed_x   = left;
+                        wm.resize_end_x     = ev.x_root;
+                        wm.resize_end_y     = ev.y_root;
+                    } else {
+                        wm.edge_resizing    = true;
+                        wm.edge_is_vertical = false;
+                        wm.edge_y           = bottom;
+                        wm.resize_fixed_y   = top;
+                        wm.resize_end_x     = ev.x_root;
+                        wm.resize_end_y     = ev.y_root;
+                    }
                 }
                 _ = c.XGrabPointer(wm.display, lookup_win, 1,
                     c.PointerMotionMask | c.ButtonReleaseMask,
