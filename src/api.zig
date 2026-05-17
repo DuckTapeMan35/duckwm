@@ -631,4 +631,16 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .name   = "reload_config",
+        .desc   = "Reload the config file.",
+        .params = &.{},
+        .ret    = "nil",
+    },
+    .{
+        .name   = "get_window_pid",
+        .desc   = "Return the PID of a window node via _NET_WM_PID, or nil if unavailable.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "integer|nil",
+    },
 };

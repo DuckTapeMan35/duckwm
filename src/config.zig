@@ -172,6 +172,8 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_floating),                      .name = "set_floating" },
     .{ .func = ziglua.wrap(l_set_fullscreen),                    .name = "set_fullscreen" },
     .{ .func = ziglua.wrap(l_toggle_fullscreen),                 .name = "toggle_fullscreen" },
+    .{ .func = ziglua.wrap(l_reload_config),                     .name = "reload_config" },
+    .{ .func = ziglua.wrap(l_get_window_pid),                    .name = "get_window_pid" },
 };
 
 fn l_get_window_class(lua: *Lua) i32 {
@@ -1492,6 +1494,47 @@ fn l_get_cursor_relative_to_focused(lua: *Lua) i32 {
 fn l_set_focus_follows_mouse(lua: *Lua) i32 {
     global_wm.focus_follows_mouse = lua.toBoolean(1);
     return 0;
+}
+
+fn l_reload_config(lua: *Lua) i32 {
+    _ = lua;
+    if (global_wm.reload_fn) |f| f(global_wm);
+    return 0;
+}
+
+fn l_get_window_pid(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    const win = switch (node.content) {
+        .window => |w| w,
+        else => {
+            lua.pushNil();
+            return 1;
+        },
+    };
+    const net_wm_pid = c.XInternAtom(global_wm.display, "_NET_WM_PID", 0);
+    var actual_type: c.Atom = undefined;
+    var actual_format: c_int = undefined;
+    var nitems: c_ulong = undefined;
+    var bytes_after: c_ulong = undefined;
+    var prop: [*c]u8 = null;
+    const result = c.XGetWindowProperty(
+        global_wm.display, win, net_wm_pid,
+        0, 1, 0, c.AnyPropertyType,
+        &actual_type, &actual_format, &nitems, &bytes_after, &prop,
+    );
+    if (result != c.Success or prop == null or nitems == 0) {
+        if (prop != null) _ = c.XFree(prop);
+        lua.pushNil();
+        return 1;
+    }
+    defer _ = c.XFree(prop);
+    const pid: c_ulong = @as(*c_ulong, @ptrCast(@alignCast(prop))).*;
+    lua.pushInteger(@intCast(pid));
+    return 1;
 }
 
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
