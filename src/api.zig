@@ -616,4 +616,19 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .name   = "toggle_fullscreen",
+        .desc   = "Toggle fullscreen on the focused window.",
+        .params = &.{},
+        .ret    = "nil",
+    },
+    .{
+        .name   = "set_fullscreen",
+        .desc   = "Set fullscreen state on a specific window node. For use in window rules.",
+        .params = &.{
+            .{ .name = "id",  .typ = "integer" },
+            .{ .name = "val", .typ = "boolean" },
+        },
+        .ret = "nil",
+    },
 };

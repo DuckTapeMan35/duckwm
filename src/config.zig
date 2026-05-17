@@ -170,6 +170,8 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_window_class),                  .name = "get_window_class" },
     .{ .func = ziglua.wrap(l_get_window_name),                   .name = "get_window_name" },
     .{ .func = ziglua.wrap(l_set_floating),                      .name = "set_floating" },
+    .{ .func = ziglua.wrap(l_set_fullscreen),                    .name = "set_fullscreen" },
+    .{ .func = ziglua.wrap(l_toggle_fullscreen),                 .name = "toggle_fullscreen" },
 };
 
 fn l_get_window_class(lua: *Lua) i32 {
@@ -955,6 +957,24 @@ fn l_toggle_floating(lua: *Lua) i32 {
         _ = lua.pushString("failed to toggle floating");
         return lua.raiseError();
     };
+    return 0;
+}
+
+fn l_toggle_fullscreen(lua: *Lua) i32 {
+    _ = lua;
+    global_wm.toggle_fullscreen() catch {};
+    return 0;
+}
+
+fn l_set_fullscreen(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const val: bool = lua.toBoolean(2);
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    if (node.content != .window) return 0;
+    const already = (global_wm.fullscreen_node == node);
+    if (val == already) return 0;
+    global_wm.focused = node;
+    global_wm.toggle_fullscreen() catch {};
     return 0;
 }
 

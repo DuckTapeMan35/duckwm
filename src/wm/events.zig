@@ -204,6 +204,38 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     }
 }
 
+pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
+    const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
+    const net_wm_state_fullscreen = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
+
+    if (ev.message_type == net_wm_state) {
+        const action = ev.data.l[0]; // 0=remove, 1=add, 2=toggle
+        const prop1: c.Atom = @intCast(ev.data.l[1]);
+        const prop2: c.Atom = @intCast(ev.data.l[2]);
+
+        const is_fullscreen = (prop1 == net_wm_state_fullscreen or
+                               prop2 == net_wm_state_fullscreen);
+        if (!is_fullscreen) return;
+
+        // Find the node for this window
+        const node_id = wm.window_to_node_id.get(ev.window) orelse return;
+        const node = wm.node_registry.get(node_id) orelse return;
+
+        const currently_fullscreen = (wm.fullscreen_node == node);
+        const should_fullscreen = switch (action) {
+            0 => false,  // remove
+            1 => true,   // add
+            2 => !currently_fullscreen,  // toggle
+            else => return,
+        };
+
+        if (should_fullscreen != currently_fullscreen) {
+            wm.focused = node;
+            try wm.toggle_fullscreen();
+        }
+    }
+}
+
 pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
     const net_wm_window_type = c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE", 0);
     const win = ev.window;

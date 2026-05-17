@@ -94,6 +94,13 @@ pub const WM = struct {
     float_move_button: c_uint,
     float_resize_button: c_uint,
 
+    // fullscreen state fields
+    fullscreen_node: ?*Node,
+    fullscreen_saved_x: i32,
+    fullscreen_saved_y: i32,
+    fullscreen_saved_w: u32,
+    fullscreen_saved_h: u32,
+
 
     // data for the lua API
     node_registry: std.AutoHashMap(u32, *Node),
@@ -170,6 +177,12 @@ pub const WM = struct {
             .float_win_start_y = 0,
             .float_move_button = 1, // left mouse button
             .float_resize_button = 3, // right mouse button
+
+            .fullscreen_node = null,
+            .fullscreen_saved_x = 0,
+            .fullscreen_saved_y = 0,
+            .fullscreen_saved_w = 0,
+            .fullscreen_saved_h = 0,
 
             .node_registry = std.AutoHashMap(u32, *Node).init(allocator),
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),
@@ -561,6 +574,7 @@ pub const WM = struct {
     pub fn resize_corner(self: *WM, node: *Node, delta_x: i32, delta_y: i32) !void { return resize_mod.resize_corner(self, node, delta_x, delta_y); }
 
     pub fn toggle_floating(self: *WM) !void { return float_mod.toggle_floating(self); }
+    pub fn toggle_fullscreen(self: *WM) !void { return float_mod.toggle_fullscreen(self); }
     pub fn center_node(self: *WM, node: *Node) void { float_mod.center_node(self, node); }
 
     pub fn get_id_for_node(self: *WM, node: *Node) ?u32 {
@@ -1182,6 +1196,7 @@ pub const WM = struct {
                     c.ConfigureNotify  => {},
                     c.EnterNotify      => events_mod.on_enter_notify(self, &e.xcrossing),
                     c.LeaveNotify      => {}, // just to silence prints
+                    c.ClientMessage => try events_mod.on_client_message(self, &e.xclient),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }
