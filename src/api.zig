@@ -658,4 +658,10 @@ pub const entries = [_]ApiEntry{
         },
         .ret    = "nil",
     },
+    .{
+        .name   = "set_default_urgent_border_color",
+        .desc   = "Set the border color used for urgent windows (0xRRGGBB).",
+        .params = &.{ .{ .name = "color", .typ = "integer" } },
+        .ret    = "nil",
+    },
 };

@@ -176,7 +176,14 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_window_pid),                    .name = "get_window_pid" },
     .{ .func = ziglua.wrap(l_get_urgent),                        .name = "get_urgent" },
     .{ .func = ziglua.wrap(l_set_urgent),                        .name = "set_urgent" },
+    .{ .func = ziglua.wrap(l_set_default_urgent_border_color),   .name = "set_default_urgent_border_color" },
 };
+
+fn l_set_default_urgent_border_color(lua: *Lua) i32 {
+    const color: u32 = @intCast(lua.checkInteger(1));
+    global_wm.default_border_color_urgent = color;
+    return 0;
+}
 
 fn l_get_urgent(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
