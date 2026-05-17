@@ -32,6 +32,33 @@ pub const constants = [_]Constant{
 
 pub const entries = [_]ApiEntry{
     .{
+        .name   = "set_floating",
+        .desc   = "Set floating state of a window directly. Pass false to re-integrate into tiling.",
+        .params = &.{
+            .{ .name = "id",  .typ = "integer" },
+            .{ .name = "val", .typ = "boolean" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name   = "get_window_class",
+        .desc   = "Return the WM_CLASS of a window node, or nil.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "string|nil",
+    },
+    .{
+        .name   = "get_window_name",
+        .desc   = "Return the WM_NAME (title) of a window node, or nil.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "string|nil",
+    },
+    .{
+        .name   = "quit",
+        .desc   = "Exit the window manager cleanly.",
+        .params = &.{},
+        .ret    = "nil",
+    },
+    .{
         .name   = "bind",
         .desc   = "Register a keybinding.",
         .params = &.{

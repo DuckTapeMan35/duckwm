@@ -561,6 +561,7 @@ pub const WM = struct {
     pub fn resize_corner(self: *WM, node: *Node, delta_x: i32, delta_y: i32) !void { return resize_mod.resize_corner(self, node, delta_x, delta_y); }
 
     pub fn toggle_floating(self: *WM) !void { return float_mod.toggle_floating(self); }
+    pub fn center_node(self: *WM, node: *Node) void { float_mod.center_node(self, node); }
 
     pub fn get_id_for_node(self: *WM, node: *Node) ?u32 {
         var it = self.node_registry.iterator();
@@ -576,10 +577,13 @@ pub const WM = struct {
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => |win| {
-                    std.debug.print("flush: gap_inner_h={} gap_inner_v={} gap_outer_h={} gap_outer_v={}\n", .{
-                        g.gap_inner_h, g.gap_inner_v, g.gap_outer_h, g.gap_outer_v,
-                    });
-                    if (node.floating) continue;
+                    if (node.floating) {
+                        if (self.frames.get(win)) |win_frame| {
+                            _ = c.XMapWindow(self.display, win);
+                            _ = c.XMapWindow(self.display, win_frame);
+                        }
+                        continue;
+                    }
                     if (self.frames.get(win)) |win_frame| {
                         const at_left   = node.x <= work.x;
                         const at_top    = node.y <= work.y;
@@ -824,7 +828,9 @@ pub const WM = struct {
         // Call source arranger in source graph context
         const saved_graph = self.current_graph;
         self.current_graph = src_graph;
-        self.call_arranger(src_graph, "unmap", node_id, null);
+        if (!node.floating) {
+            self.call_arranger(src_graph, "unmap", node_id, null);
+        }
         self.work_x = 0;
         self.work_y = 0;
         self.resolve(src_graph) catch {};

@@ -77,7 +77,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         _ = c.XMapWindow(wm.display, req.window);
         const s = get_strut(wm.display, req.window) orelse Strut{ .left = 0, .right = 0, .top = 0, .bottom = 0 };
 
-        // Sum existing struts BEFORE inserting this dock
         var existing_top: u32 = 0;
         var existing_bottom: u32 = 0;
         var existing_left: u32 = 0;
@@ -90,7 +89,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
             existing_right  += es.right;
         }
 
-        // Reposition the dock so it stacks after existing ones on the same side
         if (s.top > 0) {
             _ = c.XMoveWindow(wm.display, req.window, 0, @intCast(existing_top));
         } else if (s.bottom > 0) {
@@ -120,7 +118,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     const id = try wm.register_node(req.window, node);
 
     {
-        // Resolve prev_focused id, but only if it's in the current graph
         var prev_id: ?u32 = null;
         if (prev_focused) |f| {
             var in_current = false;
@@ -133,13 +130,49 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
                     if (entry.value_ptr.* == f) { prev_id = entry.key_ptr.*; break; }
                 }
             }
+            if (prev_id) |pid| {
+                if (wm.node_registry.get(pid)) |pnode| {
+                    if (pnode.floating) {
+                        prev_id = null;
+                        // Find any tiled window in the current graph that isn't the new node
+                        for (wm.current_graph.nodes.items) |n| {
+                            if (n.floating) continue;
+                            if (n.content != .window and n.content != .workspace) continue;
+                            if (wm.get_id_for_node(n)) |nid| {
+                                if (nid != id) {
+                                    prev_id = nid;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        wm.call_arranger(wm.current_graph, "map", id, prev_id);
+        wm.call_arranger(wm.current_graph, "pre_map", id, prev_id);
+        const is_floating = if (wm.node_registry.get(id)) |n| n.floating else false;
+        if (!is_floating) {
+            wm.call_arranger(wm.current_graph, "map", id, prev_id);
+        }
     }
 
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
+
+    // Re-raise floating windows above the newly mapped window
+    for (wm.current_graph.nodes.items) |n| {
+        switch (n.content) {
+            .window => |win| {
+                if (!n.floating) continue;
+                if (wm.frames.get(win)) |frame| {
+                    _ = c.XRaiseWindow(wm.display, frame);
+                }
+            },
+            else => {},
+        }
+    }
+
     if (wm.focused) |f| wm.focus(f);
 
     // Listen for future property changes on client
@@ -147,14 +180,11 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     // Re-check type in case it was set after MapRequest
     if (is_dock_or_toolbar(wm.display, req.window)) {
-        // We must undo the frame & tiling – reuse destroy logic
         const node_id = wm.window_to_node_id.get(req.window) orelse return;
         const node_dock = wm.node_registry.get(node_id) orelse return;
-        // Record strut
         if (get_strut(wm.display, req.window)) |s| {
             try wm.dock_struts.put(req.window, s);
         }
-        // Unframe, unmap, reparent, etc.
         if (wm.frames.get(req.window)) |frame| {
             _ = c.XUnmapWindow(wm.display, req.window);
             _ = c.XReparentWindow(wm.display, req.window, wm.root, 0, 0);
@@ -162,17 +192,14 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
             _ = wm.frames.remove(req.window);
         }
         _ = c.XMapWindow(wm.display, req.window);
-        // Remove from graph and registry
         if (node_dock.owner_graph) |graph| {
             graph.remove_node(node_dock);
         }
         _ = wm.node_registry.remove(node_id);
         _ = wm.window_to_node_id.remove(req.window);
-        // Relayout
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
-        if (wm.focused) |f| wm.focus(f);
         return;
     }
 }
@@ -342,7 +369,10 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     // Notify Lua before unmapping or destroying anything, so it can query properties if needed
     if (dying_id) |id| {
-        wm.call_arranger(wm.current_graph, "unmap", id, null);
+        const is_floating = if (dying) |d| d.floating else false;
+        if (!is_floating) {
+            wm.call_arranger(wm.current_graph, "unmap", id, null);
+        }
     }
 
     // Now remove from registry

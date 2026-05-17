@@ -28,6 +28,59 @@ fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) 
     }
 }
 
+fn create_workspace_node(_: *Lua, call_on_map: bool) !u32 {
+    const sub = global_wm.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
+    sub.* = graph_mod.Graph.init(global_wm.allocator);
+
+    const pw = c.XCreateSimpleWindow(
+        global_wm.display, global_wm.root,
+        0, 0, 200, 150, 0, 0, 0x4488ff
+    );
+    var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+    wa.override_redirect = 1;
+    _ = c.XChangeWindowAttributes(global_wm.display, pw, c.CWOverrideRedirect, &wa);
+
+    const node = global_wm.current_graph.add_node(.{ .workspace = sub }) catch return error.OutOfMemory;
+    sub.parent_node = node;
+    node.preview_window = pw;
+    node.floating = false;
+
+    global_wm.frame(pw, node) catch return error.OutOfMemory;
+    _ = c.XMapWindow(global_wm.display, pw);
+    _ = c.XSelectInput(global_wm.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+
+    const id = global_wm.register_node(pw, node) catch return error.OutOfMemory;
+
+    if (call_on_map) {
+        // Resolve prev focused id in the current graph
+        var prev_id: ?u32 = null;
+        if (global_wm.focused) |prev_focused| {
+            var in_current = false;
+            for (global_wm.current_graph.nodes.items) |n| {
+                if (n == prev_focused) { in_current = true; break; }
+            }
+            if (in_current) {
+                var it = global_wm.node_registry.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == prev_focused) { prev_id = entry.key_ptr.*; break; }
+                }
+            }
+        }
+        global_wm.call_arranger(global_wm.current_graph, "map", id, prev_id);
+    }
+
+    sub.gap_inner_h = global_wm.default_gap_inner_h;
+    sub.gap_inner_v = global_wm.default_gap_inner_v;
+    sub.gap_outer_h = global_wm.default_gap_outer_h;
+    sub.gap_outer_v = global_wm.default_gap_outer_v;
+
+    global_wm.resolve(global_wm.current_graph) catch return error.OutOfMemory;
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+
+    return id;
+}
+
 const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
@@ -113,60 +166,64 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_float_resize_button),           .name = "set_float_resize_button" },
     .{ .func = ziglua.wrap(l_set_gaps),                          .name = "set_gaps" },
     .{ .func = ziglua.wrap(l_set_gaps_workspace),                .name = "set_gaps_workspace" },
+    .{ .func = ziglua.wrap(l_quit),                              .name = "quit" },
+    .{ .func = ziglua.wrap(l_get_window_class),                  .name = "get_window_class" },
+    .{ .func = ziglua.wrap(l_get_window_name),                   .name = "get_window_name" },
+    .{ .func = ziglua.wrap(l_set_floating),                      .name = "set_floating" },
 };
 
-
-fn create_workspace_node(_: *Lua, call_on_map: bool) !u32 {
-    const sub = global_wm.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
-    sub.* = graph_mod.Graph.init(global_wm.allocator);
-
-    const pw = c.XCreateSimpleWindow(
-        global_wm.display, global_wm.root,
-        0, 0, 200, 150, 0, 0, 0x4488ff
-    );
-    var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
-    wa.override_redirect = 1;
-    _ = c.XChangeWindowAttributes(global_wm.display, pw, c.CWOverrideRedirect, &wa);
-
-    const node = global_wm.current_graph.add_node(.{ .workspace = sub }) catch return error.OutOfMemory;
-    sub.parent_node = node;
-    node.preview_window = pw;
-    node.floating = false;
-
-    global_wm.frame(pw, node) catch return error.OutOfMemory;
-    _ = c.XMapWindow(global_wm.display, pw);
-    _ = c.XSelectInput(global_wm.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
-
-    const id = global_wm.register_node(pw, node) catch return error.OutOfMemory;
-
-    if (call_on_map) {
-        // Resolve prev focused id in the current graph
-        var prev_id: ?u32 = null;
-        if (global_wm.focused) |prev_focused| {
-            var in_current = false;
-            for (global_wm.current_graph.nodes.items) |n| {
-                if (n == prev_focused) { in_current = true; break; }
-            }
-            if (in_current) {
-                var it = global_wm.node_registry.iterator();
-                while (it.next()) |entry| {
-                    if (entry.value_ptr.* == prev_focused) { prev_id = entry.key_ptr.*; break; }
-                }
-            }
-        }
-        global_wm.call_arranger(global_wm.current_graph, "map", id, prev_id);
+fn l_get_window_class(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    const win = switch (node.content) {
+        .window => |w| w,
+        else => {
+            lua.pushNil();
+            return 1;
+        },
+    };
+    var hint: c.XClassHint = std.mem.zeroes(c.XClassHint);
+    if (c.XGetClassHint(global_wm.display, win, &hint) == 0) {
+        lua.pushNil();
+        return 1;
     }
+    defer {
+        if (hint.res_name)  |n| _ = c.XFree(n);
+        if (hint.res_class) |cl| _ = c.XFree(cl);
+    }
+    _ = lua.pushString(if (hint.res_class) |cl| std.mem.span(cl) else "");
+    return 1;
+}
 
-    sub.gap_inner_h = global_wm.default_gap_inner_h;
-    sub.gap_inner_v = global_wm.default_gap_inner_v;
-    sub.gap_outer_h = global_wm.default_gap_outer_h;
-    sub.gap_outer_v = global_wm.default_gap_outer_v;
+fn l_get_window_name(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    const win = switch (node.content) {
+        .window => |w| w,
+        else => {
+            lua.pushNil();
+            return 1;
+        },
+    };
+    var name: [*c]u8 = null;
+    if (c.XFetchName(global_wm.display, win, &name) == 0 or name == null) {
+        lua.pushNil();
+        return 1;
+    }
+    defer _ = c.XFree(name);
+    _ = lua.pushString(std.mem.span(name));
+    return 1;
+}
 
-    global_wm.resolve(global_wm.current_graph) catch return error.OutOfMemory;
-    global_wm.rebuild_focus_edges() catch {};
-    global_wm.flush(global_wm.current_graph) catch {};
-
-    return id;
+fn l_quit(lua: *Lua) i32 {
+    _ = lua;
+    std.process.exit(0);
 }
 
 fn l_set_gaps(lua: *Lua) i32 {
@@ -898,6 +955,34 @@ fn l_toggle_floating(lua: *Lua) i32 {
         _ = lua.pushString("failed to toggle floating");
         return lua.raiseError();
     };
+    return 0;
+}
+
+fn l_set_floating(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const val: bool = lua.toBoolean(2);
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    if (node.content != .window) return 0;
+    if (node.floating == val) return 0;
+    node.floating = val;
+    node.constraints.clearRetainingCapacity();
+    if (val) {
+        global_wm.center_node(node);
+    } else {
+        var prev_id: ?u32 = null;
+        if (global_wm.focused) |f| {
+            if (f != node) {
+                var it = global_wm.node_registry.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == f) { prev_id = entry.key_ptr.*; break; }
+                }
+            }
+        }
+        global_wm.call_arranger(global_wm.current_graph, "map", id, prev_id);
+        global_wm.resolve(global_wm.current_graph) catch {};
+        global_wm.rebuild_focus_edges() catch {};
+        global_wm.flush(global_wm.current_graph) catch {};
+    }
     return 0;
 }
 
