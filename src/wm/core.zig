@@ -804,6 +804,8 @@ pub const WM = struct {
     pub fn leave_workspace(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
         hide_graph_frames(self, self.current_graph);
+        self.focused = null;
+        focus_mod.clear_active_window(self);
         self.current_graph = self.workspace_stack.pop().?;
         show_graph_frames(self, self.current_graph);
         // Reset work offset so struts are applied cleanly on next resolve
@@ -838,6 +840,7 @@ pub const WM = struct {
 
         if (self.focused == node) {
             self.focused = null;
+            focus_mod.clear_active_window(self);
             _ = c.XSetInputFocus(self.display, self.root, c.RevertToParent, c.CurrentTime);
         }
 

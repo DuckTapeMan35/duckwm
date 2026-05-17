@@ -138,6 +138,17 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     // Focus the client window, not the frame
     _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
 
+    // broadcast _NET_ACTIVE_WINDOW
+    const net_active_window = c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0);
+    const XA_WINDOW = c.XInternAtom(wm.display, "WINDOW", 0);
+    const win_val: c.Window = switch (node.content) {
+        .window => |w| w,
+        else => 0,
+    };
+    _ = c.XChangeProperty(wm.display, wm.root, net_active_window,
+        XA_WINDOW, 32, c.PropModeReplace,
+        @ptrCast(&win_val), 1);
+
     // Update frame borders (correctly iterates over current_graph)
     for (wm.current_graph.nodes.items) |n| {
         const n_win = switch (n.content) {
@@ -154,6 +165,15 @@ pub fn set_focus(wm: *WM, node: *Node) void {
         }
     }
     events_mod.update_net_active_window(wm, win);
+}
+
+pub fn clear_active_window(wm: *WM) void {
+    const net_active_window = c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0);
+    const XA_WINDOW = c.XInternAtom(wm.display, "WINDOW", 0);
+    const none: c.Window = 0;
+    _ = c.XChangeProperty(wm.display, wm.root, net_active_window,
+        XA_WINDOW, 32, c.PropModeReplace,
+        @ptrCast(&none), 1);
 }
 
 pub fn top_left_window(wm: *WM) ?*Node {

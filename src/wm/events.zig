@@ -517,6 +517,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     }
 
     if (wm.focused == null) {
+        focus_mod.clear_active_window(wm);
         _ = c.XSetInputFocus(wm.display, wm.root, c.RevertToParent, c.CurrentTime);
     }
 
