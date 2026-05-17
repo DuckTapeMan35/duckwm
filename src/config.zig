@@ -15,6 +15,19 @@ const Registration = struct {
     name: [:0]const u8,
 };
 
+fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) void {
+    std.debug.print("apply_gaps: graph={*} ih={} iv={} oh={} ov={}\n", .{g, ih, iv, oh, ov});
+    g.gap_inner_h = ih;
+    g.gap_inner_v = iv;
+    g.gap_outer_h = oh;
+    g.gap_outer_v = ov;
+    for (g.nodes.items) |node| {
+        if (node.content == .workspace) {
+            apply_gaps_to_graph(node.content.workspace, ih, iv, oh, ov);
+        }
+    }
+}
+
 const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
@@ -96,8 +109,10 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_warp_cursor_to_node),               .name = "warp_cursor_to_node" },
     .{ .func = ziglua.wrap(l_get_mouse_node),                    .name = "get_mouse_node" },
     .{ .func = ziglua.wrap(l_set_focus_follows_mouse),           .name = "set_focus_follows_mouse" },
-    .{ .func = ziglua.wrap(l_set_float_move_button),   .name = "set_float_move_button" },
-    .{ .func = ziglua.wrap(l_set_float_resize_button), .name = "set_float_resize_button" },
+    .{ .func = ziglua.wrap(l_set_float_move_button),             .name = "set_float_move_button" },
+    .{ .func = ziglua.wrap(l_set_float_resize_button),           .name = "set_float_resize_button" },
+    .{ .func = ziglua.wrap(l_set_gaps),                          .name = "set_gaps" },
+    .{ .func = ziglua.wrap(l_set_gaps_workspace),                .name = "set_gaps_workspace" },
 };
 
 
@@ -142,11 +157,52 @@ fn create_workspace_node(_: *Lua, call_on_map: bool) !u32 {
         global_wm.call_arranger(global_wm.current_graph, "map", id, prev_id);
     }
 
+    sub.gap_inner_h = global_wm.default_gap_inner_h;
+    sub.gap_inner_v = global_wm.default_gap_inner_v;
+    sub.gap_outer_h = global_wm.default_gap_outer_h;
+    sub.gap_outer_v = global_wm.default_gap_outer_v;
+
     global_wm.resolve(global_wm.current_graph) catch return error.OutOfMemory;
     global_wm.rebuild_focus_edges() catch {};
     global_wm.flush(global_wm.current_graph) catch {};
 
     return id;
+}
+
+fn l_set_gaps(lua: *Lua) i32 {
+    const inner_h: u32 = @intCast(lua.checkInteger(1));
+    const inner_v: u32 = @intCast(lua.checkInteger(2));
+    const outer_h: u32 = @intCast(lua.checkInteger(3));
+    const outer_v: u32 = @intCast(lua.checkInteger(4));
+    global_wm.default_gap_inner_h = inner_h;
+    global_wm.default_gap_inner_v = inner_v;
+    global_wm.default_gap_outer_h = outer_h;
+    global_wm.default_gap_outer_v = outer_v;
+    apply_gaps_to_graph(&global_wm.graph, inner_h, inner_v, outer_h, outer_v);
+    apply_gaps_to_graph(global_wm.current_graph, inner_h, inner_v, outer_h, outer_v);
+    return 0;
+}
+
+fn l_set_gaps_workspace(lua: *Lua) i32 {
+    const id:      u32 = @intCast(lua.checkInteger(1));
+    const inner_h: u32 = @intCast(lua.checkInteger(2));
+    const inner_v: u32 = @intCast(lua.checkInteger(3));
+    const outer_h: u32 = @intCast(lua.checkInteger(4));
+    const outer_v: u32 = @intCast(lua.checkInteger(5));
+    const node = global_wm.get_node_by_id(id) orelse {
+        std.debug.print("set_gaps_workspace: node {} not found\n", .{id});
+        return 0;
+    };
+    if (node.content != .workspace) {
+        std.debug.print("set_gaps_workspace: node {} is not a workspace\n", .{id});
+        return 0;
+    }
+    std.debug.print("set_gaps_workspace: setting gaps on workspace {}\n", .{id});
+    node.content.workspace.gap_inner_h = inner_h;
+    node.content.workspace.gap_inner_v = inner_v;
+    node.content.workspace.gap_outer_h = outer_h;
+    node.content.workspace.gap_outer_v = outer_v;
+    return 0;
 }
 
 fn l_set_resize_modifier(lua: *Lua) i32 {

@@ -60,6 +60,10 @@ pub const WM = struct {
     work_y: i32,
     workspace_stack: std.ArrayListUnmanaged(*Graph),
     workspace_previews: std.AutoHashMap(c.Window, void),
+    default_gap_inner_h: u32,
+    default_gap_inner_v: u32,
+    default_gap_outer_h: u32,
+    default_gap_outer_v: u32,
 
     // resize state fields
     resize_modifier: ?c_uint,
@@ -135,6 +139,10 @@ pub const WM = struct {
             .workspace_stack = .{ .items = &.{}, .capacity = 0},
             .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
             .current_graph = undefined,
+            .default_gap_inner_h = 0,
+            .default_gap_inner_v = 0,
+            .default_gap_outer_h = 0,
+            .default_gap_outer_v = 0,
 
             .resize_modifier = null,
             .edge_resizing = false,
@@ -563,23 +571,41 @@ pub const WM = struct {
     }
 
     pub fn flush(self: *WM, g: *Graph) !void {
-        const bw: i32 = self.border_width;
+        const bw: u32 = @intCast(@max(0, self.border_width));
+        const work = self.get_work_area();
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => |win| {
+                    std.debug.print("flush: gap_inner_h={} gap_inner_v={} gap_outer_h={} gap_outer_v={}\n", .{
+                        g.gap_inner_h, g.gap_inner_v, g.gap_outer_h, g.gap_outer_v,
+                    });
                     if (node.floating) continue;
                     if (self.frames.get(win)) |win_frame| {
-                        const fw: u32  = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
-                        const fh: u32  = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
-                        _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
-                        _ = c.XMoveResizeWindow(self.display, win, 0, 0, fw, fh);
+                        const at_left   = node.x <= work.x;
+                        const at_top    = node.y <= work.y;
+                        const at_right  = node.x + @as(i32, @intCast(node.width))  >= work.x + @as(i32, @intCast(work.width));
+                        const at_bottom = node.y + @as(i32, @intCast(node.height)) >= work.y + @as(i32, @intCast(work.height));
+
+                        const half_h = g.gap_inner_h / 2;
+                        const half_v = g.gap_inner_v / 2;
+                        const gap_left:   u32 = if (at_left)   g.gap_outer_h else half_h;
+                        const gap_right:  u32 = if (at_right)  g.gap_outer_h else half_h;
+                        const gap_top:    u32 = if (at_top)    g.gap_outer_v else half_v;
+                        const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
+
+                        const x = node.x + @as(i32, @intCast(gap_left));
+                        const y = node.y + @as(i32, @intCast(gap_top));
+                        const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
+                        const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
+
+                        _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
+                        _ = c.XMoveResizeWindow(self.display, win, 0, 0, w, h);
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
-                            _ = c.XMapWindow(self.display, win);
-                            _ = c.XMapWindow(self.display, win_frame);
+                        _ = c.XMapWindow(self.display, win);
+                        _ = c.XMapWindow(self.display, win_frame);
                     }
                 },
                 .workspace => {
-                    // Don't flush preview for workspaces we're currently inside
                     const sub = node.content.workspace;
                     var is_active = (sub == self.current_graph);
                     if (!is_active) {
@@ -591,13 +617,28 @@ pub const WM = struct {
 
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {
-                            const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
-                            const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
-                            _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
-                            _ = c.XMoveResizeWindow(self.display, pw, 0, 0, fw, fh);
-                            _ = c.XResizeWindow(self.display, pw, fw, fh);
-                                _ = c.XMapWindow(self.display, pw);
-                                _ = c.XMapWindow(self.display, win_frame);
+                            const at_left   = node.x <= work.x;
+                            const at_top    = node.y <= work.y;
+                            const at_right  = node.x + @as(i32, @intCast(node.width))  >= work.x + @as(i32, @intCast(work.width));
+                            const at_bottom = node.y + @as(i32, @intCast(node.height)) >= work.y + @as(i32, @intCast(work.height));
+
+                            const half_h = g.gap_inner_h / 2;
+                            const half_v = g.gap_inner_v / 2;
+                            const gap_left:   u32 = if (at_left)   g.gap_outer_h else half_h;
+                            const gap_right:  u32 = if (at_right)  g.gap_outer_h else half_h;
+                            const gap_top:    u32 = if (at_top)    g.gap_outer_v else half_v;
+                            const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
+
+                            const x = node.x + @as(i32, @intCast(gap_left));
+                            const y = node.y + @as(i32, @intCast(gap_top));
+                            const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
+                            const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
+
+                            _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
+                            _ = c.XMoveResizeWindow(self.display, pw, 0, 0, w, h);
+                            _ = c.XResizeWindow(self.display, pw, w, h);
+                            _ = c.XMapWindow(self.display, pw);
+                            _ = c.XMapWindow(self.display, win_frame);
                         }
                     }
                 },
@@ -1043,6 +1084,11 @@ pub const WM = struct {
             .container = root_node,
         } };
         self.current_graph.add_constraint(ws_node, g) catch return error.OutOfMemory;
+
+        sub.gap_inner_h = self.default_gap_inner_h;
+        sub.gap_inner_v = self.default_gap_inner_v;
+        sub.gap_outer_h = self.default_gap_outer_h;
+        sub.gap_outer_v = self.default_gap_outer_v;
 
         // 6. Apply the constraint and enter the workspace.
         self.resolve(self.current_graph) catch return error.OutOfMemory;

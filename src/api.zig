@@ -566,4 +566,27 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "button", .typ = "integer" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "set_gaps",
+        .desc   = "Set global gap sizes in pixels.",
+        .params = &.{
+            .{ .name = "inner_h", .typ = "integer" },
+            .{ .name = "inner_v", .typ = "integer" },
+            .{ .name = "outer_h", .typ = "integer" },
+            .{ .name = "outer_v", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name   = "set_gaps_workspace",
+        .desc   = "Set gap sizes for a specific workspace node.",
+        .params = &.{
+            .{ .name = "id",      .typ = "integer" },
+            .{ .name = "inner_h", .typ = "integer" },
+            .{ .name = "inner_v", .typ = "integer" },
+            .{ .name = "outer_h", .typ = "integer" },
+            .{ .name = "outer_v", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
 };
