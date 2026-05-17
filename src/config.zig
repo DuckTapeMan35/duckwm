@@ -178,9 +178,100 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_urgent),                        .name = "set_urgent" },
     .{ .func = ziglua.wrap(l_set_default_urgent_border_color),   .name = "set_default_urgent_border_color" },
     .{ .func = ziglua.wrap(l_set_click_to_focus),                .name = "set_click_to_focus" },
-    .{ .func = ziglua.wrap(l_hide_window), .name = "hide_window" },
-    .{ .func = ziglua.wrap(l_show_window), .name = "show_window" },
+    .{ .func = ziglua.wrap(l_hide_window),                       .name = "hide_window" },
+    .{ .func = ziglua.wrap(l_show_window),                       .name = "show_window" },
+    .{ .func = ziglua.wrap(l_set_pan),                           .name = "set_pan" },
+    .{ .func = ziglua.wrap(l_get_pan),                           .name = "get_pan" },
+    .{ .func = ziglua.wrap(l_pan_by),                            .name = "pan_by" },
+    .{ .func = ziglua.wrap(l_set_virtual_size),                  .name = "set_virtual_size" },
+    .{ .func = ziglua.wrap(l_get_work_area),                     .name = "get_work_area" },
+    .{ .func = ziglua.wrap(l_set_lock_horizontal_resize),        .name = "set_lock_horizontal_resize" },
+    .{ .func = ziglua.wrap(l_set_lock_vertical_resize),          .name = "set_lock_vertical_resize" },
+    .{ .func = ziglua.wrap(l_remove_constraint),                 .name = "remove_constraint" },
 };
+
+fn l_remove_constraint(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const type_str = lua.checkString(2);
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+
+    var i: usize = 0;
+    while (i < node.constraints.items.len) {
+        const con = node.constraints.items[i];
+        const matches = blk: {
+            if (std.mem.eql(u8, type_str, "fixed_x"))      break :blk con == .fixed_x;
+            if (std.mem.eql(u8, type_str, "fixed_y"))      break :blk con == .fixed_y;
+            if (std.mem.eql(u8, type_str, "fixed_width"))  break :blk con == .fixed_width;
+            if (std.mem.eql(u8, type_str, "fixed_height")) break :blk con == .fixed_height;
+            if (std.mem.eql(u8, type_str, "left_of"))      break :blk con == .left_of;
+            if (std.mem.eql(u8, type_str, "right_of"))     break :blk con == .right_of;
+            if (std.mem.eql(u8, type_str, "above"))        break :blk con == .above;
+            if (std.mem.eql(u8, type_str, "below"))        break :blk con == .below;
+            if (std.mem.eql(u8, type_str, "grid_cell"))    break :blk con == .grid_cell;
+            if (std.mem.eql(u8, type_str, "split"))        break :blk con == .split;
+            if (std.mem.eql(u8, type_str, "align_left"))   break :blk con == .align_left;
+            if (std.mem.eql(u8, type_str, "align_right"))  break :blk con == .align_right;
+            if (std.mem.eql(u8, type_str, "align_top"))    break :blk con == .align_top;
+            if (std.mem.eql(u8, type_str, "align_bottom")) break :blk con == .align_bottom;
+            if (std.mem.eql(u8, type_str, "equal_width"))  break :blk con == .equal_width;
+            if (std.mem.eql(u8, type_str, "equal_height")) break :blk con == .equal_height;
+            break :blk false;
+        };
+        if (matches) {
+            _ = node.constraints.swapRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+    return 0;
+}
+
+fn l_set_lock_horizontal_resize(lua: *Lua) i32 {
+    global_wm.current_graph.lock_horizontal_resize = lua.toBoolean(1);
+    return 0;
+}
+
+fn l_set_lock_vertical_resize(lua: *Lua) i32 {
+    global_wm.current_graph.lock_vertical_resize = lua.toBoolean(1);
+    return 0;
+}
+
+fn l_get_work_area(lua: *Lua) i32 {
+    const work = global_wm.get_work_area();
+    lua.pushInteger(work.x);
+    lua.pushInteger(work.y);
+    lua.pushInteger(work.width);
+    lua.pushInteger(work.height);
+    return 4;
+}
+
+fn l_set_pan(lua: *Lua) i32 {
+    global_wm.current_graph.pan_x = @intCast(lua.checkInteger(1));
+    global_wm.current_graph.pan_y = @intCast(lua.checkInteger(2));
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_get_pan(lua: *Lua) i32 {
+    lua.pushInteger(global_wm.current_graph.pan_x);
+    lua.pushInteger(global_wm.current_graph.pan_y);
+    return 2;
+}
+
+fn l_pan_by(lua: *Lua) i32 {
+    global_wm.current_graph.pan_x += @intCast(lua.checkInteger(1));
+    global_wm.current_graph.pan_y += @intCast(lua.checkInteger(2));
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_set_virtual_size(lua: *Lua) i32 {
+    const w: u32 = @intCast(lua.checkInteger(1));
+    const h: u32 = @intCast(lua.checkInteger(2));
+    global_wm.current_graph.virtual_width  = w;
+    global_wm.current_graph.virtual_height = h;
+    return 0;
+}
 
 fn l_hide_window(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));

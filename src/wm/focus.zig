@@ -130,15 +130,62 @@ pub fn set_focus(wm: *WM, node: *Node) void {
         .empty => return,
     };
     node.urgent = false;
-    // Reset border to normal focused color
     if (wm.frames.get(win)) |frame| {
         const color = node.border_color_focused orelse wm.default_border_color_focused;
         _ = c.XSetWindowBorder(wm.display, frame, color);
     }
-    // Focus the client window, not the frame
     _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
 
-    // broadcast _NET_ACTIVE_WINDOW
+    // Snap pan to bring focused window into view
+    if (!node.floating) {
+        const g = wm.current_graph;
+        const work = wm.get_work_area();
+        const work_x = work.x;
+        const work_y = work.y;
+        const screen_w = @as(i32, @intCast(wm.screen_width));
+        const screen_h = @as(i32, @intCast(wm.screen_height));
+        const win_x = node.x;
+        const win_y = node.y;
+        const win_w = @as(i32, @intCast(node.width));
+        const win_h = @as(i32, @intCast(node.height));
+
+        var pan_changed = false;
+
+        // Horizontal
+        const vis_left  = win_x - g.pan_x;
+        const vis_right = vis_left + win_w;
+        if (vis_left < work_x) {
+            g.pan_x = win_x - work_x;
+            pan_changed = true;
+        } else if (vis_right > screen_w) {
+            g.pan_x = win_x + win_w - screen_w;
+            pan_changed = true;
+        }
+
+        // Vertical
+        const vis_top    = win_y - g.pan_y;
+        const vis_bottom = vis_top + win_h;
+        if (vis_top < work_y) {
+            g.pan_y = win_y - work_y;
+            pan_changed = true;
+        } else if (vis_bottom > screen_h) {
+            g.pan_y = win_y + win_h - screen_h;
+            pan_changed = true;
+        }
+
+        // Clamp to non-negative
+        if (g.pan_x < 0) { g.pan_x = 0; pan_changed = true; }
+        if (g.pan_y < 0) { g.pan_y = 0; pan_changed = true; }
+
+        if (pan_changed) {
+            _ = c.XGrabPointer(wm.display, wm.root, 0,
+                c.PointerMotionMask | c.ButtonPressMask | c.ButtonReleaseMask,
+                c.GrabModeAsync, c.GrabModeAsync, c.None, c.None, c.CurrentTime);
+            wm.flush(g) catch {};
+            _ = c.XUngrabPointer(wm.display, c.CurrentTime);
+        }
+    }
+
     const net_active_window = c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0);
     const XA_WINDOW = c.XInternAtom(wm.display, "WINDOW", 0);
     const win_val: c.Window = switch (node.content) {
@@ -149,7 +196,6 @@ pub fn set_focus(wm: *WM, node: *Node) void {
         XA_WINDOW, 32, c.PropModeReplace,
         @ptrCast(&win_val), 1);
 
-    // Update frame borders (correctly iterates over current_graph)
     for (wm.current_graph.nodes.items) |n| {
         const n_win = switch (n.content) {
             .window => |w| w,

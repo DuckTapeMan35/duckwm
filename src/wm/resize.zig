@@ -6,6 +6,19 @@ const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
 pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
+    if (wm.current_graph.lock_vertical_resize) return false;
+
+    const in_virtual = wm.current_graph.virtual_width > wm.screen_width;
+    const work = wm.get_work_area();
+    const work_left: i32 = work.x;
+    const work_right: i32 = work.x + @as(i32, @intCast(work.width));
+
+    // Block resizing edges that touch the screen boundary
+    if (!in_virtual) {
+        if (edge_x <= work_left) return false;
+        if (edge_x >= work_right) return false;
+    }
+
     for (wm.current_graph.nodes.items) |node| {
         if (node.content == .empty) continue;
         const right: i32 = node.x + @as(i32, @intCast(node.width));
@@ -32,6 +45,19 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
 }
 
 pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32) !bool {
+    if (wm.current_graph.lock_horizontal_resize) return false;
+
+    const in_virtual = wm.current_graph.virtual_height > wm.screen_height;
+    const work = wm.get_work_area();
+    const work_top: i32 = work.y;
+    const work_bottom: i32 = work.y + @as(i32, @intCast(work.height));
+
+    // Block resizing edges that touch the screen boundary
+    if (!in_virtual) {
+        if (edge_y <= work_top) return false;
+        if (edge_y >= work_bottom) return false;
+    }
+
     for (wm.current_graph.nodes.items) |node| {
         if (node.content == .empty) continue;
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));

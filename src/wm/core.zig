@@ -66,6 +66,9 @@ pub const WM = struct {
     default_gap_outer_h: u32,
     default_gap_outer_v: u32,
 
+    // flushing state
+    flushing: bool,
+
     // resize state fields
     resize_modifier: ?c_uint,
     edge_resizing: bool,
@@ -170,6 +173,8 @@ pub const WM = struct {
             .resize_refresh_interval = 16, // ms
             .last_flushed_edge_x = -1,
             .last_flushed_edge_y = -1,
+
+            .flushing = false,
 
             .float_moving = false,
             .float_move_modifier = null,
@@ -454,6 +459,8 @@ pub const WM = struct {
             border_color,
             c.None,
         );
+        // Move frame offscreen before mapping so it doesn't flash at wrong position
+        _ = c.XMoveWindow(self.display, win_frame, -10000, -10000);
         if (self.click_to_focus) {
             _ = c.XGrabButton(self.display, 1, c.AnyModifier, win_frame, 0,
                 c.ButtonPressMask | c.ButtonReleaseMask,
@@ -527,10 +534,12 @@ pub const WM = struct {
             if (node.floating) continue;
             switch (node.content) {
                 .empty => { // Only update "container/root" nodes
-                    node.x = 0;
-                    node.y = 0;
-                    node.width = work.width;
-                    node.height = work.height;
+                    if (node.constraints.items.len == 0) {
+                        node.x = 0;
+                        node.y = 0;
+                        node.width = work.width;
+                        node.height = work.height;
+                    }
                 },
                 else => {},
             }
@@ -544,7 +553,9 @@ pub const WM = struct {
         }
 
         // Step 2: run the layout solver in the relative coordinate space
-        try g.solve(work.width, work.height);
+        const solve_width  = if (g.virtual_width  > work.width)  g.virtual_width  else work.width;
+        const solve_height = if (g.virtual_height > work.height) g.virtual_height else work.height;
+        try g.solve(solve_width, solve_height);
 
         // Step 3: apply the new offset to tiled nodes
         for (g.nodes.items) |node| {
@@ -595,6 +606,8 @@ pub const WM = struct {
     }
 
     pub fn flush(self: *WM, g: *Graph) !void {
+        self.flushing = true;
+        defer self.flushing = false;
         const bw: u32 = @intCast(@max(0, self.border_width));
         const work = self.get_work_area();
         for (g.nodes.items) |node| {
@@ -622,8 +635,12 @@ pub const WM = struct {
                         const gap_top:    u32 = if (at_top)    g.gap_outer_v else half_v;
                         const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
 
-                        const x = node.x + @as(i32, @intCast(gap_left));
-                        const y = node.y + @as(i32, @intCast(gap_top));
+                        const raw_x = node.x + @as(i32, @intCast(gap_left)) - g.pan_x;
+                        const raw_y = node.y + @as(i32, @intCast(gap_top))  - g.pan_y;
+
+                        // Clamp to reasonable X11 bounds — X11 uses i16 internally
+                        const x = @max(-32768, @min(32767, raw_x));
+                        const y = @max(-32768, @min(32767, raw_y));
                         const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
                         const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
 
@@ -670,10 +687,18 @@ pub const WM = struct {
                             const gap_top:    u32 = if (at_top)    g.gap_outer_v else half_v;
                             const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
 
-                            const x = node.x + @as(i32, @intCast(gap_left));
-                            const y = node.y + @as(i32, @intCast(gap_top));
+                            const raw_x = node.x + @as(i32, @intCast(gap_left)) - g.pan_x;
+                            const raw_y = node.y + @as(i32, @intCast(gap_top))  - g.pan_y;
+
+                            // Clamp to reasonable X11 bounds — X11 uses i16 internally
+                            const x = @max(-32768, @min(32767, raw_x));
+                            const y = @max(-32768, @min(32767, raw_y));
                             const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
                             const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
+
+                            std.debug.print("set_focus: node.x={} node.w={} pan_x={} screen_w={}\n", .{
+                                node.x, node.width, self.current_graph.pan_x, self.screen_width,
+                            });
 
                             _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
                             _ = c.XMoveResizeWindow(self.display, pw, 0, 0, w, h);
@@ -687,6 +712,11 @@ pub const WM = struct {
             }
         }
         float_mod.raise_floating_windows(self);
+        // Re-raise dock windows above everything
+        var dock_it = self.dock_struts.keyIterator();
+        while (dock_it.next()) |win| {
+            _ = c.XRaiseWindow(self.display, win.*);
+        }
         _ = c.XFlush(self.display);
     }
 

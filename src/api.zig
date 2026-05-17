@@ -682,4 +682,64 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "id", .typ = "integer" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "set_pan",
+        .desc   = "Set the pan offset for the current workspace in pixels.",
+        .params = &.{
+            .{ .name = "x", .typ = "integer" },
+            .{ .name = "y", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name   = "get_pan",
+        .desc   = "Return the current pan offset as (x, y).",
+        .params = &.{},
+        .ret    = "integer, integer",
+    },
+    .{
+        .name   = "pan_by",
+        .desc   = "Pan the current workspace by a relative offset in pixels.",
+        .params = &.{
+            .{ .name = "dx", .typ = "integer" },
+            .{ .name = "dy", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name   = "set_virtual_size",
+        .desc   = "Set the virtual canvas size for the current workspace so windows can be placed beyond screen bounds.",
+        .params = &.{
+            .{ .name = "width",  .typ = "integer" },
+            .{ .name = "height", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name   = "get_work_area",
+        .desc   = "Return the usable work area as (x, y, width, height), accounting for docks and bars.",
+        .params = &.{},
+        .ret    = "integer, integer, integer, integer",
+    },
+    .{
+        .name   = "set_lock_horizontal_resize",
+        .desc   = "Prevent tiled windows from being resized horizontally in the current workspace.",
+        .params = &.{ .{ .name = "locked", .typ = "boolean" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "set_lock_vertical_resize",
+        .desc   = "Prevent tiled windows from being resized vertically in the current workspace.",
+        .params = &.{ .{ .name = "locked", .typ = "boolean" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "remove_constraint",
+        .desc   = "Remove all constraints of a given type from a node.",
+        .params = &.{
+            .{ .name = "id",   .typ = "integer" },
+            .{ .name = "type", .typ = "'fixed_x'|'fixed_y'|'fixed_width'|'fixed_height'|'right_of'|'left_of'|'above'|'below'|'grid_cell'|'split'|'align_left'|'align_right'|'align_top'|'align_bottom'|'equal_width'|'equal_height'" },
+        },
+        .ret = "nil",
+    },
 };

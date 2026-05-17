@@ -713,7 +713,6 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 else => return,
             };
 
-            // --- Floating resize with fixed anchor ---
             if (wm.corner_resizing) {
                 const delta_x = e.x_root - wm.resize_end_x;
                 const delta_y = e.y_root - wm.resize_end_y;
@@ -756,7 +755,6 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 }
             }
 
-            // Always move frame immediately
             if (wm.frames.get(client)) |frame| {
                 _ = c.XMoveResizeWindow(wm.display, frame, focused.x, focused.y, focused.width, focused.height);
 
@@ -774,31 +772,49 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
             if (wm.corner_resizing) {
                 const delta_x = e.x_root - wm.resize_end_x;
                 const delta_y = e.y_root - wm.resize_end_y;
-                if (delta_x != 0) {
-                    if (resize_mod.resize_vertical_edge(wm, wm.resize_v_edge, delta_x) catch false) {
-                        wm.resize_v_edge += delta_x;
+                if (wm.current_graph.lock_vertical_resize and wm.current_graph.lock_horizontal_resize) {
+                    // both locked, nothing to do
+                } else if (wm.current_graph.lock_vertical_resize) {
+                    if (delta_y != 0) {
+                        if (resize_mod.resize_horizontal_edge(wm, wm.resize_h_edge, delta_y) catch false) {
+                            wm.resize_h_edge += delta_y;
+                        }
+                        wm.resize_end_y = e.y_root;
                     }
-                    wm.resize_end_x = e.x_root;
-                }
-                if (delta_y != 0) {
-                    if (resize_mod.resize_horizontal_edge(wm, wm.resize_h_edge, delta_y) catch false) {
-                        wm.resize_h_edge += delta_y;
+                } else if (wm.current_graph.lock_horizontal_resize) {
+                    if (delta_x != 0) {
+                        if (resize_mod.resize_vertical_edge(wm, wm.resize_v_edge, delta_x) catch false) {
+                            wm.resize_v_edge += delta_x;
+                        }
+                        wm.resize_end_x = e.x_root;
                     }
-                    wm.resize_end_y = e.y_root;
+                } else {
+                    if (delta_x != 0) {
+                        if (resize_mod.resize_vertical_edge(wm, wm.resize_v_edge, delta_x) catch false) {
+                            wm.resize_v_edge += delta_x;
+                        }
+                        wm.resize_end_x = e.x_root;
+                    }
+                    if (delta_y != 0) {
+                        if (resize_mod.resize_horizontal_edge(wm, wm.resize_h_edge, delta_y) catch false) {
+                            wm.resize_h_edge += delta_y;
+                        }
+                        wm.resize_end_y = e.y_root;
+                    }
                 }
             }
             if (wm.edge_resizing) {
                 const delta_x = e.x_root - wm.resize_end_x;
                 const delta_y = e.y_root - wm.resize_end_y;
                 if (wm.edge_is_vertical) {
-                    if (delta_x != 0) {
+                    if (!wm.current_graph.lock_vertical_resize and delta_x != 0) {
                         if (resize_mod.resize_vertical_edge(wm, wm.edge_x, delta_x) catch false) {
                             wm.edge_x += delta_x;
                         }
                         wm.resize_end_x = e.x_root;
                     }
                 } else {
-                    if (delta_y != 0) {
+                    if (!wm.current_graph.lock_horizontal_resize and delta_y != 0) {
                         if (resize_mod.resize_horizontal_edge(wm, wm.edge_y, delta_y) catch false) {
                             wm.edge_y += delta_y;
                         }
@@ -807,7 +823,6 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 }
             }
 
-            // Only flush if edge position actually changed since last flush
             const current_edge_x = if (wm.corner_resizing) wm.resize_v_edge else wm.edge_x;
             const current_edge_y = if (wm.corner_resizing) wm.resize_h_edge else wm.edge_y;
             const edge_changed = current_edge_x != wm.last_flushed_edge_x or
