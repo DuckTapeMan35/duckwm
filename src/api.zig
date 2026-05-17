@@ -643,4 +643,19 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "id", .typ = "integer" } },
         .ret    = "integer|nil",
     },
+    .{
+        .name   = "get_urgent",
+        .desc   = "Return whether a window has the urgency hint set.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "boolean",
+    },
+    .{
+        .name   = "set_urgent",
+        .desc   = "Set or clear the urgency flag on a window node.",
+        .params = &.{
+            .{ .name = "id",  .typ = "integer" },
+            .{ .name = "val", .typ = "boolean" },
+        },
+        .ret    = "nil",
+    },
 };

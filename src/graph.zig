@@ -93,6 +93,7 @@ pub const Node = struct {
     content: NodeContent,
     owner_graph: ?*Graph,
     preview_window: ?c.Window, // non-null for workspace nodes
+    urgent: bool,
 
     x: i32,
     y: i32,
@@ -113,6 +114,7 @@ pub const Node = struct {
             .content = content,
             .owner_graph = null,
             .preview_window = null,
+            .urgent = false,
             .x = 0,
             .y = 0,
             .width = 0,

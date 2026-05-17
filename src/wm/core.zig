@@ -111,6 +111,7 @@ pub const WM = struct {
     border_width: i32,
     default_border_color_focused: u32,
     default_border_color_unfocused: u32,
+    default_border_color_urgent: u32,
     inotify_fd: i32,
     inotify_wd: i32,
     reload_fn: ?*const fn(*WM) void,
@@ -192,6 +193,7 @@ pub const WM = struct {
             .border_width = 2,
             .default_border_color_focused = 0x0000FF,
             .default_border_color_unfocused = 0x00FF00,
+            .default_border_color_urgent = 0xFF0000,
             .inotify_fd = -1,
             .inotify_wd = -1,
             .reload_fn = null,
@@ -1192,11 +1194,11 @@ pub const WM = struct {
                     c.ButtonPress      => events_mod.on_button_press(self, &e.xbutton),
                     c.MotionNotify     => events_mod.on_motion_notify(self, &e.xmotion),
                     c.ButtonRelease    => events_mod.on_button_release(self, &e.xbutton),
-                    c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
                     c.ConfigureNotify  => {},
                     c.EnterNotify      => events_mod.on_enter_notify(self, &e.xcrossing),
                     c.LeaveNotify      => {}, // just to silence prints
                     c.ClientMessage => try events_mod.on_client_message(self, &e.xclient),
+                    c.PropertyNotify => try events_mod.on_property_notify(self, &e.xproperty),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }

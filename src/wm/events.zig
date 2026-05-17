@@ -207,51 +207,69 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
     const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
     const net_wm_state_fullscreen = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
+    const net_wm_state_demands_attention = c.XInternAtom(wm.display, "_NET_WM_STATE_DEMANDS_ATTENTION", 0);
 
     if (ev.message_type == net_wm_state) {
-        const action = ev.data.l[0]; // 0=remove, 1=add, 2=toggle
+        const action = ev.data.l[0];
         const prop1: c.Atom = @intCast(ev.data.l[1]);
         const prop2: c.Atom = @intCast(ev.data.l[2]);
 
         const is_fullscreen = (prop1 == net_wm_state_fullscreen or
                                prop2 == net_wm_state_fullscreen);
-        if (!is_fullscreen) return;
+        if (is_fullscreen) {
+            const node_id = wm.window_to_node_id.get(ev.window) orelse return;
+            const node = wm.node_registry.get(node_id) orelse return;
+            const currently_fullscreen = (wm.fullscreen_node == node);
+            const should_fullscreen = switch (action) {
+                0 => false,
+                1 => true,
+                2 => !currently_fullscreen,
+                else => return,
+            };
+            if (should_fullscreen != currently_fullscreen) {
+                wm.focused = node;
+                try wm.toggle_fullscreen();
+            }
+        }
 
-        // Find the node for this window
-        const node_id = wm.window_to_node_id.get(ev.window) orelse return;
-        const node = wm.node_registry.get(node_id) orelse return;
-
-        const currently_fullscreen = (wm.fullscreen_node == node);
-        const should_fullscreen = switch (action) {
-            0 => false,  // remove
-            1 => true,   // add
-            2 => !currently_fullscreen,  // toggle
-            else => return,
-        };
-
-        if (should_fullscreen != currently_fullscreen) {
-            wm.focused = node;
-            try wm.toggle_fullscreen();
+        const is_attention = (prop1 == net_wm_state_demands_attention or
+                              prop2 == net_wm_state_demands_attention);
+        if (is_attention) {
+            if (wm.window_to_node_id.get(ev.window)) |node_id| {
+                if (wm.node_registry.get(node_id)) |node| {
+                    const should_urgent = (action != 0);
+                    node.urgent = should_urgent;
+                    if (wm.frames.get(ev.window)) |frame| {
+                        const color = if (should_urgent)
+                            wm.default_border_color_urgent
+                        else if (wm.focused == node)
+                            node.border_color_focused orelse wm.default_border_color_focused
+                        else
+                            node.border_color_unfocused orelse wm.default_border_color_unfocused;
+                        _ = c.XSetWindowBorder(wm.display, frame, color);
+                        _ = c.XFlush(wm.display);
+                    }
+                }
+            }
         }
     }
 }
 
 pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
-    const net_wm_window_type = c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE", 0);
     const win = ev.window;
 
+    const net_wm_window_type    = c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE", 0);
+    const net_wm_strut_partial  = c.XInternAtom(wm.display, "_NET_WM_STRUT_PARTIAL", 0);
+    const wm_hints_atom         = c.XInternAtom(wm.display, "WM_HINTS", 0);
+
     if (ev.atom == net_wm_window_type) {
-        // only act if this window is currently managed
         if (wm.window_to_node_id.contains(win)) {
             if (is_dock_or_toolbar(wm.display, win)) {
-                // It became a dock – unmanage it
                 const node_id = wm.window_to_node_id.get(win).?;
                 const node = wm.node_registry.get(node_id).?;
-                // Record strut
                 if (get_strut(wm.display, win)) |s| {
                     try wm.dock_struts.put(win, s);
                 }
-                // Unframe, unmap, reparent, etc.
                 if (wm.frames.get(win)) |frame| {
                     _ = c.XUnmapWindow(wm.display, win);
                     _ = c.XReparentWindow(wm.display, win, wm.root, 0, 0);
@@ -259,21 +277,16 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
                     _ = wm.frames.remove(win);
                 }
                 _ = c.XMapWindow(wm.display, win);
-
                 wm.current_graph.remove_node(node);
                 _ = wm.node_registry.remove(node_id);
                 _ = wm.window_to_node_id.remove(win);
-
                 try wm.resolve(wm.current_graph);
                 try wm.rebuild_focus_edges();
                 try wm.flush(wm.current_graph);
             }
         }
-    }
-    // also handle strut changes for existing docks
-    else if (ev.atom == c.XInternAtom(wm.display, "_NET_WM_STRUT_PARTIAL", 0)) {
+    } else if (ev.atom == net_wm_strut_partial) {
         if (wm.dock_struts.contains(win)) {
-            // update strut
             if (get_strut(wm.display, win)) |s| {
                 try wm.dock_struts.put(win, s);
             } else {
@@ -282,6 +295,28 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
             try wm.resolve(wm.current_graph);
             try wm.rebuild_focus_edges();
             try wm.flush(wm.current_graph);
+        }
+    } else if (ev.atom == wm_hints_atom) {
+        if (wm.window_to_node_id.get(win)) |node_id| {
+            if (wm.node_registry.get(node_id)) |node| {
+                // If this window isn't focused, treat any WM_HINTS change as urgent
+                if (wm.focused != node) {
+                    const hints = c.XGetWMHints(wm.display, win);
+                    const urgent = if (hints != null) blk: {
+                        defer _ = c.XFree(hints);
+                        break :blk (hints.*.flags & c.XUrgencyHint) != 0;
+                    } else true; // null means xterm already cleared it — still signal urgency
+                    node.urgent = urgent;
+                    if (wm.frames.get(win)) |frame| {
+                        const color = if (urgent)
+                            wm.default_border_color_urgent
+                        else
+                            node.border_color_unfocused orelse wm.default_border_color_unfocused;
+                        _ = c.XSetWindowBorder(wm.display, frame, color);
+                        _ = c.XFlush(wm.display);
+                    }
+                }
+            }
         }
     }
 }
@@ -971,17 +1006,25 @@ pub fn update_net_active_window(wm: *WM, active_window: c.Window) void {
         @ptrCast(&new_val), 1);
 }
 
-pub fn announce_supported_hints(self: *WM) void {
-    const supported = c.XInternAtom(self.display, "_NET_SUPPORTED", 0);
-    const XA_ATOM = c.XInternAtom(self.display, "ATOM", 0);
+pub fn announce_supported_hints(wm: *WM) void {
+    const net_supported = c.XInternAtom(wm.display, "_NET_SUPPORTED", 0);
+    const xa_atom = c.XInternAtom(wm.display, "ATOM", 0);
+
     const atoms = [_]c.Atom{
-        supported,
-        c.XInternAtom(self.display, "_NET_ACTIVE_WINDOW", 0),
-        c.XInternAtom(self.display, "_NET_WM_WINDOW_TYPE", 0),
-        c.XInternAtom(self.display, "_NET_WM_STRUT_PARTIAL", 0),
-        c.XInternAtom(self.display, "_NET_WORKAREA", 0),
+        c.XInternAtom(wm.display, "_NET_WM_STATE", 0),
+        c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0),
+        c.XInternAtom(wm.display, "_NET_WM_STATE_DEMANDS_ATTENTION", 0),
+        c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE", 0),
+        c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE_DOCK", 0),
+        c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE_TOOLBAR", 0),
+        c.XInternAtom(wm.display, "_NET_WM_STRUT_PARTIAL", 0),
+        c.XInternAtom(wm.display, "_NET_WM_PID", 0),
+        c.XInternAtom(wm.display, "_NET_WORKAREA", 0),
+        c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0),
+        c.XInternAtom(wm.display, "WM_HINTS", 0),
     };
-    _ = c.XChangeProperty(self.display, self.root, supported,
-        XA_ATOM, 32, c.PropModeReplace,
-        @ptrCast(&atoms), atoms.len);
+
+    _ = c.XChangeProperty(wm.display, wm.root, net_supported,
+        xa_atom, 32, c.PropModeReplace,
+        @ptrCast(&atoms), @intCast(atoms.len));
 }

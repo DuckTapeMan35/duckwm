@@ -174,7 +174,27 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_toggle_fullscreen),                 .name = "toggle_fullscreen" },
     .{ .func = ziglua.wrap(l_reload_config),                     .name = "reload_config" },
     .{ .func = ziglua.wrap(l_get_window_pid),                    .name = "get_window_pid" },
+    .{ .func = ziglua.wrap(l_get_urgent),                        .name = "get_urgent" },
+    .{ .func = ziglua.wrap(l_set_urgent),                        .name = "set_urgent" },
 };
+
+fn l_get_urgent(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushBoolean(false);
+        return 1;
+    };
+    lua.pushBoolean(node.urgent);
+    return 1;
+}
+
+fn l_set_urgent(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const val: bool = lua.toBoolean(2);
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    node.urgent = val;
+    return 0;
+}
 
 fn l_get_window_class(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));

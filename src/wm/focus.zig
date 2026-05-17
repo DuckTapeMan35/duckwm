@@ -129,6 +129,12 @@ pub fn set_focus(wm: *WM, node: *Node) void {
         .workspace => node.preview_window orelse return,
         .empty => return,
     };
+    node.urgent = false;
+    // Reset border to normal focused color
+    if (wm.frames.get(win)) |frame| {
+        const color = node.border_color_focused orelse wm.default_border_color_focused;
+        _ = c.XSetWindowBorder(wm.display, frame, color);
+    }
     // Focus the client window, not the frame
     _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
 
