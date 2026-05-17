@@ -140,11 +140,12 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
+    if (wm.focused) |f| wm.focus(f);
 
     // Listen for future property changes on client
     _ = c.XSelectInput(wm.display, req.window, c.PropertyChangeMask);
 
-    // Re‑check type in case it was set after MapRequest
+    // Re-check type in case it was set after MapRequest
     if (is_dock_or_toolbar(wm.display, req.window)) {
         // We must undo the frame & tiling – reuse destroy logic
         const node_id = wm.window_to_node_id.get(req.window) orelse return;
@@ -171,6 +172,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
+        if (wm.focused) |f| wm.focus(f);
         return;
     }
 }
