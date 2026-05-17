@@ -115,7 +115,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     node.width  = @intCast(attrs.width);
     node.height = @intCast(attrs.height);
     try wm.frame(req.window, node);
-    _ = c.XMapWindow(wm.display, req.window);
     const prev_focused = wm.focused;
     if (wm.focused == null) wm.focus(node);
     const id = try wm.register_node(req.window, node);

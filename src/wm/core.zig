@@ -425,7 +425,6 @@ pub const WM = struct {
         _ = c.XReparentWindow(self.display, win, win_frame, 0, 0);
         _ = c.XSetWindowBorderWidth(self.display, win, 0);
         _ = c.XMoveResizeWindow(self.display, win, self.border_width, self.border_width, node.width, node.height);
-        _ = c.XMapWindow(self.display, win_frame);
 
         try self.frames.put(win, win_frame);
     }
@@ -555,6 +554,8 @@ pub const WM = struct {
                         _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
                         _ = c.XMoveResizeWindow(self.display, win, 0, 0, fw, fh);
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
+                        _ = c.XMapWindow(self.display, win);
+                        _ = c.XMapWindow(self.display, win_frame);
                     }
                 },
                 .workspace => {
@@ -575,6 +576,8 @@ pub const WM = struct {
                             _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
                             _ = c.XMoveResizeWindow(self.display, pw, 0, 0, fw, fh);
                             _ = c.XResizeWindow(self.display, pw, fw, fh);
+                            _ = c.XMapWindow(self.display, pw);
+                            _ = c.XMapWindow(self.display, win_frame);
                         }
                     }
                 },
@@ -969,7 +972,6 @@ pub const WM = struct {
         node.floating = false;
 
         try self.frame(pw, node);
-        _ = c.XMapWindow(self.display, pw);
         _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
 
         return node;

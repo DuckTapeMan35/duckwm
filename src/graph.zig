@@ -433,6 +433,12 @@ pub const Graph = struct {
 
         }
 
+        for (self.nodes.items) |node| {
+            if (node.floating) continue;
+            if (node.width  < 1) node.width  = 1;
+            if (node.height < 1) node.height = 1;
+        }
+
         if (iter >= max_iter) {
             std.debug.print("Warning: constraint solver did not converge after {} iterations\n", .{max_iter});
         }
@@ -489,8 +495,8 @@ pub const Graph = struct {
                 const base_cell_h = g.container.height / g.rows;
                 const col_offset  = g.col * base_cell_w;
                 const row_offset  = g.row * base_cell_h;
-                const cell_w = if (g.col == g.cols - 1) g.container.width  -| col_offset else base_cell_w;
-                const cell_h = if (g.row == g.rows - 1) g.container.height -| row_offset else base_cell_h;
+                const cell_w = @max(1, if (g.col == g.cols - 1) g.container.width  -| col_offset else base_cell_w);
+                const cell_h = @max(1, if (g.row == g.rows - 1) g.container.height -| row_offset else base_cell_h);
                 const new_x = g.container.x + @as(i32, @intCast(col_offset));
                 const new_y = g.container.y + @as(i32, @intCast(row_offset));
                 if (src.x != new_x or src.y != new_y or src.width != cell_w or src.height != cell_h) {
@@ -522,16 +528,20 @@ pub const Graph = struct {
             .split => |s| {
                 const cont = s.container;
                 if (cont.floating) return false;
+                // normalize ratios
+                var ratio_sum: f32 = 0;
+                for (0..s.count) |i| ratio_sum += s.ratios[i];
+                if (ratio_sum <= 0) return false;
                 var offset: u32 = 0;
                 var changed = false;
                 for (0..s.count) |i| {
                     const child = s.children[i];
-                    const clamped = @max(0.0, @min(1.0, s.ratios[i]));
+                    const normalized = s.ratios[i] / ratio_sum;
                     if (s.axis == .horizontal) {
                         const w: u32 = if (i == s.count - 1)
                             cont.width -| offset
                         else
-                            @intFromFloat(@as(f32, @floatFromInt(cont.width)) * clamped);
+                            @intFromFloat(@as(f32, @floatFromInt(cont.width)) * normalized);
                         const new_x = cont.x + @as(i32, @intCast(offset));
                         if (child.x != new_x)        { child.x = new_x;        changed = true; }
                         if (child.y != cont.y)        { child.y = cont.y;        changed = true; }
@@ -542,7 +552,7 @@ pub const Graph = struct {
                         const h: u32 = if (i == s.count - 1)
                             cont.height -| offset
                         else
-                            @intFromFloat(@as(f32, @floatFromInt(cont.height)) * clamped);
+                            @intFromFloat(@as(f32, @floatFromInt(cont.height)) * normalized);
                         const new_y = cont.y + @as(i32, @intCast(offset));
                         if (child.x != cont.x)        { child.x = cont.x;        changed = true; }
                         if (child.y != new_y)          { child.y = new_y;          changed = true; }
