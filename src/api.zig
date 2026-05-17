@@ -540,4 +540,10 @@ pub const entries = [_]ApiEntry{
         .params = &.{},
         .ret    = "integer|nil",
     },
+    .{
+        .name   = "set_focus_follows_mouse",
+        .desc   = "Set whether focus follows mouse movements.",
+        .params = &.{ .{ .name = "enabled", .typ = "boolean" } },
+        .ret    = "nil",
+    }
 };

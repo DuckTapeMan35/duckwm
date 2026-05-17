@@ -874,6 +874,21 @@ fn get_strut(display: *c.Display, win: c.Window) ?Strut {
     };
 }
 
+pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
+    if (!wm.focus_follows_mouse) return;
+    // ignore grab-related crossing events
+    if (ev.mode != c.NotifyNormal) return;
+
+    const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
+    if (lookup_win == 0) return;
+
+    const client = wm.get_client_from_frame(lookup_win) orelse return;
+    const node_id = wm.window_to_node_id.get(client) orelse return;
+    const node = wm.node_registry.get(node_id) orelse return;
+    if (wm.focused == node) return;
+    wm.focus(node);
+}
+
 // Set _NET_ACTIVE_WINDOW on the root
 pub fn update_net_active_window(wm: *WM, active_window: c.Window) void {
     const atom = c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0);

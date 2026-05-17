@@ -95,6 +95,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_warp_cursor),                       .name = "warp_cursor" },
     .{ .func = ziglua.wrap(l_warp_cursor_to_node),               .name = "warp_cursor_to_node" },
     .{ .func = ziglua.wrap(l_get_mouse_node),                    .name = "get_mouse_node" },
+    .{ .func = ziglua.wrap(l_set_focus_follows_mouse),           .name = "set_focus_follows_mouse" },
 };
 
 
@@ -1313,6 +1314,11 @@ fn l_get_cursor_relative_to_focused(lua: *Lua) i32 {
     lua.pushInteger(root_x - cx);
     lua.pushInteger(root_y - cy);
     return 2;
+}
+
+fn l_set_focus_follows_mouse(lua: *Lua) i32 {
+    global_wm.focus_follows_mouse = lua.toBoolean(1);
+    return 0;
 }
 
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {

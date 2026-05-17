@@ -47,8 +47,7 @@ pub const WM = struct {
     screen_height: u32,
     frames: std.AutoHashMap(c.Window, c.Window),
     dock_struts: std.AutoHashMap(c.Window, Strut),
-    work_x: i32,
-    work_y: i32,
+    focus_follows_mouse: bool,
 
     // user defined keybindings
     keybinds: std.AutoHashMap(KeybindKey, Keybind),
@@ -57,6 +56,8 @@ pub const WM = struct {
     graph: Graph,
     focused: ?*Node,
     current_graph: *Graph,
+    work_x: i32,
+    work_y: i32,
     workspace_stack: std.ArrayListUnmanaged(*Graph),
     workspace_previews: std.AutoHashMap(c.Window, void),
 
@@ -117,13 +118,14 @@ pub const WM = struct {
             .screen_height = @intCast(c.XDisplayHeight(display, 0)),
             .frames = std.AutoHashMap(c.Window, c.Window).init(allocator),
             .dock_struts = std.AutoHashMap(c.Window, Strut).init(allocator),
-            .work_x = 0,
-            .work_y = 0,
+            .focus_follows_mouse = true,
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
             .graph = graph,
             .focused = null,
+            .work_x = 0,
+            .work_y = 0,
             .workspace_stack = .{ .items = &.{}, .capacity = 0},
             .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
             .current_graph = undefined,
@@ -401,8 +403,6 @@ pub const WM = struct {
         else
             node.border_color_unfocused orelse self.default_border_color_unfocused;
 
-        const bg_color = border_color;
-
         var attrs: c.XWindowAttributes = undefined;
         _ = c.XGetWindowAttributes(self.display, win, &attrs);
 
@@ -415,12 +415,12 @@ pub const WM = struct {
             @intCast(attrs.height),
             @intCast(self.border_width),
             border_color,
-            bg_color,
+            c.None,
         );
 
         _ = c.XSelectInput(self.display, win_frame,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
-            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask);
+            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask | c.EnterWindowMask | c.LeaveWindowMask);
         _ = c.XAddToSaveSet(self.display, win);
         _ = c.XReparentWindow(self.display, win, win_frame, 0, 0);
         _ = c.XSetWindowBorderWidth(self.display, win, 0);
@@ -1039,7 +1039,7 @@ pub const WM = struct {
         _ = c.XSelectInput(self.display, self.root,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
             c.KeyPressMask | c.ButtonPressMask | c.ButtonReleaseMask |
-            c.PointerMotionMask);
+            c.PointerMotionMask | c.EnterWindowMask | c.LeaveWindowMask);
         _ = c.XSync(self.display, 0);
         if (events_mod.wm_detected) {
             std.debug.print("Another window manager is already running. Exiting.\n", .{});
@@ -1108,6 +1108,7 @@ pub const WM = struct {
                     c.ButtonRelease    => events_mod.on_button_release(self, &e.xbutton),
                     c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
                     c.ConfigureNotify  => {},
+                    c.EnterNotify      => events_mod.on_enter_notify(self, &e.xcrossing),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }
