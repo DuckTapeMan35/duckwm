@@ -48,6 +48,7 @@ pub const WM = struct {
     frames: std.AutoHashMap(c.Window, c.Window),
     dock_struts: std.AutoHashMap(c.Window, Strut),
     focus_follows_mouse: bool,
+    click_to_focus: bool,
 
     // user defined keybindings
     keybinds: std.AutoHashMap(KeybindKey, Keybind),
@@ -137,6 +138,7 @@ pub const WM = struct {
             .frames = std.AutoHashMap(c.Window, c.Window).init(allocator),
             .dock_struts = std.AutoHashMap(c.Window, Strut).init(allocator),
             .focus_follows_mouse = true,
+            .click_to_focus = false,
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
@@ -452,6 +454,11 @@ pub const WM = struct {
             border_color,
             c.None,
         );
+        if (self.click_to_focus) {
+            _ = c.XGrabButton(self.display, 1, c.AnyModifier, win_frame, 0,
+                c.ButtonPressMask | c.ButtonReleaseMask,
+                c.GrabModeSync, c.GrabModeAsync, c.None, c.None);
+        }
         var swa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         swa.backing_store = c.WhenMapped;
         swa.bit_gravity = c.NorthWestGravity;
@@ -1194,7 +1201,7 @@ pub const WM = struct {
                     c.ConfigureRequest => events_mod.on_configure_request(self, &e.xconfigurerequest),
                     c.MapRequest       => try events_mod.on_map_request(self, &e.xmaprequest),
                     c.KeyPress         => events_mod.on_key_press(self, &e.xkey),
-                    c.ButtonPress      => events_mod.on_button_press(self, &e.xbutton),
+                    c.ButtonPress      => try events_mod.on_button_press(self, &e.xbutton),
                     c.MotionNotify     => events_mod.on_motion_notify(self, &e.xmotion),
                     c.ButtonRelease    => events_mod.on_button_release(self, &e.xbutton),
                     c.ConfigureNotify  => {},

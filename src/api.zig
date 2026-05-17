@@ -664,4 +664,10 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "color", .typ = "integer" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "set_click_to_focus",
+        .desc   = "Enable or disable click-to-focus mode.",
+        .params = &.{ .{ .name = "enabled", .typ = "boolean" } },
+        .ret    = "nil",
+    },
 };

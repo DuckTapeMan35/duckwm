@@ -536,7 +536,24 @@ pub fn on_reparent_notify(_: *WM, event: *c.XReparentEvent) void {
         .{ event.window, event.parent, event.x, event.y });
 }
 
-pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
+pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
+    if (wm.click_to_focus) {
+        const lookup = if (ev.window == wm.root) ev.subwindow else ev.window;
+        if (lookup != 0) {
+            const client = wm.get_client_from_frame(lookup) orelse lookup;
+            if (wm.window_to_node_id.get(client)) |node_id| {
+                if (wm.node_registry.get(node_id)) |node| {
+                    if (wm.focused != node) {
+                        wm.focus(node);
+                        wm.flush(wm.current_graph) catch {};
+                    }
+                }
+            }
+        }
+        // Replay the event so the click reaches the application
+        _ = c.XAllowEvents(wm.display, c.ReplayPointer, c.CurrentTime);
+        return;
+    }
     // Dismiss error bar on click
     if (wm.error_bar_win != 0 and ev.window == wm.error_bar_win) {
         _ = c.XDestroyWindow(wm.display, wm.error_bar_win);

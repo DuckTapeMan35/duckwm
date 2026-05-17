@@ -177,7 +177,27 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_urgent),                        .name = "get_urgent" },
     .{ .func = ziglua.wrap(l_set_urgent),                        .name = "set_urgent" },
     .{ .func = ziglua.wrap(l_set_default_urgent_border_color),   .name = "set_default_urgent_border_color" },
+    .{ .func = ziglua.wrap(l_set_click_to_focus),                .name = "set_click_to_focus" },
 };
+
+fn l_set_click_to_focus(lua: *Lua) i32 {
+    global_wm.click_to_focus = lua.toBoolean(1);
+    if (global_wm.click_to_focus) {
+        // Grab button 1 on all existing frames so clicks reach on_button_press
+        var it = global_wm.frames.valueIterator();
+        while (it.next()) |frame| {
+            _ = c.XGrabButton(global_wm.display, 1, c.AnyModifier, frame.*, 0,
+                c.ButtonPressMask | c.ButtonReleaseMask,
+                c.GrabModeSync, c.GrabModeAsync, c.None, c.None);
+        }
+    } else {
+        var it = global_wm.frames.valueIterator();
+        while (it.next()) |frame| {
+            _ = c.XUngrabButton(global_wm.display, 1, c.AnyModifier, frame.*);
+        }
+    }
+    return 0;
+}
 
 fn l_set_default_urgent_border_color(lua: *Lua) i32 {
     const color: u32 = @intCast(lua.checkInteger(1));
