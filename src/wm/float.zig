@@ -14,7 +14,7 @@ pub fn center_node(wm: *WM, node: *Node) void {
 
 pub fn toggle_floating(wm: *WM) !void {
     const focused = wm.focused orelse return;
-    if (focused.content != .window) return;
+    if (focused.content != .window and focused.content != .workspace) return;
 
     var node_id: ?u32 = null;
     var it = wm.node_registry.iterator();
@@ -24,7 +24,6 @@ pub fn toggle_floating(wm: *WM) !void {
     const id = node_id orelse return;
 
     if (focused.floating) {
-        // Un-float — find a tiled prev_id to re-integrate next to
         focused.floating = false;
         focused.constraints.clearRetainingCapacity();
 
@@ -40,7 +39,6 @@ pub fn toggle_floating(wm: *WM) !void {
         }
         wm.call_arranger(wm.current_graph, "map", id, prev_id);
     } else {
-        // Float — remove from tiling tree
         focused.floating = true;
         focused.constraints.clearRetainingCapacity();
         center_node(wm, focused);
@@ -55,16 +53,26 @@ pub fn toggle_floating(wm: *WM) !void {
 pub fn raise_floating_windows(wm: *WM) void {
     const bw: i32 = wm.border_width;
     for (wm.current_graph.nodes.items) |node| {
+        if (!node.floating or node.hidden) continue;
         switch (node.content) {
             .window => |win| {
-                if (!node.floating) continue;
                 if (wm.frames.get(win)) |frame| {
-                    const border: u32 = if (wm.fullscreen_node == node) 0 else @intCast(@max(0, bw));
-                    const fw: u32 = node.width  -| 2 * border;
-                    const fh: u32 = node.height -| 2 * border;
-                    _ = c.XSetWindowBorderWidth(wm.display, frame, border);
+                    const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
+                    const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
                     _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
                     _ = c.XMoveResizeWindow(wm.display, win, 0, 0, @max(1, fw), @max(1, fh));
+                    _ = c.XRaiseWindow(wm.display, frame);
+                }
+            },
+            .workspace => {
+                if (node.preview_window) |pw| {
+                    if (wm.frames.get(pw)) |frame| {
+                        const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
+                        const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
+                        _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
+                        _ = c.XMoveResizeWindow(wm.display, pw, 0, 0, @max(1, fw), @max(1, fh));
+                        _ = c.XRaiseWindow(wm.display, frame);
+                    }
                 }
             },
             else => {},

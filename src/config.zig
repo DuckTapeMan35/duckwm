@@ -178,7 +178,63 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_urgent),                        .name = "set_urgent" },
     .{ .func = ziglua.wrap(l_set_default_urgent_border_color),   .name = "set_default_urgent_border_color" },
     .{ .func = ziglua.wrap(l_set_click_to_focus),                .name = "set_click_to_focus" },
+    .{ .func = ziglua.wrap(l_hide_window), .name = "hide_window" },
+    .{ .func = ziglua.wrap(l_show_window), .name = "show_window" },
 };
+
+fn l_hide_window(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    node.hidden = true;
+    switch (node.content) {
+        .window => |win| {
+            if (global_wm.frames.get(win)) |frame| {
+                _ = c.XUnmapWindow(global_wm.display, frame);
+                _ = c.XFlush(global_wm.display);
+            }
+        },
+        .workspace => {
+            if (node.preview_window) |pw| {
+                if (global_wm.frames.get(pw)) |frame| {
+                    _ = c.XUnmapWindow(global_wm.display, frame);
+                    _ = c.XFlush(global_wm.display);
+                }
+            }
+        },
+        else => {},
+    }
+    return 0;
+}
+
+fn l_show_window(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    node.hidden = false;
+    switch (node.content) {
+        .window => |win| {
+            if (global_wm.frames.get(win)) |frame| {
+                _ = c.XMapWindow(global_wm.display, frame);
+                _ = c.XMapWindow(global_wm.display, win);
+                _ = c.XRaiseWindow(global_wm.display, frame);
+                _ = c.XFlush(global_wm.display);
+                global_wm.focus(node);
+            }
+        },
+        .workspace => {
+            if (node.preview_window) |pw| {
+                if (global_wm.frames.get(pw)) |frame| {
+                    _ = c.XMapWindow(global_wm.display, frame);
+                    _ = c.XMapWindow(global_wm.display, pw);
+                    _ = c.XRaiseWindow(global_wm.display, frame);
+                    _ = c.XFlush(global_wm.display);
+                    global_wm.focus(node);
+                }
+            }
+        },
+        else => {},
+    }
+    return 0;
+}
 
 fn l_set_click_to_focus(lua: *Lua) i32 {
     global_wm.click_to_focus = lua.toBoolean(1);

@@ -670,4 +670,16 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "enabled", .typ = "boolean" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "hide_window",
+        .desc   = "Unmap a window's frame without destroying it.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "show_window",
+        .desc   = "Map and raise a previously hidden window.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "nil",
+    },
 };

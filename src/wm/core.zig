@@ -601,9 +601,11 @@ pub const WM = struct {
             switch (node.content) {
                 .window => |win| {
                     if (node.floating) {
-                        if (self.frames.get(win)) |win_frame| {
-                            _ = c.XMapWindow(self.display, win);
-                            _ = c.XMapWindow(self.display, win_frame);
+                        if (!node.hidden) {
+                            if (self.frames.get(win)) |win_frame| {
+                                _ = c.XMapWindow(self.display, win);
+                                _ = c.XMapWindow(self.display, win_frame);
+                            }
                         }
                         continue;
                     }
@@ -634,6 +636,18 @@ pub const WM = struct {
                 },
                 .workspace => {
                     const sub = node.content.workspace;
+                    if (node.floating) {
+                        if (!node.hidden) {
+                            if (node.preview_window) |pw| {
+                                if (self.frames.get(pw)) |win_frame| {
+                                    _ = c.XMapWindow(self.display, pw);
+                                    _ = c.XMapWindow(self.display, win_frame);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    if (node.hidden) continue;
                     var is_active = (sub == self.current_graph);
                     if (!is_active) {
                         for (self.workspace_stack.items) |stacked| {
