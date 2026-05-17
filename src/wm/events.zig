@@ -586,10 +586,18 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) void {
 }
 
 pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
+    // Coalesce: discard all but the last pending MotionNotify
+    var latest = ev.*;
+    var next: c.XEvent = undefined;
+    while (c.XCheckTypedEvent(wm.display, c.MotionNotify, &next) != 0) {
+        latest = next.xmotion;
+    }
+    const e = &latest;
+
     // Floating window moving
     if (wm.float_moving) {
-        const delta_x = ev.x_root - wm.float_move_start_x;
-        const delta_y = ev.y_root - wm.float_move_start_y;
+        const delta_x = e.x_root - wm.float_move_start_x;
+        const delta_y = e.y_root - wm.float_move_start_y;
         if (delta_x != 0 or delta_y != 0) {
             const client = wm.get_client_from_frame(wm.float_move_frame) orelse return;
             const node_id = wm.window_to_node_id.get(client) orelse return;
@@ -616,13 +624,13 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
 
             // --- Floating resize with fixed anchor ---
             if (wm.corner_resizing) {
-                const delta_x = ev.x_root - wm.resize_end_x;
-                const delta_y = ev.y_root - wm.resize_end_y;
+                const delta_x = e.x_root - wm.resize_end_x;
+                const delta_y = e.y_root - wm.resize_end_y;
                 if (delta_x != 0 or delta_y != 0) {
                     if (delta_x != 0) wm.resize_v_edge += delta_x;
                     if (delta_y != 0) wm.resize_h_edge += delta_y;
-                    wm.resize_end_x = ev.x_root;
-                    wm.resize_end_y = ev.y_root;
+                    wm.resize_end_x = e.x_root;
+                    wm.resize_end_y = e.y_root;
 
                     const new_x = @min(wm.resize_fixed_x, wm.resize_v_edge);
                     const new_y = @min(wm.resize_fixed_y, wm.resize_h_edge);
@@ -635,20 +643,20 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 }
             } else if (wm.edge_resizing) {
                 if (wm.edge_is_vertical) {
-                    const delta_x = ev.x_root - wm.resize_end_x;
+                    const delta_x = e.x_root - wm.resize_end_x;
                     if (delta_x != 0) {
                         wm.edge_x += delta_x;
-                        wm.resize_end_x = ev.x_root;
+                        wm.resize_end_x = e.x_root;
                         const new_x = @min(wm.resize_fixed_x, wm.edge_x);
                         const new_w: u32 = @intCast(@max(10, @abs(wm.resize_fixed_x - wm.edge_x)));
                         focused.x = new_x;
                         focused.width = new_w;
                     }
                 } else {
-                    const delta_y = ev.y_root - wm.resize_end_y;
+                    const delta_y = e.y_root - wm.resize_end_y;
                     if (delta_y != 0) {
                         wm.edge_y += delta_y;
-                        wm.resize_end_y = ev.y_root;
+                        wm.resize_end_y = e.y_root;
                         const new_y = @min(wm.resize_fixed_y, wm.edge_y);
                         const new_h: u32 = @intCast(@max(10, @abs(wm.resize_fixed_y - wm.edge_y)));
                         focused.y = new_y;
@@ -657,50 +665,72 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 }
             }
 
-            // Apply geometry changes to frame and client
+            // Always move frame immediately
             if (wm.frames.get(client)) |frame| {
                 _ = c.XMoveResizeWindow(wm.display, frame, focused.x, focused.y, focused.width, focused.height);
-                const client_w = focused.width;
-                const client_h = focused.height;
-                _ = c.XResizeWindow(wm.display, client, client_w, client_h);
+
+                var ts: std.os.linux.timespec = undefined;
+                _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+                const now_ms: i64 = ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+                if (now_ms - wm.last_resize_flush >= wm.resize_refresh_interval) {
+                    wm.last_resize_flush = now_ms;
+                    _ = c.XResizeWindow(wm.display, client, focused.width, focused.height);
+                }
             }
             return;
         } else {
-            // Tiling resize (unchanged original logic)
+            // Tiling resize
             if (wm.corner_resizing) {
-                const delta_x = ev.x_root - wm.resize_end_x;
-                const delta_y = ev.y_root - wm.resize_end_y;
+                const delta_x = e.x_root - wm.resize_end_x;
+                const delta_y = e.y_root - wm.resize_end_y;
                 if (delta_x != 0) {
                     if (resize_mod.resize_vertical_edge(wm, wm.resize_v_edge, delta_x) catch false) {
                         wm.resize_v_edge += delta_x;
                     }
-                    wm.resize_end_x = ev.x_root;
+                    wm.resize_end_x = e.x_root;
                 }
                 if (delta_y != 0) {
                     if (resize_mod.resize_horizontal_edge(wm, wm.resize_h_edge, delta_y) catch false) {
                         wm.resize_h_edge += delta_y;
                     }
-                    wm.resize_end_y = ev.y_root;
+                    wm.resize_end_y = e.y_root;
                 }
-                return;
             }
             if (wm.edge_resizing) {
-                const delta_x = ev.x_root - wm.resize_end_x;
-                const delta_y = ev.y_root - wm.resize_end_y;
+                const delta_x = e.x_root - wm.resize_end_x;
+                const delta_y = e.y_root - wm.resize_end_y;
                 if (wm.edge_is_vertical) {
                     if (delta_x != 0) {
                         if (resize_mod.resize_vertical_edge(wm, wm.edge_x, delta_x) catch false) {
                             wm.edge_x += delta_x;
                         }
-                        wm.resize_end_x = ev.x_root;
+                        wm.resize_end_x = e.x_root;
                     }
                 } else {
                     if (delta_y != 0) {
                         if (resize_mod.resize_horizontal_edge(wm, wm.edge_y, delta_y) catch false) {
                             wm.edge_y += delta_y;
                         }
-                        wm.resize_end_y = ev.y_root;
+                        wm.resize_end_y = e.y_root;
                     }
+                }
+            }
+
+            // Only flush if edge position actually changed since last flush
+            const current_edge_x = if (wm.corner_resizing) wm.resize_v_edge else wm.edge_x;
+            const current_edge_y = if (wm.corner_resizing) wm.resize_h_edge else wm.edge_y;
+            const edge_changed = current_edge_x != wm.last_flushed_edge_x or
+                                 current_edge_y != wm.last_flushed_edge_y;
+            if (edge_changed) {
+                var ts: std.os.linux.timespec = undefined;
+                _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+                const now_ms: i64 = ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+                if (now_ms - wm.last_resize_flush >= wm.resize_refresh_interval) {
+                    wm.last_resize_flush = now_ms;
+                    wm.last_flushed_edge_x = current_edge_x;
+                    wm.last_flushed_edge_y = current_edge_y;
+                    wm.flush(wm.current_graph) catch {};
+                    _ = c.XSync(wm.display, 0);
                 }
             }
         }
@@ -756,6 +786,9 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
             }
         }
     }
+    wm.last_flushed_edge_x = -1;
+    wm.last_flushed_edge_y = -1;
+    wm.flush(wm.current_graph) catch {};
 }
 
 pub fn on_key_press(wm: *WM, event: *c.XKeyEvent) void {
@@ -887,6 +920,7 @@ pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     const node = wm.node_registry.get(node_id) orelse return;
     if (wm.focused == node) return;
     wm.focus(node);
+    wm.flush(wm.current_graph) catch {};
 }
 
 // Set _NET_ACTIVE_WINDOW on the root

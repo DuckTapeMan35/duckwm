@@ -112,7 +112,6 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
             changed = true;
         }
     }
-    if (changed) try wm.flush(wm.current_graph);
     return changed;
 }
 
@@ -139,7 +138,6 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32) !bool {
             changed = true;
         }
     }
-    if (changed) try wm.flush(wm.current_graph);
     return changed;
 }
 

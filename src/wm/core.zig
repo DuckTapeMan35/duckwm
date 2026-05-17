@@ -74,6 +74,10 @@ pub const WM = struct {
     resize_h_edge: i32,
     resize_fixed_x: i32,
     resize_fixed_y: i32,
+    last_resize_flush: i64,
+    resize_refresh_interval: i64,
+    last_flushed_edge_x: i32,
+    last_flushed_edge_y: i32,
 
     // floating state fields
     float_moving: bool,
@@ -142,6 +146,10 @@ pub const WM = struct {
             .resize_h_edge = 0,
             .resize_fixed_x = 0,
             .resize_fixed_y = 0,
+            .last_resize_flush = 0,
+            .resize_refresh_interval = 16, // ms
+            .last_flushed_edge_x = -1,
+            .last_flushed_edge_y = -1,
 
             .float_moving = false,
             .float_move_modifier = null,
@@ -417,6 +425,12 @@ pub const WM = struct {
             border_color,
             c.None,
         );
+        var swa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        swa.backing_store = c.WhenMapped;
+        swa.bit_gravity = c.NorthWestGravity;
+        swa.win_gravity = c.NorthWestGravity;
+        _ = c.XChangeWindowAttributes(self.display, win_frame,
+            c.CWBackingStore | c.CWBitGravity | c.CWWinGravity, &swa);
 
         _ = c.XSelectInput(self.display, win_frame,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
@@ -427,6 +441,8 @@ pub const WM = struct {
         _ = c.XMoveResizeWindow(self.display, win, self.border_width, self.border_width, node.width, node.height);
 
         try self.frames.put(win, win_frame);
+        _ = c.XSelectInput(self.display, win, c.PropertyChangeMask);
+
     }
 
     pub fn reset_root_state(self: *WM) void {
@@ -554,8 +570,8 @@ pub const WM = struct {
                         _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
                         _ = c.XMoveResizeWindow(self.display, win, 0, 0, fw, fh);
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
-                        _ = c.XMapWindow(self.display, win);
-                        _ = c.XMapWindow(self.display, win_frame);
+                            _ = c.XMapWindow(self.display, win);
+                            _ = c.XMapWindow(self.display, win_frame);
                     }
                 },
                 .workspace => {
@@ -576,8 +592,8 @@ pub const WM = struct {
                             _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, fw, fh);
                             _ = c.XMoveResizeWindow(self.display, pw, 0, 0, fw, fh);
                             _ = c.XResizeWindow(self.display, pw, fw, fh);
-                            _ = c.XMapWindow(self.display, pw);
-                            _ = c.XMapWindow(self.display, win_frame);
+                                _ = c.XMapWindow(self.display, pw);
+                                _ = c.XMapWindow(self.display, win_frame);
                         }
                     }
                 },
@@ -1109,6 +1125,7 @@ pub const WM = struct {
                     c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
                     c.ConfigureNotify  => {},
                     c.EnterNotify      => events_mod.on_enter_notify(self, &e.xcrossing),
+                    c.LeaveNotify      => {}, // just to silence prints
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }
