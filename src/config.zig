@@ -211,6 +211,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_arranger_index),                .name = "set_arranger_index" },
     .{ .func = ziglua.wrap(l_get_current_workspace),             .name = "get_current_workspace" },
     .{ .func = ziglua.wrap(l_set_workspace_switch_mode),         .name = "set_workspace_switch_mode" },
+    .{ .func = ziglua.wrap(l_get_arranger_name),                 .name = "get_arranger_name" },
 };
 
 fn l_set_workspace_switch_mode(lua: *Lua) i32 {
@@ -658,12 +659,24 @@ fn l_set_default_arranger(lua: *Lua) i32 {
     lua.checkType(1, .function);
     lua.pushValue(1);
     global_wm.default_arranger_ref = lua.ref(ziglua.registry_index);
+    if (lua.typeOf(2) == .string) {
+        const name = lua.toString(2) catch return 0;
+        const owned = global_wm.allocator.dupe(u8, name) catch return 0;
+        if (global_wm.default_arranger_name.len > 0)
+            global_wm.allocator.free(global_wm.default_arranger_name);
+        global_wm.default_arranger_name = owned;
+    }
     return 0;
 }
 
 fn l_register_arranger(lua: *Lua) i32 {
     const workspace_id: u32 = @intCast(lua.checkInteger(1));
     lua.checkType(2, .function);
+    const name: ?[]const u8 = if (lua.typeOf(3) == .string)
+        lua.toString(3) catch null
+    else
+        null;
+
     const node = global_wm.get_node_by_id(workspace_id) orelse {
         _ = lua.pushString("register_arranger: invalid workspace id");
         return lua.raiseError();
@@ -672,21 +685,48 @@ fn l_register_arranger(lua: *Lua) i32 {
         _ = lua.pushString("register_arranger: node is not a workspace");
         return lua.raiseError();
     }
-    const lua_ref = lua.ref(ziglua.registry_index);
-    _ = lua_ref; // suppress unused warning
     lua.pushValue(2);
     const factory_ref = lua.ref(ziglua.registry_index);
     apply_arranger_to_graph(lua, node.content.workspace, factory_ref);
     lua.unref(ziglua.registry_index, factory_ref);
+
+    if (name) |n| {
+        const owned = global_wm.allocator.dupe(u8, n) catch return 0;
+        if (node.content.workspace.arranger_name.len > 0)
+            global_wm.allocator.free(node.content.workspace.arranger_name);
+        node.content.workspace.arranger_name = owned;
+    }
     return 0;
+}
+
+fn l_get_arranger_name(lua: *Lua) i32 {
+    const name = global_wm.current_graph.arranger_name;
+    if (name.len == 0) {
+        lua.pushNil();
+        return 1;
+    }
+    _ = lua.pushString(name);
+    return 1;
 }
 
 fn l_set_arranger(lua: *Lua) i32 {
     lua.checkType(1, .function);
+    const name: ?[]const u8 = if (lua.typeOf(2) == .string)
+        lua.toString(2) catch null
+    else
+        null;
+
     lua.pushValue(1);
     const factory_ref = lua.ref(ziglua.registry_index);
     apply_arranger_to_graph(lua, global_wm.current_graph, factory_ref);
     lua.unref(ziglua.registry_index, factory_ref);
+
+    if (name) |n| {
+        const owned = global_wm.allocator.dupe(u8, n) catch return 0;
+        if (global_wm.current_graph.arranger_name.len > 0)
+            global_wm.allocator.free(global_wm.current_graph.arranger_name);
+        global_wm.current_graph.arranger_name = owned;
+    }
     return 0;
 }
 

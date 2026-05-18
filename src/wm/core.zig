@@ -130,6 +130,7 @@ pub const WM = struct {
     next_node_id: u32,
     lua: ?*Lua,
     default_arranger_ref: i32,
+    default_arranger_name: []const u8,
     border_width: i32,
     default_border_color_focused: u32,
     default_border_color_unfocused: u32,
@@ -228,6 +229,7 @@ pub const WM = struct {
             .next_node_id = 1,
             .lua = null,
             .default_arranger_ref = 0,
+            .default_arranger_name = "",
             .border_width = 2,
             .default_border_color_focused = 0x5294e2,
             .default_border_color_unfocused = 0x333333,
@@ -259,6 +261,9 @@ pub const WM = struct {
     }
 
     fn free_graph(self: *WM, g: *Graph) void {
+        if (g.arranger_name.len > 0) {
+            self.allocator.free(g.arranger_name);
+        }
         for (g.nodes.items) |node| {
             if (node.content == .workspace) {
                 self.free_graph(node.content.workspace);
@@ -281,6 +286,9 @@ pub const WM = struct {
     pub fn deinit(self: *WM) void {
         if (self.lua) |lua| lua.deinit();
         self.keybinds.deinit();
+        if (self.default_arranger_name.len > 0) {
+            self.allocator.free(self.default_arranger_name);
+        }
         self.free_graph(&self.graph);
         self.workspace_stack.deinit(self.allocator);
         self.workspace_previews.deinit();

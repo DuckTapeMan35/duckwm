@@ -161,6 +161,7 @@ pub const Graph = struct {
     parent_node: ?*Node,
     arranger_ref: i32,
     arranger_index: i32,
+    arranger_name: []const u8,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -181,6 +182,7 @@ pub const Graph = struct {
             .parent_node = null,
             .arranger_ref = 0,
             .arranger_index = 0,
+            .arranger_name = "",
             .allocator = allocator,
         };
     }

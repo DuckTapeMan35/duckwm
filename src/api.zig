@@ -135,23 +135,36 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
+        .name   = "get_arranger_name",
+        .desc   = "Return the display name of the current workspace's arranger, or nil.",
+        .params = &.{},
+        .ret    = "string|nil",
+    },
+    .{
         .name   = "set_arranger",
-        .desc   = "Switch the arranger for the current workspace, remapping all existing windows into the new layout.",
-        .params = &.{ .{ .name = "factory", .typ = "function" } },
-        .ret    = "nil",
+        .desc   = "Switch the arranger for the current workspace.",
+        .params = &.{
+            .{ .name = "factory", .typ = "function" },
+            .{ .name = "name",    .typ = "string?" },
+        },
+        .ret = "nil",
     },
     .{
         .name = "set_default_arranger",
         .desc = "Set the default arranger for new workspaces.",
-        .params = &.{ .{ .name = "fn", .typ = "function" } },
-        .ret  = "nil",
+        .params = &.{
+            .{ .name = "fn",   .typ = "function" },
+            .{ .name = "name", .typ = "string?" },
+        },
+        .ret = "nil",
     },
     .{
         .name   = "register_arranger",
-        .desc   = "Set the arranger for a specific workspace node, remapping all existing windows into the new layout.",
+        .desc   = "Set the arranger for a specific workspace node.",
         .params = &.{
             .{ .name = "workspace_id", .typ = "integer" },
             .{ .name = "factory",      .typ = "function" },
+            .{ .name = "name",         .typ = "string?" },
         },
         .ret = "nil",
     },
