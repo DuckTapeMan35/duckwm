@@ -1,6 +1,6 @@
 # Maintainer: duck <luis.tomas.nogueira@gmail.com>
 pkgname=duckwm-git
-pkgver=0.0.0.r68.g57ec473
+pkgver=0.0.0.r69.g9cdefd2
 pkgrel=1
 pkgdesc="A graph-based tiling window manager with Lua configuration"
 arch=('x86_64')

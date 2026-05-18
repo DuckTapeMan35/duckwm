@@ -209,7 +209,19 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_pan_button),                    .name = "set_pan_button" },
     .{ .func = ziglua.wrap(l_get_arranger_index),                .name = "get_arranger_index" },
     .{ .func = ziglua.wrap(l_set_arranger_index),                .name = "set_arranger_index" },
+    .{ .func = ziglua.wrap(l_get_current_workspace),             .name = "get_current_workspace" },
+    .{ .func = ziglua.wrap(l_set_workspace_switch_mode),         .name = "set_workspace_switch_mode" },
 };
+
+fn l_set_workspace_switch_mode(lua: *Lua) i32 {
+    const mode = lua.checkString(1);
+    if (std.mem.eql(u8, mode, "previous")) {
+        global_wm.workspace_switch_mode = .previous;
+    } else {
+        global_wm.workspace_switch_mode = .none;
+    }
+    return 0;
+}
 
 fn l_get_arranger_index(lua: *Lua) i32 {
     lua.pushInteger(global_wm.current_graph.arranger_index);
@@ -1387,12 +1399,33 @@ fn l_get_workspaces_at_level(lua: *Lua) i32 {
     defer list.deinit(global_wm.allocator);
 
     for (parent_graph.nodes.items) |node| {
-        if (node.content == .workspace) {
+         if (node.content != .workspace) continue;
+        const sub = node.content.workspace;
+
+        // always include the current workspace
+        const is_current = (sub == global_wm.current_graph);
+        if (is_current) {
             list.append(global_wm.allocator, node) catch {
                 _ = lua.pushString("out of memory");
                 return lua.raiseError();
             };
+            continue;
         }
+
+        // include if it has any windows or workspaces in its sub-graph
+        var has_content = false;
+        for (sub.nodes.items) |sub_node| {
+            switch (sub_node.content) {
+                .window, .workspace => { has_content = true; break; },
+                else => {},
+            }
+        }
+        if (!has_content) continue;
+
+        list.append(global_wm.allocator, node) catch {
+            _ = lua.pushString("out of memory");
+            return lua.raiseError();
+        };
     }
 
     // Sort by node ID (creation order)
@@ -1411,6 +1444,25 @@ fn l_get_workspaces_at_level(lua: *Lua) i32 {
             lua.setIndexRaw(-2, @intCast(i + 1));
         }
     }
+    return 1;
+}
+
+fn l_get_current_workspace(lua: *Lua) i32 {
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse &global_wm.graph
+    else
+        &global_wm.graph;
+
+    for (parent_graph.nodes.items) |node| {
+        if (node.content != .workspace) continue;
+        if (node.content.workspace == global_wm.current_graph) {
+            if (global_wm.get_id_for_node(node)) |id| {
+                lua.pushInteger(@intCast(id));
+                return 1;
+            }
+        }
+    }
+    lua.pushNil();
     return 1;
 }
 

@@ -40,6 +40,8 @@ pub const Keybind = union(enum) {
     lua: i32,
 };
 
+pub const WorkspaceSwitchMode = enum { none, previous };
+
 pub const WM = struct {
     // X11 data
     display: *c.Display,
@@ -58,6 +60,8 @@ pub const WM = struct {
     graph: Graph,
     focused: ?*Node,
     current_graph: *Graph,
+    previous_graph: ?*Graph,
+    workspace_switch_mode: WorkspaceSwitchMode,
     work_x: i32,
     work_y: i32,
     workspace_stack: std.ArrayListUnmanaged(*Graph),
@@ -166,6 +170,8 @@ pub const WM = struct {
             .workspace_stack = .{ .items = &.{}, .capacity = 0},
             .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
             .current_graph = undefined,
+            .previous_graph = null,
+            .workspace_switch_mode = .none,
             .default_gap_inner_h = 0,
             .default_gap_inner_v = 0,
             .default_gap_outer_h = 0,
@@ -864,6 +870,28 @@ pub const WM = struct {
     pub fn enter_workspace(self: *WM, node: *Node) !void {
         if (node.content != .workspace) return error.NotWorkspace;
         const sub = node.content.workspace;
+
+        // if already in this workspace, switch to previous if set
+        if (sub == self.current_graph) {
+            if (self.workspace_switch_mode == .previous) {
+                if (self.previous_graph) |prev| {
+                    if (prev != self.current_graph) {
+                        // find the node for prev in parent graph and enter it
+                        const parent_graph: *Graph = if (self.current_graph.parent_node) |pn|
+                            pn.owner_graph orelse &self.graph
+                        else
+                            &self.graph;
+                        for (parent_graph.nodes.items) |n| {
+                            if (n.content == .workspace and n.content.workspace == prev) {
+                                return self.enter_workspace(n);
+                            }
+                        }
+                    }
+                }
+            }
+            return; // mode == .none, do nothing
+        }
+         self.previous_graph = self.current_graph;
 
         // hide current graph
         hide_graph_frames(self, self.current_graph);

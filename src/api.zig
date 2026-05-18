@@ -777,4 +777,16 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "button", .typ = "integer" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "get_current_workspace",
+        .desc   = "Return the node ID of the currently active workspace, or nil.",
+        .params = &.{},
+        .ret    = "integer|nil",
+    },
+    .{
+        .name   = "set_workspace_switch_mode",
+        .desc   = "Set behaviour when switching to the already active workspace. 'none' does nothing, 'previous' switches to the previously active workspace.",
+        .params = &.{ .{ .name = "mode", .typ = "'none'|'previous'" } },
+        .ret    = "nil",
+    },
 };
