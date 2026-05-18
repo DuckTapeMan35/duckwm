@@ -885,6 +885,14 @@ pub const WM = struct {
         if (focus_mod.top_left_window(self)) |n| self.focus(n);
     }
 
+    pub fn leave_workspace_silent(self: *WM) !void {
+        if (self.workspace_stack.items.len == 0) return;
+        hide_graph_frames(self, self.current_graph);
+        self.focused = null;
+        focus_mod.clear_active_window(self);
+        self.current_graph = self.workspace_stack.pop().?;
+    }
+
     pub fn send_to_workspace(self: *WM, node_id: u32, target_graph: *graph_mod.Graph) !void {
         const node = self.node_registry.get(node_id) orelse return error.InvalidNode;
         const src_graph = node.owner_graph orelse return error.InvalidNode;
@@ -1160,9 +1168,8 @@ pub const WM = struct {
         ws_node.preview_window = pw;
         ws_node.floating = false;
 
-        // 3. Frame and map the preview.
+        // 3. Frame preview.
         self.frame(pw, ws_node) catch return error.OutOfMemory;
-        _ = c.XMapWindow(self.display, pw);
         _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
 
         // 4. Register the workspace node (keyed on the preview window).
