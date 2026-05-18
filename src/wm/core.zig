@@ -105,6 +105,15 @@ pub const WM = struct {
     fullscreen_saved_w: u32,
     fullscreen_saved_h: u32,
 
+    // pan state fields
+    pan_dragging: bool,
+    pan_drag_start_x: i32,
+    pan_drag_start_y: i32,
+    pan_drag_start_pan_x: i32,
+    pan_drag_start_pan_y: i32,
+    pan_modifier: ?c_uint,
+    pan_button: c_uint,
+
 
     // data for the lua API
     node_registry: std.AutoHashMap(u32, *Node),
@@ -191,6 +200,14 @@ pub const WM = struct {
             .fullscreen_saved_y = 0,
             .fullscreen_saved_w = 0,
             .fullscreen_saved_h = 0,
+
+            .pan_dragging = false,
+            .pan_drag_start_x = 0,
+            .pan_drag_start_y = 0,
+            .pan_drag_start_pan_x = 0,
+            .pan_drag_start_pan_y = 0,
+            .pan_modifier = null,
+            .pan_button = 2, // middle click by default
 
             .node_registry = std.AutoHashMap(u32, *Node).init(allocator),
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),

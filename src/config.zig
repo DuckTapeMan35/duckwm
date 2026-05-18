@@ -188,7 +188,27 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_lock_horizontal_resize),        .name = "set_lock_horizontal_resize" },
     .{ .func = ziglua.wrap(l_set_lock_vertical_resize),          .name = "set_lock_vertical_resize" },
     .{ .func = ziglua.wrap(l_remove_constraint),                 .name = "remove_constraint" },
+    .{ .func = ziglua.wrap(l_set_pan_modifier),                  .name = "set_pan_modifier" },
+    .{ .func = ziglua.wrap(l_set_pan_button),                    .name = "set_pan_button" },
 };
+
+fn l_set_pan_modifier(lua: *Lua) i32 {
+    const mod: c_uint = @intCast(lua.checkInteger(1));
+    global_wm.pan_modifier = mod;
+    const locks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
+    for (locks) |lock| {
+        _ = c.XGrabButton(@ptrCast(global_wm.display), global_wm.pan_button, mod | lock,
+            global_wm.root, 1,
+            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
+            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
+    }
+    return 0;
+}
+
+fn l_set_pan_button(lua: *Lua) i32 {
+    global_wm.pan_button = @intCast(lua.checkInteger(1));
+    return 0;
+}
 
 fn l_remove_constraint(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));

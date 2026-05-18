@@ -537,6 +537,28 @@ pub fn on_reparent_notify(_: *WM, event: *c.XReparentEvent) void {
 }
 
 pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
+    // Dismiss error bar on click
+    if (wm.error_bar_win != 0 and ev.window == wm.error_bar_win) {
+        _ = c.XDestroyWindow(wm.display, wm.error_bar_win);
+        _ = c.XFlush(wm.display);
+        wm.error_bar_win = 0;
+        return;
+    }
+
+    const clean_state = ev.state & ~@as(c_uint, c.LockMask | c.Mod2Mask | c.Mod3Mask | c.Mod5Mask);
+
+    // Pan drag — must be first before any other checks
+    if (wm.pan_modifier) |pan_mod| {
+        if (clean_state & pan_mod != 0 and ev.button == wm.pan_button) {
+            wm.pan_dragging = true;
+            wm.pan_drag_start_x = ev.x_root;
+            wm.pan_drag_start_y = ev.y_root;
+            wm.pan_drag_start_pan_x = wm.current_graph.pan_x;
+            wm.pan_drag_start_pan_y = wm.current_graph.pan_y;
+            return;
+        }
+    }
+
     if (wm.click_to_focus) {
         const lookup = if (ev.window == wm.root) ev.subwindow else ev.window;
         if (lookup != 0) {
@@ -550,21 +572,12 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                 }
             }
         }
-        // Replay the event so the click reaches the application
         _ = c.XAllowEvents(wm.display, c.ReplayPointer, c.CurrentTime);
         return;
     }
-    // Dismiss error bar on click
-    if (wm.error_bar_win != 0 and ev.window == wm.error_bar_win) {
-        _ = c.XDestroyWindow(wm.display, wm.error_bar_win);
-        _ = c.XFlush(wm.display);
-        wm.error_bar_win = 0;
-        return;
-    }
+
     const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
     if (lookup_win == 0) return;
-
-    const clean_state = ev.state & ~@as(c_uint, c.LockMask | c.Mod2Mask | c.Mod3Mask | c.Mod5Mask);
 
     // ----- Floating handling -----
     if (wm.float_move_modifier) |float_modifier| {
@@ -585,7 +598,6 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.float_win_start_x  = node.x;
                     wm.float_win_start_y  = node.y;
                 } else {
-                    // resize — quadrant based
                     const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
                     const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
                     const right_half  = ev.x_root > cx;
@@ -684,6 +696,18 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
         latest = next.xmotion;
     }
     const e = &latest;
+
+    if (wm.pan_dragging) {
+        const delta_x = e.x_root - wm.pan_drag_start_x;
+        const delta_y = e.y_root - wm.pan_drag_start_y;
+        const new_pan_x = @max(0, wm.pan_drag_start_pan_x - delta_x);
+        const new_pan_y = @max(0, wm.pan_drag_start_pan_y - delta_y);
+        wm.current_graph.pan_x = new_pan_x;
+        wm.current_graph.pan_y = new_pan_y;
+        wm.flushing = false;
+        wm.flush(wm.current_graph) catch {};
+        return;
+    }
 
     // Floating window moving
     if (wm.float_moving) {
@@ -844,6 +868,26 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
 }
 
 pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
+    if (wm.pan_dragging) {
+        wm.pan_dragging = false;
+        _ = c.XFlush(wm.display);
+        // Just update border colors, don't snap pan
+        for (wm.current_graph.nodes.items) |n| {
+            const n_win = switch (n.content) {
+                .window => |w| w,
+                .workspace => n.preview_window orelse continue,
+                .empty => continue,
+            };
+            if (wm.frames.get(n_win)) |frame| {
+                const color = if (wm.focused == n)
+                    n.border_color_focused orelse wm.default_border_color_focused
+                else
+                    n.border_color_unfocused orelse wm.default_border_color_unfocused;
+                _ = c.XSetWindowBorder(wm.display, frame, color);
+            }
+        }
+        return;
+    }
     if (wm.float_moving) {
         wm.float_moving = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);

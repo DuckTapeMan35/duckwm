@@ -742,4 +742,16 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .name   = "set_pan_modifier",
+        .desc   = "Set the modifier key used for mouse panning.",
+        .params = &.{ .{ .name = "mod", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "set_pan_button",
+        .desc   = "Set the mouse button used for panning (default: BUTTON_MIDDLE).",
+        .params = &.{ .{ .name = "button", .typ = "integer" } },
+        .ret    = "nil",
+    },
 };
