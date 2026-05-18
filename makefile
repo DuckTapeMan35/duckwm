@@ -6,7 +6,6 @@ XSESSDIR   := $(DATADIR)/xsessions
 APPDIR     := $(DATADIR)/applications
 DOCDIR     := $(DATADIR)/doc/duckwm
 METADIR    := $(DATADIR)/duckwm/meta
-
 ZIG        ?= zig
 BUILD_FLAGS ?=
 
@@ -22,6 +21,7 @@ release:
 
 install: build
 	install -Dm755 zig-out/bin/duckwm $(DESTDIR)$(BINDIR)/duckwm
+	install -Dm755 zig-out/bin/quack   $(DESTDIR)$(BINDIR)/quack
 	install -Dm644 config/default.lua \
 		$(DESTDIR)$(SYSCONFDIR)/duckwm/config.lua
 	install -Dm644 dist/duckwm.desktop \
@@ -57,6 +57,7 @@ install-user:
 
 uninstall:
 	rm -f  $(DESTDIR)$(BINDIR)/duckwm
+	rm -f  $(DESTDIR)$(BINDIR)/quack
 	rm -f  $(DESTDIR)$(SYSCONFDIR)/duckwm/config.lua
 	rm -f  $(DESTDIR)$(XSESSDIR)/duckwm.desktop
 	rm -f  $(DESTDIR)$(APPDIR)/duckwm.desktop

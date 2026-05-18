@@ -280,6 +280,17 @@ pub fn build(b: *std.Build) void {
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
 
+    const quack = b.addExecutable(.{
+        .name = "quack",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("quack/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    b.installArtifact(quack);
+
     const install_config = b.addInstallFile(
         b.path("config/default.lua"),
         "../etc/duckwm/config.lua",  // relative to prefix, so /etc/duckwm/config.lua when prefix=/usr

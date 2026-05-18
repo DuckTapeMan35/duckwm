@@ -21,7 +21,7 @@ API.norg
 
 # makepkg artifacts
 pkg/
-src/
+/src/
 *.pkg.tar.zst
 *.pkg.tar.xz
 *.log

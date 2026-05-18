@@ -10,6 +10,7 @@ const focus_mod = @import("focus.zig");
 const resize_mod = @import("resize.zig");
 const events_mod = @import("events.zig");
 const float_mod = @import("float.zig");
+const ipc_mod = @import("ipc.zig");
 
 pub fn notify_error(wm: *WM, msg: []const u8) void {
     wm.show_error_bar(msg);
@@ -114,6 +115,10 @@ pub const WM = struct {
     pan_modifier: ?c_uint,
     pan_button: c_uint,
 
+    // IPC state fields in WM struct
+    ipc_fd: i32,
+    ipc_clients: std.ArrayListUnmanaged(i32),
+
 
     // data for the lua API
     node_registry: std.AutoHashMap(u32, *Node),
@@ -209,6 +214,9 @@ pub const WM = struct {
             .pan_modifier = null,
             .pan_button = 2, // middle click by default
 
+            .ipc_fd = -1,
+            .ipc_clients = .{ .items = &.{}, .capacity = 0 },
+
             .node_registry = std.AutoHashMap(u32, *Node).init(allocator),
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),
             .next_node_id = 1,
@@ -274,6 +282,13 @@ pub const WM = struct {
         self.node_registry.deinit();
         self.window_to_node_id.deinit();
         self.dock_struts.deinit();
+        if (self.ipc_fd >= 0) {
+            _ = std.os.linux.close(self.ipc_fd);
+        }
+        for (self.ipc_clients.items) |fd| {
+            _ = std.os.linux.close(fd);
+        }
+        self.ipc_clients.deinit(self.allocator);
         _ = c.XCloseDisplay(self.display);
     }
 
@@ -613,6 +628,10 @@ pub const WM = struct {
     pub fn toggle_floating(self: *WM) !void { return float_mod.toggle_floating(self); }
     pub fn toggle_fullscreen(self: *WM) !void { return float_mod.toggle_fullscreen(self); }
     pub fn center_node(self: *WM, node: *Node) void { float_mod.center_node(self, node); }
+
+    pub fn init_ipc(self: *WM) !void { try ipc_mod.init(self); }
+    pub fn accept_ipc_clients(self: *WM) void { ipc_mod.accept_clients(self); }
+    pub fn handle_ipc_clients(self: *WM) void { ipc_mod.handle_clients(self); }
 
     pub fn get_id_for_node(self: *WM, node: *Node) ?u32 {
         var it = self.node_registry.iterator();
@@ -1222,21 +1241,28 @@ pub const WM = struct {
 
         self.startup_done = true;
 
+        try self.init_ipc();
         const x11_fd = c.XConnectionNumber(self.display);
 
         while (true) {
-            var fds_buf: [2]std.posix.pollfd = undefined;
-            fds_buf[0] = .{ .fd = x11_fd, .events = std.posix.POLL.IN, .revents = 0 };
+            var fds_buf: [3]std.posix.pollfd = undefined;
+            var nfds: usize = 2;
+            fds_buf[0] = .{ .fd = x11_fd,      .events = std.posix.POLL.IN, .revents = 0 };
+            fds_buf[1] = .{ .fd = self.ipc_fd,  .events = std.posix.POLL.IN, .revents = 0 };
+            if (self.inotify_fd >= 0) {
+                fds_buf[2] = .{ .fd = self.inotify_fd, .events = std.posix.POLL.IN, .revents = 0 };
+                nfds = 3;
+            }
 
-            const fds: []std.posix.pollfd = if (self.inotify_fd >= 0) blk: {
-                fds_buf[1] = .{ .fd = self.inotify_fd, .events = std.posix.POLL.IN, .revents = 0 };
-                break :blk fds_buf[0..2];
-            } else fds_buf[0..1];
+            _ = std.posix.poll(fds_buf[0..nfds], -1) catch continue;
 
-            _ = std.posix.poll(fds, -1) catch continue;
+            if (fds_buf[1].revents & std.posix.POLL.IN != 0) {
+                self.accept_ipc_clients();
+            }
+            self.handle_ipc_clients();
 
             // Handle inotify events
-            if (self.inotify_fd >= 0 and fds_buf[1].revents & std.posix.POLL.IN != 0) {
+            if (self.inotify_fd >= 0 and nfds == 3 and fds_buf[2].revents & std.posix.POLL.IN != 0) {
                 var ibuf: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
                 while (true) {
                     const n = std.posix.read(self.inotify_fd, &ibuf) catch break;
