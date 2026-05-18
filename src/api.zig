@@ -468,7 +468,7 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
-        .name   = "set_default_focus_border_color",
+        .name   = "set_default_focused_border_color",
         .desc   = "Set default focused border color (0xRRGGBB).",
         .params = &.{ .{ .name = "color", .typ = "integer" } },
         .ret    = "nil",

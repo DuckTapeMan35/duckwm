@@ -86,7 +86,6 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
 }
 
 fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) void {
-    std.debug.print("apply_gaps: graph={*} ih={} iv={} oh={} ov={}\n", .{g, ih, iv, oh, ov});
     g.gap_inner_h = ih;
     g.gap_inner_v = iv;
     g.gap_outer_h = oh;
@@ -207,7 +206,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_toggle_floating),                   .name = "toggle_floating" },
     .{ .func = ziglua.wrap(l_set_node_focused_border_color),     .name = "set_node_focused_border_color" },
     .{ .func = ziglua.wrap(l_set_node_unfocused_border_color),   .name = "set_node_unfocused_border_color" },
-    .{ .func = ziglua.wrap(l_set_default_focus_border_color),    .name = "set_default_focus_border_color" },
+    .{ .func = ziglua.wrap(l_set_default_focused_border_color),  .name = "set_default_focused_border_color" },
     .{ .func = ziglua.wrap(l_set_default_unfocused_border_color),.name = "set_default_unfocused_border_color" },
     .{ .func = ziglua.wrap(l_get_node_geometry),                 .name = "get_node_geometry" },
     .{ .func = ziglua.wrap(l_set_border_width),                  .name = "set_border_width" },
@@ -1340,7 +1339,7 @@ fn l_set_node_unfocused_border_color(lua: *Lua) i32 {
     return lua.raiseError();
 }
 
-fn l_set_default_focus_border_color(lua: *Lua) i32 {
+fn l_set_default_focused_border_color(lua: *Lua) i32 {
     const color: u32 = @intCast(lua.checkInteger(1));
     global_wm.default_border_color_focused = color;
     return 0;
