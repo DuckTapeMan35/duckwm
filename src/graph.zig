@@ -160,6 +160,7 @@ pub const Graph = struct {
     lock_vertical_resize: bool,
     parent_node: ?*Node,
     arranger_ref: i32,
+    arranger_index: i32,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -179,6 +180,7 @@ pub const Graph = struct {
             .lock_vertical_resize = false,
             .parent_node = null,
             .arranger_ref = 0,
+            .arranger_index = 0,
             .allocator = allocator,
         };
     }

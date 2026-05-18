@@ -135,16 +135,39 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
+        .name   = "set_arranger",
+        .desc   = "Switch the arranger for the current workspace, remapping all existing windows into the new layout.",
+        .params = &.{ .{ .name = "factory", .typ = "function" } },
+        .ret    = "nil",
+    },
+    .{
         .name = "set_default_arranger",
-        .desc = "Set the default layout function for new workspaces.",
+        .desc = "Set the default arranger for new workspaces.",
         .params = &.{ .{ .name = "fn", .typ = "function" } },
         .ret  = "nil",
     },
     .{
         .name   = "register_arranger",
-        .desc   = "Register a new layout function to a workspace.",
-        .params = &.{ .{ .name = "workspace_id", .typ = "integer" }, .{ .name = "fn", .typ = "function" } },
-        .ret    = "nil",
+        .desc   = "Set the arranger for a specific workspace node, remapping all existing windows into the new layout.",
+        .params = &.{
+            .{ .name = "workspace_id", .typ = "integer" },
+            .{ .name = "factory",      .typ = "function" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name = "get_arranger_index",
+        .desc = "Return the index of the current arranger for a workspace",
+        .params = &.{},
+        .ret = "integer",
+    },
+    .{
+        .name   = "set_arranger_index",
+        .desc   = "Set the current arranger for a workspace by index",
+        .params = &.{
+            .{ .name = "index", .typ = "integer" },
+        },
+        .ret = "nil",
     },
     .{
         .name   = "get_focused",

@@ -15,6 +15,76 @@ const Registration = struct {
     name: [:0]const u8,
 };
 
+fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) void {
+    // Call factory to get arranger function
+    _ = lua.getIndexRaw(ziglua.registry_index, factory_ref);
+    lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
+        std.debug.print("arranger factory error: {}\n", .{err});
+        return;
+    };
+    if (lua.typeOf(-1) != .function) {
+        lua.pop(1);
+        return;
+    }
+    const arranger_ref = lua.ref(ziglua.registry_index);
+
+    // Clear old arranger ref
+    if (g.arranger_ref != 0) {
+        lua.unref(ziglua.registry_index, g.arranger_ref);
+    }
+    g.arranger_ref = arranger_ref;
+
+    // Reset pan and virtual size when switching layouts
+    g.pan_x = 0;
+    g.pan_y = 0;
+    g.virtual_width = 0;
+    g.virtual_height = 0;
+    g.lock_horizontal_resize = false;
+    g.lock_vertical_resize = false;
+
+    // Reset all tiled node positions
+    for (g.nodes.items) |node| {
+        if (node.floating) continue;
+        switch (node.content) {
+            .window, .workspace => {
+                node.x = 0;
+                node.y = 0;
+            },
+            else => {},
+        }
+        node.constraints.clearRetainingCapacity();
+    }
+
+    // Resolve once to reset node positions before remapping
+    global_wm.resolve(g) catch {};
+
+    // Collect tiled node ids
+    var ids: std.ArrayListUnmanaged(u32) = .{ .items = &.{}, .capacity = 0 };
+    defer ids.deinit(global_wm.allocator);
+    for (g.nodes.items) |node| {
+        if (node.floating) continue;
+        switch (node.content) {
+            .window, .workspace => {
+                if (global_wm.get_id_for_node(node)) |id| {
+                    ids.append(global_wm.allocator, id) catch {};
+                }
+            },
+            else => {},
+        }
+    }
+
+    // Remap all windows into new arranger
+    var prev_id: ?u32 = null;
+    for (ids.items) |id| {
+        global_wm.call_arranger(g, "map", id, prev_id);
+        prev_id = id;
+    }
+
+    global_wm.resolve(g) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(g) catch {};
+}
+
 fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) void {
     std.debug.print("apply_gaps: graph={*} ih={} iv={} oh={} ov={}\n", .{g, ih, iv, oh, ov});
     g.gap_inner_h = ih;
@@ -85,6 +155,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
     .{ .func = ziglua.wrap(l_exec_once),                         .name = "exec_once" },
+    .{ .func = ziglua.wrap(l_set_arranger),                      .name = "set_arranger" },
     .{ .func = ziglua.wrap(l_set_default_arranger),              .name = "set_default_arranger" },
     .{ .func = ziglua.wrap(l_register_arranger),                 .name = "register_arranger" },
     .{ .func = ziglua.wrap(l_focus_left),                        .name = "focus_left" },
@@ -190,7 +261,19 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_remove_constraint),                 .name = "remove_constraint" },
     .{ .func = ziglua.wrap(l_set_pan_modifier),                  .name = "set_pan_modifier" },
     .{ .func = ziglua.wrap(l_set_pan_button),                    .name = "set_pan_button" },
+    .{ .func = ziglua.wrap(l_get_arranger_index),                .name = "get_arranger_index" },
+    .{ .func = ziglua.wrap(l_set_arranger_index),                .name = "set_arranger_index" },
 };
+
+fn l_get_arranger_index(lua: *Lua) i32 {
+    lua.pushInteger(global_wm.current_graph.arranger_index);
+    return 1;
+}
+
+fn l_set_arranger_index(lua: *Lua) i32 {
+    global_wm.current_graph.arranger_index = @intCast(lua.checkInteger(1));
+    return 0;
+}
 
 fn l_set_pan_modifier(lua: *Lua) i32 {
     const mod: c_uint = @intCast(lua.checkInteger(1));
@@ -631,8 +714,21 @@ fn l_register_arranger(lua: *Lua) i32 {
         _ = lua.pushString("register_arranger: node is not a workspace");
         return lua.raiseError();
     }
+    const lua_ref = lua.ref(ziglua.registry_index);
+    _ = lua_ref; // suppress unused warning
     lua.pushValue(2);
-    node.content.workspace.arranger_ref = lua.ref(ziglua.registry_index);
+    const factory_ref = lua.ref(ziglua.registry_index);
+    apply_arranger_to_graph(lua, node.content.workspace, factory_ref);
+    lua.unref(ziglua.registry_index, factory_ref);
+    return 0;
+}
+
+fn l_set_arranger(lua: *Lua) i32 {
+    lua.checkType(1, .function);
+    lua.pushValue(1);
+    const factory_ref = lua.ref(ziglua.registry_index);
+    apply_arranger_to_graph(lua, global_wm.current_graph, factory_ref);
+    lua.unref(ziglua.registry_index, factory_ref);
     return 0;
 }
 
