@@ -779,6 +779,12 @@ pub const entries = [_]ApiEntry{
         .ret = "nil",
     },
     .{
+        .name   = "set_pan_disabled",
+        .desc   = "Disable or enable mouse panning for the current workspace.",
+        .params = &.{ .{ .name = "disabled", .typ = "boolean" } },
+        .ret    = "nil",
+    },
+    .{
         .name   = "set_pan_modifier",
         .desc   = "Set the modifier key used for mouse panning.",
         .params = &.{ .{ .name = "mod", .typ = "integer" } },

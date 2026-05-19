@@ -41,6 +41,7 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     g.virtual_height = 0;
     g.lock_horizontal_resize = false;
     g.lock_vertical_resize = false;
+    g.pan_disabled = false;
 
     // Reset all tiled node positions
     for (g.nodes.items) |node| {
@@ -212,7 +213,13 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_current_workspace),             .name = "get_current_workspace" },
     .{ .func = ziglua.wrap(l_set_workspace_switch_mode),         .name = "set_workspace_switch_mode" },
     .{ .func = ziglua.wrap(l_get_arranger_name),                 .name = "get_arranger_name" },
+    .{ .func = ziglua.wrap(l_set_pan_disabled),                  .name = "set_pan_disabled" },
 };
+
+fn l_set_pan_disabled(lua: *Lua) i32 {
+    global_wm.current_graph.pan_disabled = lua.toBoolean(1);
+    return 0;
+}
 
 fn l_set_workspace_switch_mode(lua: *Lua) i32 {
     const mode = lua.checkString(1);

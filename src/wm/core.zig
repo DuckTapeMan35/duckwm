@@ -527,6 +527,20 @@ pub const WM = struct {
         _ = c.XSetWindowBorderWidth(self.display, win, 0);
         _ = c.XMoveResizeWindow(self.display, win, self.border_width, self.border_width, node.width, node.height);
 
+        var ce: c.XEvent = std.mem.zeroes(c.XEvent);
+        ce.xconfigure.type = c.ConfigureNotify;
+        ce.xconfigure.display = self.display;
+        ce.xconfigure.event = win;
+        ce.xconfigure.window = win;
+        ce.xconfigure.x = attrs.x;
+        ce.xconfigure.y = attrs.y;
+        ce.xconfigure.width = @intCast(node.width);
+        ce.xconfigure.height = @intCast(node.height);
+        ce.xconfigure.border_width = 0;
+        ce.xconfigure.above = c.None;
+        ce.xconfigure.override_redirect = 0;
+        _ = c.XSendEvent(self.display, win, 0, c.StructureNotifyMask, &ce);
+
         try self.frames.put(win, win_frame);
         _ = c.XSelectInput(self.display, win, c.PropertyChangeMask);
 
@@ -688,7 +702,6 @@ pub const WM = struct {
                         const raw_x = node.x + @as(i32, @intCast(gap_left)) - g.pan_x;
                         const raw_y = node.y + @as(i32, @intCast(gap_top))  - g.pan_y;
 
-                        // Clamp to reasonable X11 bounds — X11 uses i16 internally
                         const x = @max(-32768, @min(32767, raw_x));
                         const y = @max(-32768, @min(32767, raw_y));
                         const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
@@ -699,6 +712,20 @@ pub const WM = struct {
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
                         _ = c.XMapWindow(self.display, win);
                         _ = c.XMapWindow(self.display, win_frame);
+
+                        var ce: c.XEvent = std.mem.zeroes(c.XEvent);
+                        ce.xconfigure.type = c.ConfigureNotify;
+                        ce.xconfigure.display = self.display;
+                        ce.xconfigure.event = win;
+                        ce.xconfigure.window = win;
+                        ce.xconfigure.x = x;
+                        ce.xconfigure.y = y;
+                        ce.xconfigure.width = @intCast(w);
+                        ce.xconfigure.height = @intCast(h);
+                        ce.xconfigure.border_width = 0;
+                        ce.xconfigure.above = c.None;
+                        ce.xconfigure.override_redirect = 0;
+                        _ = c.XSendEvent(self.display, win, 0, c.StructureNotifyMask, &ce);
                     }
                 },
                 .workspace => {
@@ -740,15 +767,10 @@ pub const WM = struct {
                             const raw_x = node.x + @as(i32, @intCast(gap_left)) - g.pan_x;
                             const raw_y = node.y + @as(i32, @intCast(gap_top))  - g.pan_y;
 
-                            // Clamp to reasonable X11 bounds — X11 uses i16 internally
                             const x = @max(-32768, @min(32767, raw_x));
                             const y = @max(-32768, @min(32767, raw_y));
                             const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
                             const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
-
-                            std.debug.print("set_focus: node.x={} node.w={} pan_x={} screen_w={}\n", .{
-                                node.x, node.width, self.current_graph.pan_x, self.screen_width,
-                            });
 
                             _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
                             _ = c.XMoveResizeWindow(self.display, pw, 0, 0, w, h);
@@ -762,7 +784,6 @@ pub const WM = struct {
             }
         }
         float_mod.raise_floating_windows(self);
-        // Re-raise dock windows above everything
         var dock_it = self.dock_struts.keyIterator();
         while (dock_it.next()) |win| {
             _ = c.XRaiseWindow(self.display, win.*);
@@ -1337,8 +1358,9 @@ pub const WM = struct {
                     c.ConfigureNotify  => {},
                     c.EnterNotify      => events_mod.on_enter_notify(self, &e.xcrossing),
                     c.LeaveNotify      => {}, // just to silence prints
-                    c.ClientMessage => try events_mod.on_client_message(self, &e.xclient),
-                    c.PropertyNotify => try events_mod.on_property_notify(self, &e.xproperty),
+                    c.ClientMessage    => try events_mod.on_client_message(self, &e.xclient),
+                    c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
+                    c.UnmapNotify      => try events_mod.on_unmap_notify(self, &e.xunmap),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }

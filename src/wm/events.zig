@@ -68,12 +68,57 @@ fn restack_docks(wm: *WM) void {
     _ = c.XFlush(wm.display);
 }
 
+fn get_transient_for(wm: *WM, win: c.Window) ?c.Window {
+    var transient: c.Window = 0;
+    if (c.XGetTransientForHint(wm.display, win, &transient) != 0 and transient != 0 and
+        transient != win and transient != wm.root)
+    {
+        if (wm.window_to_node_id.contains(transient)) return transient;
+        if (wm.get_client_from_frame(transient)) |client| return client;
+        return transient; // unmanaged parent — still a transient
+    }
+    return null;
+}
+
+fn is_dialog(display: *c.Display, win: c.Window) bool {
+    const net_wm_window_type = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE", 0);
+    const net_wm_window_type_dialog = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", 0);
+
+    var actual_type: c.Atom = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var prop: ?*c_ulong = null;
+
+    if (c.XGetWindowProperty(display, win, net_wm_window_type,
+        0, 2, 0, 0, &actual_type, &actual_format, &nitems, &bytes_after,
+        @ptrCast(&prop)) != c.Success) return false;
+    if (nitems == 0) return false;
+    defer if (prop) |p| {_ = c.XFree(@ptrCast(p));};
+    if (actual_format != 32) return false;
+
+    const atoms: [*]c_ulong = @ptrCast(prop);
+    for (atoms[0..nitems]) |a| {
+        if (a == net_wm_window_type_dialog) return true;
+    }
+    return false;
+}
+
 pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     var attrs: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(wm.display, req.window, &attrs);
     if (attrs.override_redirect != 0) return;
 
-    if (is_dock_or_toolbar(wm.display, req.window)) {
+    if (wm.window_to_node_id.contains(req.window)) {
+        std.debug.print("MapRequest: win={} already managed, just mapping\n", .{req.window});
+        _ = c.XMapWindow(wm.display, req.window);
+        return;
+    }
+    std.debug.print("MapRequest: win={} w={} h={}\n", .{req.window, attrs.width, attrs.height});
+
+    const is_transient = get_transient_for(wm, req.window) != null or is_dialog(wm.display, req.window);
+
+    if (!is_transient and is_dock_or_toolbar(wm.display, req.window)) {
         _ = c.XMapWindow(wm.display, req.window);
         const s = get_strut(wm.display, req.window) orelse Strut{ .left = 0, .right = 0, .top = 0, .bottom = 0 };
 
@@ -112,9 +157,10 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     const node = try wm.current_graph.add_node(.{ .window = req.window });
     node.width  = @intCast(attrs.width);
     node.height = @intCast(attrs.height);
+    if (is_transient) node.floating = true;
     try wm.frame(req.window, node);
     const prev_focused = wm.focused;
-    if (wm.focused == null) wm.focus(node);
+    if (wm.focused == null) wm.focused = node;
     const id = try wm.register_node(req.window, node);
 
     {
@@ -134,7 +180,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
                 if (wm.node_registry.get(pid)) |pnode| {
                     if (pnode.floating) {
                         prev_id = null;
-                        // Find any tiled window in the current graph that isn't the new node
                         for (wm.current_graph.nodes.items) |n| {
                             if (n.floating) continue;
                             if (n.content != .window and n.content != .workspace) continue;
@@ -160,7 +205,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
 
-    // Re-raise floating windows above the newly mapped window
     for (wm.current_graph.nodes.items) |n| {
         switch (n.content) {
             .window => |win| {
@@ -175,31 +219,18 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     if (wm.focused) |f| wm.focus(f);
 
-    // Listen for future property changes on client
     _ = c.XSelectInput(wm.display, req.window, c.PropertyChangeMask);
 
-    // Re-check type in case it was set after MapRequest
-    if (is_dock_or_toolbar(wm.display, req.window)) {
-        const node_id = wm.window_to_node_id.get(req.window) orelse return;
-        const node_dock = wm.node_registry.get(node_id) orelse return;
-        if (get_strut(wm.display, req.window)) |s| {
-            try wm.dock_struts.put(req.window, s);
+    if (is_transient) {
+        if (wm.node_registry.get(id)) |n| {
+            wm.center_node(n);
         }
-        if (wm.frames.get(req.window)) |frame| {
-            _ = c.XUnmapWindow(wm.display, req.window);
-            _ = c.XReparentWindow(wm.display, req.window, wm.root, 0, 0);
-            _ = c.XDestroyWindow(wm.display, frame);
-            _ = wm.frames.remove(req.window);
-        }
-        _ = c.XMapWindow(wm.display, req.window);
-        if (node_dock.owner_graph) |graph| {
-            graph.remove_node(node_dock);
-        }
-        _ = wm.node_registry.remove(node_id);
-        _ = wm.window_to_node_id.remove(req.window);
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
+        if (wm.node_registry.get(id)) |n| {
+            wm.focus(n);
+        }
         return;
     }
 }
@@ -376,7 +407,33 @@ fn sweep_dead_containers(wm: *WM) void {
     }
 }
 
+pub fn on_unmap_notify(wm: *WM, event: *c.XUnmapEvent) !void {
+    const win = event.window;
+
+    // Ignore frame unmap events
+    var is_frame = false;
+    var frame_iter = wm.frames.iterator();
+    while (frame_iter.next()) |entry| {
+        if (entry.value_ptr.* == win) {
+            is_frame = true;
+            break;
+        }
+    }
+    if (is_frame) return;
+
+    // Ignore windows we don't manage
+    if (!wm.window_to_node_id.contains(win)) return;
+
+    // Ignore synthetic unmaps generated by reparenting
+    if (event.send_event != 0) return;
+
+    // Treat unmap as destroy — clean up fully
+    var ev = c.XDestroyWindowEvent{ .type = c.DestroyNotify, .serial = 0, .send_event = 0, .display = wm.display, .event = event.event, .window = win };
+    try on_destroy_notify(wm, &ev);
+}
+
 pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
+    std.debug.print("DestroyNotify: win={} event={}\n", .{ event.window, event.event });
     const win = event.window;
 
     // If it was a dock/toolbar, remove its strut and recalc
@@ -412,15 +469,34 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (dying == null) return;
 
-    // Determine next focus BEFORE removing anything
+    // Determine next focus BEFORE removing anything.
+    // When a transient closes, prefer to return focus to whatever was focused
+    // before it opened (i.e. the first non-floating tiled window we can find),
+    // so the tiling layout is not disturbed.
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
 
     if (focused_is_dying) {
-        for (wm.current_graph.focus_edges.items) |edge| {
-            if (edge.from == dying and edge.to != dying) {
-                next_focus = edge.to;
-                break;
+        const dying_is_transient = if (dying) |d| d.floating else false;
+
+        if (dying_is_transient) {
+            // Return focus to the most recently focused tiled window
+            for (wm.current_graph.nodes.items) |node| {
+                if (node == dying) continue;
+                if (node.floating) continue;
+                switch (node.content) {
+                    .window => { next_focus = node; break; },
+                    else => continue,
+                }
+            }
+        }
+
+        if (next_focus == null) {
+            for (wm.current_graph.focus_edges.items) |edge| {
+                if (edge.from == dying and edge.to != dying) {
+                    next_focus = edge.to;
+                    break;
+                }
             }
         }
         if (next_focus == null) {
@@ -434,7 +510,8 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Notify Lua before unmapping or destroying anything, so it can query properties if needed
+    // Notify Lua before unmapping or destroying anything, so it can query properties if needed.
+    // Transients are floating so the is_floating check already suppresses the arranger call.
     if (dying_id) |id| {
         const is_floating = if (dying) |d| d.floating else false;
         if (!is_floating) {
@@ -548,18 +625,24 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
     const clean_state = ev.state & ~@as(c_uint, c.LockMask | c.Mod2Mask | c.Mod3Mask | c.Mod5Mask);
 
     // Pan drag — must be first before any other checks
+    var started_pan = false;
     if (wm.pan_modifier) |pan_mod| {
-        if (clean_state & pan_mod != 0 and ev.button == wm.pan_button) {
+        if (!wm.current_graph.pan_disabled and clean_state & pan_mod != 0 and ev.button == wm.pan_button) {
             wm.pan_dragging = true;
             wm.pan_drag_start_x = ev.x_root;
             wm.pan_drag_start_y = ev.y_root;
             wm.pan_drag_start_pan_x = wm.current_graph.pan_x;
             wm.pan_drag_start_pan_y = wm.current_graph.pan_y;
-            return;
+            started_pan = true;
         }
     }
+    if (started_pan) return;
 
-    if (wm.click_to_focus) {
+
+    const has_float_mod  = if (wm.float_move_modifier)  |m| clean_state & m != 0 else false;
+    const has_resize_mod = if (wm.resize_modifier)       |m| clean_state & m != 0 else false;
+
+    if (!has_float_mod and !has_resize_mod and wm.click_to_focus) {
         const lookup = if (ev.window == wm.root) ev.subwindow else ev.window;
         if (lookup != 0) {
             const client = wm.get_client_from_frame(lookup) orelse lookup;
@@ -969,8 +1052,6 @@ fn is_dock_or_toolbar(display: *c.Display, win: c.Window) bool {
     const net_wm_window_type = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE", 0);
     const net_wm_window_type_dock = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", 0);
     const net_wm_window_type_toolbar = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_TOOLBAR", 0);
-    const net_wm_window_type_menu = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_MENU", 0);
-    const net_wm_window_type_utility = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_UTILITY", 0);
 
     var actual_type: c.Atom = 0;
     var actual_format: c_int = 0;
@@ -1004,9 +1085,7 @@ fn is_dock_or_toolbar(display: *c.Display, win: c.Window) bool {
     const atoms: [*]c_ulong = @ptrCast(prop);
     for (atoms[0..nitems]) |a| {
         if (a == net_wm_window_type_dock or
-            a == net_wm_window_type_toolbar or
-            a == net_wm_window_type_menu or
-            a == net_wm_window_type_utility)
+            a == net_wm_window_type_toolbar)
             return true;
     }
     return false;

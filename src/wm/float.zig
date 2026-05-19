@@ -62,6 +62,20 @@ pub fn raise_floating_windows(wm: *WM) void {
                     _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
                     _ = c.XMoveResizeWindow(wm.display, win, 0, 0, @max(1, fw), @max(1, fh));
                     _ = c.XRaiseWindow(wm.display, frame);
+
+                    var ce: c.XEvent = std.mem.zeroes(c.XEvent);
+                    ce.xconfigure.type = c.ConfigureNotify;
+                    ce.xconfigure.display = wm.display;
+                    ce.xconfigure.event = win;
+                    ce.xconfigure.window = win;
+                    ce.xconfigure.x = node.x;
+                    ce.xconfigure.y = node.y;
+                    ce.xconfigure.width = @intCast(@max(1, fw));
+                    ce.xconfigure.height = @intCast(@max(1, fh));
+                    ce.xconfigure.border_width = 0;
+                    ce.xconfigure.above = c.None;
+                    ce.xconfigure.override_redirect = 0;
+                    _ = c.XSendEvent(wm.display, win, 0, c.StructureNotifyMask, &ce);
                 }
             },
             .workspace => {
