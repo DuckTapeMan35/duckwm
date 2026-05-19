@@ -16,6 +16,18 @@ pub fn notify_error(wm: *WM, msg: []const u8) void {
     wm.show_error_bar(msg);
 }
 
+fn get_argb_visual(display: *c.Display) ?*c.Visual {
+    var template: c.XVisualInfo = undefined;
+    template.screen = c.XDefaultScreen(display);
+    template.depth = 32;
+    template.@"class" = c.TrueColor;   // ← correct field name
+    var nitems: c_int = 0;
+    const list = c.XGetVisualInfo(display, c.VisualScreenMask | c.VisualDepthMask | c.VisualClassMask, &template, &nitems);
+    defer if (list != null) {_ = c.XFree(@ptrCast(list));};
+    if (nitems > 0) return list[0].visual;
+    return null;
+}
+
 pub const Strut = struct {
     left: u32,
     right: u32,
@@ -485,7 +497,6 @@ pub const WM = struct {
     }
 
     pub fn frame(self: *WM, win: c.Window, node: *Node) !void {
-        // Choose the correct border color based on whether this node is focused
         const border_color = if (self.focused == node)
             node.border_color_focused orelse self.default_border_color_focused
         else
@@ -494,7 +505,25 @@ pub const WM = struct {
         var attrs: c.XWindowAttributes = undefined;
         _ = c.XGetWindowAttributes(self.display, win, &attrs);
 
-        const win_frame = c.XCreateSimpleWindow(
+        const needs_alpha = (attrs.depth == 32);
+        const visual = if (needs_alpha) get_argb_visual(self.display) else c.XDefaultVisual(self.display, 0);
+        const depth = if (needs_alpha) 32 else c.XDefaultDepth(self.display, 0);
+
+        var swa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        swa.backing_store = c.WhenMapped;
+        swa.bit_gravity = c.NorthWestGravity;
+        swa.win_gravity = c.NorthWestGravity;
+        swa.border_pixel = border_color;
+        swa.background_pixel = if (needs_alpha) 0x00000000 else c.None;
+        swa.colormap = if (needs_alpha)
+            c.XCreateColormap(self.display, self.root, visual, c.AllocNone)
+        else
+            c.XDefaultColormap(self.display, 0);
+
+        const mask: c_ulong = c.CWBackingStore | c.CWBitGravity | c.CWWinGravity |
+                            c.CWBorderPixel | c.CWBackPixel | c.CWColormap;
+
+        const win_frame = c.XCreateWindow(
             self.display,
             self.root,
             attrs.x,
@@ -502,31 +531,36 @@ pub const WM = struct {
             @intCast(attrs.width),
             @intCast(attrs.height),
             @intCast(self.border_width),
-            border_color,
-            c.None,
+            depth,
+            c.InputOutput,
+            visual,
+            mask,
+            &swa
         );
-        // Move frame offscreen before mapping so it doesn't flash at wrong position
+
+        if (needs_alpha) {
+            _ = c.XSetWindowBackgroundPixmap(self.display, win_frame, c.None);
+        }
+
+        // Move offscreen temporarily
         _ = c.XMoveWindow(self.display, win_frame, -10000, -10000);
+
         if (self.click_to_focus) {
             _ = c.XGrabButton(self.display, 1, c.AnyModifier, win_frame, 0,
                 c.ButtonPressMask | c.ButtonReleaseMask,
                 c.GrabModeSync, c.GrabModeAsync, c.None, c.None);
         }
-        var swa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
-        swa.backing_store = c.WhenMapped;
-        swa.bit_gravity = c.NorthWestGravity;
-        swa.win_gravity = c.NorthWestGravity;
-        _ = c.XChangeWindowAttributes(self.display, win_frame,
-            c.CWBackingStore | c.CWBitGravity | c.CWWinGravity, &swa);
 
         _ = c.XSelectInput(self.display, win_frame,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
-            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask | c.EnterWindowMask | c.LeaveWindowMask);
-        _ = c.XAddToSaveSet(self.display, win);
-        _ = c.XReparentWindow(self.display, win, win_frame, 0, 0);
-        _ = c.XSetWindowBorderWidth(self.display, win, 0);
-        _ = c.XMoveResizeWindow(self.display, win, self.border_width, self.border_width, node.width, node.height);
+            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask |
+            c.EnterWindowMask | c.LeaveWindowMask);
 
+        _ = c.XAddToSaveSet(self.display, win);
+        _ = c.XReparentWindow(self.display, win, win_frame, self.border_width, self.border_width);
+        _ = c.XSetWindowBorderWidth(self.display, win, 0);
+
+        // Send synthetic ConfigureNotify
         var ce: c.XEvent = std.mem.zeroes(c.XEvent);
         ce.xconfigure.type = c.ConfigureNotify;
         ce.xconfigure.display = self.display;
@@ -543,7 +577,6 @@ pub const WM = struct {
 
         try self.frames.put(win, win_frame);
         _ = c.XSelectInput(self.display, win, c.PropertyChangeMask);
-
     }
 
     pub fn reset_root_state(self: *WM) void {
@@ -1191,6 +1224,13 @@ pub const WM = struct {
     pub fn create_workspace_graph(self: *WM) !*graph_mod.Graph {
         const sub = try self.allocator.create(graph_mod.Graph);
         sub.* = graph_mod.Graph.init(self.allocator);
+        sub.gap_inner_h = self.default_gap_inner_h;
+        sub.gap_inner_v = self.default_gap_inner_v;
+        sub.gap_outer_h = self.default_gap_outer_h;
+        sub.gap_outer_v = self.default_gap_outer_v;
+        if (self.default_arranger_name.len > 0 and sub.arranger_name.len == 0) {
+            sub.arranger_name = try self.allocator.dupe(u8, self.default_arranger_name);
+        }
         return sub;
     }
 
@@ -1219,17 +1259,16 @@ pub const WM = struct {
     /// This is called once in `run` so that Super+Ctrl+1 always works
     /// and the screen is never empty.
     pub fn create_initial_workspace(self: *WM) !void {
-        // 1. Ensure the top-level graph has a root container that fills the screen.
-        const root_node = self.current_graph.add_node(.empty) catch return error.OutOfMemory;
+        // 1. Root container
+        const root_node = try self.current_graph.add_node(.empty);
         root_node.width = self.screen_width;
         root_node.height = self.screen_height;
         root_node.x = 0;
         root_node.y = 0;
-        _ = self.register_node(null, root_node) catch return error.OutOfMemory;
+        _ = try self.register_node(null, root_node);
 
-        // 2. Create the workspace sub‑graph and its preview window.
-        const sub = self.allocator.create(graph_mod.Graph) catch return error.OutOfMemory;
-        sub.* = graph_mod.Graph.init(self.allocator);
+        // 2. Workspace sub‑graph (now with default gaps and arranger name)
+        const sub = try self.create_workspace_graph();  // ← changed
 
         const pw = c.XCreateSimpleWindow(
             self.display, self.root,
@@ -1239,37 +1278,25 @@ pub const WM = struct {
         wa.override_redirect = 1;
         _ = c.XChangeWindowAttributes(self.display, pw, c.CWOverrideRedirect, &wa);
 
-        const ws_node = self.current_graph.add_node(.{ .workspace = sub }) catch return error.OutOfMemory;
+        const ws_node = try self.current_graph.add_node(.{ .workspace = sub });
         sub.parent_node = ws_node;
         ws_node.preview_window = pw;
         ws_node.floating = false;
 
-        // 3. Frame preview.
-        self.frame(pw, ws_node) catch return error.OutOfMemory;
+        try self.frame(pw, ws_node);
         _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+        _ = try self.register_node(pw, ws_node);
 
-        // 4. Register the workspace node (keyed on the preview window).
-        _ = self.register_node(pw, ws_node) catch return error.OutOfMemory;
-
-        // 5. Constrain the workspace node to fill the entire root container.
+        // 3. Constraint to fill root
         const g = graph_mod.Constraint{ .grid_cell = .{
-            .col = 0,
-            .row = 0,
-            .cols = 1,
-            .rows = 1,
-            .container = root_node,
+            .col = 0, .row = 0, .cols = 1, .rows = 1, .container = root_node,
         } };
-        self.current_graph.add_constraint(ws_node, g) catch return error.OutOfMemory;
+        try self.current_graph.add_constraint(ws_node, g);
 
-        sub.gap_inner_h = self.default_gap_inner_h;
-        sub.gap_inner_v = self.default_gap_inner_v;
-        sub.gap_outer_h = self.default_gap_outer_h;
-        sub.gap_outer_v = self.default_gap_outer_v;
-
-        // 6. Apply the constraint and enter the workspace.
-        self.resolve(self.current_graph) catch return error.OutOfMemory;
-        self.rebuild_focus_edges() catch {};
-        self.flush(self.current_graph) catch {};
+        // 4. Resolve and enter
+        try self.resolve(self.current_graph);
+        try self.rebuild_focus_edges();
+        try self.flush(self.current_graph);
         try self.enter_workspace(ws_node);
     }
 
