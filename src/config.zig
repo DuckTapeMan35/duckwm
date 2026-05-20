@@ -2048,8 +2048,11 @@ pub fn reload(wm: *WM) void {
 
 fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
     if (g.arranger_ref == 0 and wm.default_arranger_ref == 0) return;
-    
-    // collect tiled node ids in order
+
+    const saved_graph = wm.current_graph;
+    wm.current_graph = g;  // <-- add this
+    defer wm.current_graph = saved_graph;
+
     var ids: std.ArrayListUnmanaged(u32) = .{ .items = &.{}, .capacity = 0 };
     defer ids.deinit(wm.allocator);
     for (g.nodes.items) |node| {
@@ -2063,11 +2066,9 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
             else => {},
         }
     }
-    // reset constraints
     for (g.nodes.items) |node| {
         if (!node.floating) node.constraints.clearRetainingCapacity();
     }
-    // remap
     var prev_id: ?u32 = null;
     for (ids.items) |id| {
         wm.call_arranger(g, "map", id, prev_id);
@@ -2075,9 +2076,11 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
     }
     wm.resolve(g) catch {};
     wm.rebuild_focus_edges() catch {};
-    wm.flush(g) catch {};
+    // Only flush if this is a visible graph
+    if (g == saved_graph) {
+        wm.flush(g) catch {};
+    }
 
-    // recurse into nested workspaces
     for (g.nodes.items) |node| {
         if (node.content == .workspace) {
             remap_all_graphs(wm, node.content.workspace);
