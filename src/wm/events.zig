@@ -1106,12 +1106,20 @@ fn get_strut(display: *c.Display, win: c.Window) ?Strut {
 }
 
 pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
-    if (!wm.focus_follows_mouse) return;
-    // ignore grab-related crossing events
     if (ev.mode != c.NotifyNormal) return;
 
     const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
     if (lookup_win == 0) return;
+
+    const is_managed = wm.window_to_node_id.contains(lookup_win) or
+        wm.get_client_from_frame(lookup_win) != null;
+
+    if (!is_managed) {
+        wm.ungrab_keyboard();
+        return;
+    }
+
+    if (!wm.focus_follows_mouse) return;
 
     const client = wm.get_client_from_frame(lookup_win) orelse return;
     const node_id = wm.window_to_node_id.get(client) orelse return;
@@ -1119,6 +1127,29 @@ pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     if (wm.focused == node) return;
     wm.focus(node);
     wm.flush(wm.current_graph) catch {};
+}
+
+pub fn on_leave_notify(wm: *WM, ev: *c.XCrossingEvent) void {
+    if (ev.mode != c.NotifyNormal) return;
+
+    const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
+    if (lookup_win == 0) return;
+
+    const is_managed = wm.window_to_node_id.contains(lookup_win) or
+        wm.get_client_from_frame(lookup_win) != null;
+
+    if (!is_managed) {
+        // leaving an unmanaged window (panel/dock), regrab keys
+        var it = wm.keybinds.iterator();
+        while (it.next()) |entry| {
+            const keycode = c.XKeysymToKeycode(wm.display, entry.key_ptr.*.keysym);
+            if (keycode != 0) {
+                _ = c.XGrabKey(wm.display, keycode, entry.key_ptr.*.modifiers,
+                    wm.root, 1, c.GrabModeAsync, c.GrabModeAsync);
+            }
+        }
+        _ = c.XSync(wm.display, 0);
+    }
 }
 
 // Set _NET_ACTIVE_WINDOW on the root

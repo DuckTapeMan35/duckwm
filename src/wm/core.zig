@@ -1075,6 +1075,29 @@ pub const WM = struct {
         if (focus_mod.find_focus_target(self, .Down)) |target| try self.exchange(focused, target);
     }
 
+    pub fn ungrab_keyboard(self: *WM) void {
+        _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
+        _ = c.XSync(self.display, 0);
+    }
+
+    pub fn grab_keyboard(self: *WM) void {
+        _ = c.XGrabKeyboard(self.display, self.root, 0,
+            c.GrabModeAsync, c.GrabModeAsync, c.CurrentTime);
+        _ = c.XSync(self.display, 0);
+    }
+
+    pub fn regrab_keys(self: *WM) void {
+        var it = self.keybinds.iterator();
+        while (it.next()) |entry| {
+            const keycode = c.XKeysymToKeycode(self.display, entry.key_ptr.*.keysym);
+            if (keycode != 0) {
+                _ = c.XGrabKey(self.display, keycode, entry.key_ptr.*.modifiers,
+                    self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
+            }
+        }
+        _ = c.XSync(self.display, 0);
+    }
+
     pub fn spawn(self: *WM, argv: []const []const u8) !void {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -1085,11 +1108,18 @@ pub const WM = struct {
 
         const pid = c.fork();
         if (pid == 0) {
-            _ = c.execvp(argv_buf[0], @ptrCast(argv_buf.ptr));
-            c.exit(1);
+            _ = c.setsid();
+            const pid2 = c.fork();
+            if (pid2 == 0) {
+                _ = c.execvp(argv_buf[0], @ptrCast(argv_buf.ptr));
+                c.exit(1);
+            }
+            c.exit(0);
         } else if (pid < 0) {
             return error.ForkFailed;
         }
+        var status: u32 = 0;
+        _ = std.os.linux.waitpid(pid, &status, 0);
     }
 
     pub fn kill_client(self: *WM) !void {
@@ -1365,7 +1395,7 @@ pub const WM = struct {
                     c.ButtonRelease    => events_mod.on_button_release(self, &e.xbutton),
                     c.ConfigureNotify  => {},
                     c.EnterNotify      => events_mod.on_enter_notify(self, &e.xcrossing),
-                    c.LeaveNotify      => {}, // just to silence prints
+                    c.LeaveNotify      => events_mod.on_leave_notify(self, &e.xcrossing),
                     c.ClientMessage    => try events_mod.on_client_message(self, &e.xclient),
                     c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
                     c.UnmapNotify      => try events_mod.on_unmap_notify(self, &e.xunmap),
