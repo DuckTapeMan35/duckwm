@@ -151,6 +151,7 @@ pub const WM = struct {
     inotify_fd: i32,
     inotify_wd: i32,
     reload_fn: ?*const fn(*WM) void,
+    pending_reload: bool,
     config_error_count: u32,
     last_reload_time: i64,
     error_bar_win: c.Window,
@@ -251,6 +252,7 @@ pub const WM = struct {
             .inotify_fd = -1,
             .inotify_wd = -1,
             .reload_fn = null,
+            .pending_reload = false,
             .config_error_count = 0,
             .last_reload_time = 0,
             .error_bar_win = 0,
@@ -1403,6 +1405,10 @@ pub const WM = struct {
                     c.UnmapNotify      => try events_mod.on_unmap_notify(self, &e.xunmap),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
+            }
+            if (self.pending_reload) {
+                self.pending_reload = false;
+                if (self.reload_fn) |f| f(self);
             }
         }
     }

@@ -1880,7 +1880,7 @@ fn l_set_focus_follows_mouse(lua: *Lua) i32 {
 
 fn l_reload_config(lua: *Lua) i32 {
     _ = lua;
-    if (global_wm.reload_fn) |f| f(global_wm);
+    global_wm.pending_reload = true;
     return 0;
 }
 
@@ -2042,7 +2042,47 @@ pub fn reload(wm: *WM) void {
         return;
     };
     wm.config_error_count = 0;
+    remap_all_graphs(wm, wm.current_graph);
     std.debug.print("config reloaded successfully\n", .{});
+}
+
+fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
+    if (g.arranger_ref == 0 and wm.default_arranger_ref == 0) return;
+    
+    // collect tiled node ids in order
+    var ids: std.ArrayListUnmanaged(u32) = .{ .items = &.{}, .capacity = 0 };
+    defer ids.deinit(wm.allocator);
+    for (g.nodes.items) |node| {
+        if (node.floating) continue;
+        switch (node.content) {
+            .window, .workspace => {
+                if (wm.get_id_for_node(node)) |id| {
+                    ids.append(wm.allocator, id) catch {};
+                }
+            },
+            else => {},
+        }
+    }
+    // reset constraints
+    for (g.nodes.items) |node| {
+        if (!node.floating) node.constraints.clearRetainingCapacity();
+    }
+    // remap
+    var prev_id: ?u32 = null;
+    for (ids.items) |id| {
+        wm.call_arranger(g, "map", id, prev_id);
+        prev_id = id;
+    }
+    wm.resolve(g) catch {};
+    wm.rebuild_focus_edges() catch {};
+    wm.flush(g) catch {};
+
+    // recurse into nested workspaces
+    for (g.nodes.items) |node| {
+        if (node.content == .workspace) {
+            remap_all_graphs(wm, node.content.workspace);
+        }
+    }
 }
 
 pub fn load(wm: *WM) !void {
@@ -2130,6 +2170,7 @@ pub fn load(wm: *WM) !void {
         }
 
         wm.reload_fn = reload;
+        remap_all_graphs(wm, wm.current_graph);
         return;
     }
 
