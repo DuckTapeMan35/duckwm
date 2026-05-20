@@ -78,6 +78,7 @@ pub const WM = struct {
     work_y: i32,
     workspace_stack: std.ArrayListUnmanaged(*Graph),
     workspace_previews: std.AutoHashMap(c.Window, void),
+    next_workspace_number: std.AutoHashMap(u32, u32),
     default_gap_inner_h: u32,
     default_gap_inner_v: u32,
     default_gap_outer_h: u32,
@@ -182,6 +183,7 @@ pub const WM = struct {
             .work_y = 0,
             .workspace_stack = .{ .items = &.{}, .capacity = 0},
             .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
+            .next_workspace_number = std.AutoHashMap(u32, u32).init(allocator),
             .current_graph = undefined,
             .previous_graph = null,
             .workspace_switch_mode = .none,
@@ -301,6 +303,7 @@ pub const WM = struct {
         if (self.default_arranger_name.len > 0) {
             self.allocator.free(self.default_arranger_name);
         }
+        self.next_workspace_number.deinit();
         self.free_graph(&self.graph);
         self.workspace_stack.deinit(self.allocator);
         self.workspace_previews.deinit();
@@ -367,6 +370,14 @@ pub const WM = struct {
             std.posix.close(self.inotify_fd);
             self.inotify_fd = -1;
         }
+    }
+
+    pub fn alloc_workspace_id(self: *WM, level: u32) !graph_mod.GraphId {
+        const entry = try self.next_workspace_number.getOrPut(level);
+        if (!entry.found_existing) entry.value_ptr.* = 0;
+        const number = entry.value_ptr.*;
+        entry.value_ptr.* += 1;
+        return .{ .level = level, .number = number };
     }
 
     // Call the arranger for `graph` (or the default) with the given event.
@@ -1221,9 +1232,10 @@ pub const WM = struct {
             c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
     }
 
-    pub fn create_workspace_graph(self: *WM) !*graph_mod.Graph {
+    pub fn create_workspace_graph(self: *WM, level: u32) !*graph_mod.Graph {
         const sub = try self.allocator.create(graph_mod.Graph);
         sub.* = graph_mod.Graph.init(self.allocator);
+        sub.id = try self.alloc_workspace_id(level);
         sub.gap_inner_h = self.default_gap_inner_h;
         sub.gap_inner_v = self.default_gap_inner_v;
         sub.gap_outer_h = self.default_gap_outer_h;
@@ -1235,7 +1247,8 @@ pub const WM = struct {
     }
 
     pub fn create_workspace_node_with_preview(self: *WM, owner_graph: *graph_mod.Graph) !*Node {
-        const sub = try self.create_workspace_graph();
+        const level = owner_graph.id.level + 1;
+        const sub = try self.create_workspace_graph(level);
         const pw = c.XCreateSimpleWindow(
             self.display, self.root,
             0, 0, 200, 150, 0, 0, 0x4488ff
@@ -1268,7 +1281,7 @@ pub const WM = struct {
         _ = try self.register_node(null, root_node);
 
         // 2. Workspace sub‑graph (now with default gaps and arranger name)
-        const sub = try self.create_workspace_graph();  // ← changed
+        const sub = try self.create_workspace_graph(1);
 
         const pw = c.XCreateSimpleWindow(
             self.display, self.root,

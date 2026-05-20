@@ -13,6 +13,11 @@ pub const SplitAxis = enum {
     vertical,
 };
 
+pub const GraphId = struct {
+    level: u32,
+    number: u32,
+};
+
 pub const Constraint = union(enum) {
     // Position constraints (directed)
     left_of:  *Node,   // this.right == other.left
@@ -145,6 +150,7 @@ pub fn get_container(node: *Node) ?*Node {
 }
 
 pub const Graph = struct {
+    id: GraphId,
     nodes: std.ArrayListUnmanaged(*Node),
     focus_edges: std.ArrayListUnmanaged(FocusEdge),
     active_workspace: usize,
@@ -167,6 +173,7 @@ pub const Graph = struct {
 
     pub fn init(allocator: std.mem.Allocator) Graph {
         return .{
+            .id = .{ .level = 0, .number = 0 },
             .nodes = .{ .items = &.{}, .capacity = 0 },
             .focus_edges = .{ .items = &.{}, .capacity = 0 },
             .active_workspace = 0,

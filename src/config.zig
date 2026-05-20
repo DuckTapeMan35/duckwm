@@ -1433,23 +1433,23 @@ fn l_get_workspace(lua: *Lua) i32 {
 }
 
 fn l_get_workspaces_at_level(lua: *Lua) i32 {
-    // Determine the graph that contains the workspace nodes we can switch to.
-    // If we are inside a nested workspace, use its parent graph;
-    // otherwise use the current (top‑level) graph itself.
+    const current_level = global_wm.current_graph.id.level;
+
+    // Collect workspace nodes whose subgraph is at the current level
+    var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
+    defer list.deinit(global_wm.allocator);
+
+    // Walk the parent graph's nodes (same as before)
     const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
         pn.owner_graph orelse global_wm.current_graph
     else
         global_wm.current_graph;
 
-    // Collect workspace nodes in that graph
-    var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0};
-    defer list.deinit(global_wm.allocator);
-
     for (parent_graph.nodes.items) |node| {
-         if (node.content != .workspace) continue;
+        if (node.content != .workspace) continue;
         const sub = node.content.workspace;
+        if (sub.id.level != current_level) continue;
 
-        // always include the current workspace
         const is_current = (sub == global_wm.current_graph);
         if (is_current) {
             list.append(global_wm.allocator, node) catch {
@@ -1459,7 +1459,6 @@ fn l_get_workspaces_at_level(lua: *Lua) i32 {
             continue;
         }
 
-        // include if it has any windows or workspaces in its sub-graph
         var has_content = false;
         for (sub.nodes.items) |sub_node| {
             switch (sub_node.content) {
@@ -1475,41 +1474,27 @@ fn l_get_workspaces_at_level(lua: *Lua) i32 {
         };
     }
 
-    // Sort by node ID (creation order)
+    // Sort by number within the level
     std.sort.heap(*graph_mod.Node, list.items, {}, struct {
         fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
-            const id_a = global_wm.get_id_for_node(a) orelse return false;
-            const id_b = global_wm.get_id_for_node(b) orelse return false;
-            return id_a < id_b;
+            const sub_a = a.content.workspace;
+            const sub_b = b.content.workspace;
+            return sub_a.id.number < sub_b.id.number;
         }
     }.lt);
 
+    // Push table of {level, number} pairs
     lua.newTable();
     for (list.items, 0..) |node, i| {
-        if (global_wm.get_id_for_node(node)) |nid| {
-            lua.pushInteger(@intCast(nid));
-            lua.setIndexRaw(-2, @intCast(i + 1));
-        }
+        const sub = node.content.workspace;
+        lua.pushInteger(@intCast(sub.id.number + 1));
+        lua.setIndexRaw(-2, @intCast(i + 1));
     }
     return 1;
 }
 
 fn l_get_current_workspace(lua: *Lua) i32 {
-    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
-        pn.owner_graph orelse &global_wm.graph
-    else
-        &global_wm.graph;
-
-    for (parent_graph.nodes.items) |node| {
-        if (node.content != .workspace) continue;
-        if (node.content.workspace == global_wm.current_graph) {
-            if (global_wm.get_id_for_node(node)) |id| {
-                lua.pushInteger(@intCast(id));
-                return 1;
-            }
-        }
-    }
-    lua.pushNil();
+    lua.pushInteger(@intCast(global_wm.current_graph.id.number + 1));
     return 1;
 }
 
@@ -1560,7 +1545,7 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
     var last_id: u32 = 0;
     const needed = index - list.items.len;
     for (0..needed) |_| {
-        const sub = global_wm.create_workspace_graph() catch {
+        const sub = global_wm.create_workspace_graph(global_wm.current_graph.id.level + 1) catch {
             _ = lua.pushString("failed to create workspace");
             return lua.raiseError();
         };
@@ -1697,6 +1682,10 @@ fn l_send_to_workspace(lua: *Lua) i32 {
                 return luaL_error_str(lua, "out of memory");
             };
             sub.* = graph_mod.Graph.init(global_wm.allocator);
+            sub.id = global_wm.alloc_workspace_id(top_graph.id.level + 1) catch {
+                _ = lua.pushString("failed to allocate workspace ID");
+                return lua.raiseError();
+            };
 
             const node = top_graph.add_node(.{ .workspace = sub }) catch {
                 global_wm.current_graph = saved_graph;
