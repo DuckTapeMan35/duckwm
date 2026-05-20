@@ -638,7 +638,6 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
     }
     if (started_pan) return;
 
-
     const has_float_mod  = if (wm.float_move_modifier)  |m| clean_state & m != 0 else false;
     const has_resize_mod = if (wm.resize_modifier)       |m| clean_state & m != 0 else false;
 
@@ -681,47 +680,26 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.float_win_start_x  = node.x;
                     wm.float_win_start_y  = node.y;
                 } else {
-                    const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
-                    const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
-                    const right_half  = ev.x_root > cx;
-                    const bottom_half = ev.y_root > cy;
+                    const left_edge   = node.x;
+                    const right_edge  = node.x + @as(i32, @intCast(node.width));
+                    const top_edge    = node.y;
+                    const bottom_edge = node.y + @as(i32, @intCast(node.height));
 
-                    const left   = node.x;
-                    const right  = node.x + @as(i32, @intCast(node.width));
-                    const top    = node.y;
-                    const bottom = node.y + @as(i32, @intCast(node.height));
+                    const dist_left   = @abs(ev.x_root - left_edge);
+                    const dist_right  = @abs(ev.x_root - right_edge);
+                    const dist_top    = @abs(ev.y_root - top_edge);
+                    const dist_bottom = @abs(ev.y_root - bottom_edge);
 
-                    if (right_half and bottom_half) {
-                        wm.corner_resizing = true;
-                        wm.resize_v_edge   = right;
-                        wm.resize_h_edge   = bottom;
-                        wm.resize_end_x    = ev.x_root;
-                        wm.resize_end_y    = ev.y_root;
-                        wm.resize_fixed_x  = left;
-                        wm.resize_fixed_y  = top;
-                    } else if (!right_half and !bottom_half) {
-                        wm.corner_resizing = true;
-                        wm.resize_v_edge   = left;
-                        wm.resize_h_edge   = top;
-                        wm.resize_end_x    = ev.x_root;
-                        wm.resize_end_y    = ev.y_root;
-                        wm.resize_fixed_x  = right;
-                        wm.resize_fixed_y  = bottom;
-                    } else if (right_half) {
-                        wm.edge_resizing    = true;
-                        wm.edge_is_vertical = true;
-                        wm.edge_x           = right;
-                        wm.resize_fixed_x   = left;
-                        wm.resize_end_x     = ev.x_root;
-                        wm.resize_end_y     = ev.y_root;
-                    } else {
-                        wm.edge_resizing    = true;
-                        wm.edge_is_vertical = false;
-                        wm.edge_y           = bottom;
-                        wm.resize_fixed_y   = top;
-                        wm.resize_end_x     = ev.x_root;
-                        wm.resize_end_y     = ev.y_root;
-                    }
+                    const v_edge = if (dist_left < dist_right) left_edge else right_edge;
+                    const h_edge = if (dist_top  < dist_bottom) top_edge  else bottom_edge;
+
+                    wm.corner_resizing = true;
+                    wm.resize_v_edge   = v_edge;
+                    wm.resize_h_edge   = h_edge;
+                    wm.resize_end_x    = ev.x_root;
+                    wm.resize_end_y    = ev.y_root;
+                    wm.resize_fixed_x  = if (dist_left < dist_right) right_edge else left_edge;
+                    wm.resize_fixed_y  = if (dist_top  < dist_bottom) bottom_edge else top_edge;
                 }
                 _ = c.XGrabPointer(wm.display, lookup_win, 1,
                     c.PointerMotionMask | c.ButtonReleaseMask,
@@ -741,31 +719,22 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
     const node = wm.node_registry.get(node_id) orelse return;
     if (node.floating) return;
 
-    const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
-    const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
-    const right_half  = ev.x_root > cx;
-    const bottom_half = ev.y_root > cy;
+    const left_edge   = node.x;
+    const right_edge  = node.x + @as(i32, @intCast(node.width));
+    const top_edge    = node.y;
+    const bottom_edge = node.y + @as(i32, @intCast(node.height));
 
-    if (right_half and bottom_half) {
-        wm.corner_resizing = true;
-        wm.resize_v_edge = node.x + @as(i32, @intCast(node.width));
-        wm.resize_h_edge = node.y + @as(i32, @intCast(node.height));
-    } else if (!right_half and !bottom_half) {
-        wm.corner_resizing = true;
-        wm.resize_v_edge = node.x;
-        wm.resize_h_edge = node.y;
-    } else if (right_half) {
-        wm.edge_resizing    = true;
-        wm.edge_is_vertical = true;
-        wm.edge_x = node.x + @as(i32, @intCast(node.width));
-    } else {
-        wm.edge_resizing    = true;
-        wm.edge_is_vertical = false;
-        wm.edge_y = node.y + @as(i32, @intCast(node.height));
-    }
+    const dist_left   = @abs(ev.x_root - left_edge);
+    const dist_right  = @abs(ev.x_root - right_edge);
+    const dist_top    = @abs(ev.y_root - top_edge);
+    const dist_bottom = @abs(ev.y_root - bottom_edge);
 
-    wm.resize_end_x = ev.x_root;
-    wm.resize_end_y = ev.y_root;
+    wm.corner_resizing = true;
+    wm.resize_v_edge   = if (dist_left < dist_right) left_edge else right_edge;
+    wm.resize_h_edge   = if (dist_top  < dist_bottom) top_edge  else bottom_edge;
+    wm.resize_end_x    = ev.x_root;
+    wm.resize_end_y    = ev.y_root;
+
     _ = c.XGrabPointer(wm.display, lookup_win, 1,
         c.PointerMotionMask | c.ButtonReleaseMask,
         c.GrabModeAsync, c.GrabModeAsync, c.None, c.None, c.CurrentTime);
