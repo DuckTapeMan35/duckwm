@@ -2042,7 +2042,7 @@ pub fn reload(wm: *WM) void {
         return;
     };
     wm.config_error_count = 0;
-    remap_all_graphs(wm, wm.current_graph);
+    remap_all_graphs(wm, &wm.graph);
     std.debug.print("config reloaded successfully\n", .{});
 }
 
@@ -2170,7 +2170,7 @@ pub fn load(wm: *WM) !void {
         }
 
         wm.reload_fn = reload;
-        remap_all_graphs(wm, wm.current_graph);
+        remap_all_graphs(wm, &wm.graph);
         return;
     }
 
