@@ -161,7 +161,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_create_nested_workspace),           .name = "create_nested_workspace" },
     .{ .func = ziglua.wrap(l_enter_nested),                      .name = "enter_nested" },
     .{ .func = ziglua.wrap(l_leave_nested),                      .name = "leave_nested" },
-    .{ .func = ziglua.wrap(l_switch_workspace),                  .name = "switch_workspace" },
+    .{ .func = ziglua.wrap(l_enter_nested_by_id),                .name = "enter_nested_by_id" },
     .{ .func = ziglua.wrap(l_get_workspace),                     .name = "get_workspace" },
     .{ .func = ziglua.wrap(l_create_empty_node),                 .name = "create_empty_node" },
     .{ .func = ziglua.wrap(l_get_workspaces_at_level),           .name = "get_workspaces_at_level" },
@@ -1502,7 +1502,9 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
     const index: usize = @intCast(lua.checkInteger(1));
     if (index < 1) return 0;
 
-    // If we are inside a nested workspace, go back to its parent first.
+    const saved_graph = global_wm.current_graph;
+
+    // Temporarily leave to get the root graph for the list
     if (global_wm.current_graph.parent_node != null) {
         global_wm.leave_workspace_silent() catch {
             _ = lua.pushString("failed to leave workspace");
@@ -1512,7 +1514,6 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
 
     const graph = global_wm.current_graph;
 
-    // Collect existing workspace nodes, sorted by creation ID.
     var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
     defer list.deinit(global_wm.allocator);
     for (graph.nodes.items) |node| {
@@ -1531,9 +1532,23 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
         }
     }.lt);
 
-    // If the workspace already exists, switch to it.
     if (index <= list.items.len) {
         const target = list.items[index - 1];
+        if (target.content.workspace == saved_graph) {
+            if (global_wm.workspace_switch_mode == .previous) {
+                if (global_wm.previous_graph) |prev| {
+                    for (list.items) |n| {
+                        if (n.content.workspace == prev) {
+                            global_wm.previous_graph = saved_graph;
+                            global_wm.enter_workspace(n) catch {};
+                            return 0;
+                        }
+                    }
+                }
+            }
+            return 0;
+        }
+        global_wm.previous_graph = saved_graph;
         global_wm.enter_workspace(target) catch {
             _ = lua.pushString("enter_workspace failed");
             return lua.raiseError();
@@ -1563,11 +1578,11 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
         last_id = new_id;
     }
 
-    // Enter the newly created workspace.
     const target_node = global_wm.get_node_by_id(last_id) orelse {
         _ = lua.pushString("internal error: newly created workspace not found");
         return lua.raiseError();
     };
+    global_wm.previous_graph = saved_graph;
     global_wm.enter_workspace(target_node) catch {
         _ = lua.pushString("enter_workspace failed");
         return lua.raiseError();
@@ -1585,6 +1600,23 @@ fn l_enter_workspace_by_id(lua: *Lua) i32 {
         _ = lua.pushString("node is not a workspace");
         return lua.raiseError();
     }
+    const saved_graph = global_wm.current_graph;
+    if (node.content.workspace == saved_graph) {
+        if (global_wm.workspace_switch_mode == .previous) {
+            if (global_wm.previous_graph) |prev| {
+                // find the node for prev
+                for (global_wm.current_graph.nodes.items) |n| {
+                    if (n.content == .workspace and n.content.workspace == prev) {
+                        global_wm.previous_graph = saved_graph;
+                        global_wm.enter_workspace(n) catch {};
+                        return 0;
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+    global_wm.previous_graph = saved_graph;
     global_wm.enter_workspace(node) catch {
         _ = lua.pushString("enter_workspace failed");
         return lua.raiseError();
@@ -1632,7 +1664,7 @@ fn l_leave_nested(lua: *Lua) i32 {
     return 0;
 }
 
-fn l_switch_workspace(lua: *Lua) i32 {
+fn l_enter_nested_by_id(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
     const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
     if (node.content != .workspace) return luaL_error_str(lua, "not a workspace");

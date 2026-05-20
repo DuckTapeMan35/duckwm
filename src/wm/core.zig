@@ -74,8 +74,6 @@ pub const WM = struct {
     current_graph: *Graph,
     previous_graph: ?*Graph,
     workspace_switch_mode: WorkspaceSwitchMode,
-    work_x: i32,
-    work_y: i32,
     workspace_stack: std.ArrayListUnmanaged(*Graph),
     workspace_previews: std.AutoHashMap(c.Window, void),
     next_workspace_number: std.AutoHashMap(u32, u32),
@@ -180,8 +178,6 @@ pub const WM = struct {
 
             .graph = graph,
             .focused = null,
-            .work_x = 0,
-            .work_y = 0,
             .workspace_stack = .{ .items = &.{}, .capacity = 0},
             .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
             .next_workspace_number = std.AutoHashMap(u32, u32).init(allocator),
@@ -654,8 +650,8 @@ pub const WM = struct {
         // Step 1: revert tiled nodes to relative coordinates
         for (g.nodes.items) |node| {
             if (node.floating) continue;
-            node.x -= self.work_x;
-            node.y -= self.work_y;
+            node.x -= g.work_x;
+            node.y -= g.work_y;
         }
 
         // Step 2: run the layout solver in the relative coordinate space
@@ -671,8 +667,8 @@ pub const WM = struct {
         }
 
         // Step 4: remember the offset for the next call
-        self.work_x = work.x;
-        self.work_y = work.y;
+        g.work_x = work.x;
+        g.work_y = work.y;
 
         const workarea_atom = c.XInternAtom(self.display, "_NET_WORKAREA", 0);
         const XA_CARDINAL = c.XInternAtom(self.display, "CARDINAL", 0);
@@ -946,27 +942,7 @@ pub const WM = struct {
         if (node.content != .workspace) return error.NotWorkspace;
         const sub = node.content.workspace;
 
-        // if already in this workspace, switch to previous if set
-        if (sub == self.current_graph) {
-            if (self.workspace_switch_mode == .previous) {
-                if (self.previous_graph) |prev| {
-                    if (prev != self.current_graph) {
-                        // find the node for prev in parent graph and enter it
-                        const parent_graph: *Graph = if (self.current_graph.parent_node) |pn|
-                            pn.owner_graph orelse &self.graph
-                        else
-                            &self.graph;
-                        for (parent_graph.nodes.items) |n| {
-                            if (n.content == .workspace and n.content.workspace == prev) {
-                                return self.enter_workspace(n);
-                            }
-                        }
-                    }
-                }
-            }
-            return; // mode == .none, do nothing
-        }
-         self.previous_graph = self.current_graph;
+        if (sub == self.current_graph) return;
 
         // hide current graph
         hide_graph_frames(self, self.current_graph);
@@ -976,9 +952,6 @@ pub const WM = struct {
         self.current_graph = sub;
         // show new graph
         show_graph_frames(self, sub);
-        // Reset work offset so struts are applied cleanly on next resolve
-        self.work_x = 0;
-        self.work_y = 0;
         // re-layout and refresh
         try self.resolve(sub);
         try self.rebuild_focus_edges();
@@ -998,9 +971,6 @@ pub const WM = struct {
         focus_mod.clear_active_window(self);
         self.current_graph = self.workspace_stack.pop().?;
         show_graph_frames(self, self.current_graph);
-        // Reset work offset so struts are applied cleanly on next resolve
-        self.work_x = 0;
-        self.work_y = 0;
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
@@ -1048,8 +1018,6 @@ pub const WM = struct {
         if (!node.floating) {
             self.call_arranger(src_graph, "unmap", node_id, null);
         }
-        self.work_x = 0;
-        self.work_y = 0;
         self.resolve(src_graph) catch {};
         self.rebuild_focus_edges() catch {};
         self.flush(src_graph) catch {};
@@ -1079,8 +1047,6 @@ pub const WM = struct {
                 else => {},
             }
         } else {
-            self.work_x = 0;
-            self.work_y = 0;
             self.resolve(target_graph) catch {};
             self.rebuild_focus_edges() catch {};
             self.flush(target_graph) catch {};

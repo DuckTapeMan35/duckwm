@@ -517,7 +517,7 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
-        .name   = "switch_workspace",
+        .name   = "enter_nested_by_id",
         .desc   = "Enter a workspace node by ID.",
         .params = &.{ .{ .name = "id", .typ = "integer" } },
         .ret    = "nil",
