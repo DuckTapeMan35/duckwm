@@ -218,6 +218,9 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     }
 
     if (wm.focused) |f| wm.focus(f);
+    _ = c.XSync(wm.display, 0);
+    var discard: c.XEvent = undefined;
+    while (c.XCheckTypedEvent(wm.display, c.EnterNotify, &discard) != 0) {}
 
     _ = c.XSelectInput(wm.display, req.window, c.PropertyChangeMask);
 
