@@ -216,6 +216,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_workspace_switch_mode),         .name = "set_workspace_switch_mode" },
     .{ .func = ziglua.wrap(l_get_arranger_name),                 .name = "get_arranger_name" },
     .{ .func = ziglua.wrap(l_set_pan_disabled),                  .name = "set_pan_disabled" },
+    .{ .func = ziglua.wrap(l_set_cursor_theme),                  .name = "set_cursor_theme" },
 };
 
 fn l_set_pan_disabled(lua: *Lua) i32 {
@@ -1988,6 +1989,28 @@ fn l_reload_visuals(lua: *Lua) i32 {
     // re-resolve and flush to apply new gaps
     global_wm.resolve(global_wm.current_graph) catch {};
     global_wm.flush(global_wm.current_graph) catch {};
+    _ = c.XFlush(global_wm.display);
+    return 0;
+}
+
+fn l_set_cursor_theme(lua: *Lua) i32 {
+    const theme = lua.checkString(1);
+    const size: c_int = @intCast(lua.checkInteger(2));
+
+    // set env vars for newly spawned apps
+    _ = c.setenv("XCURSOR_THEME", theme.ptr, 1);
+    var size_buf: [16]u8 = undefined;
+    const size_str = std.fmt.bufPrintZ(&size_buf, "{}", .{size}) catch return 0;
+    _ = c.setenv("XCURSOR_SIZE", size_str.ptr, 1);
+
+    // set RESOURCE_MANAGER on root window for X11 apps
+    var buf: [256]u8 = undefined;
+    const prop = std.fmt.bufPrint(&buf, "Xcursor.theme: {s}\nXcursor.size: {}", .{theme, size}) catch return 0;
+    const resource_manager = c.XInternAtom(global_wm.display, "RESOURCE_MANAGER", 0);
+    const xa_string = c.XInternAtom(global_wm.display, "STRING", 0);
+_ = c.XChangeProperty(global_wm.display, global_wm.root,
+    resource_manager, xa_string, 8, c.PropModeReplace,
+    prop.ptr, @intCast(prop.len));
     _ = c.XFlush(global_wm.display);
     return 0;
 }

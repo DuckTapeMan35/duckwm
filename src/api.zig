@@ -812,6 +812,15 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
+        .name   = "set_cursor_theme",
+        .desc   = "Set the X11 cursor theme and size. Sets both XCURSOR_THEME/XCURSOR_SIZE env vars and the RESOURCE_MANAGER root window property so both env-aware and X11 apps pick it up.",
+        .params = &.{
+            .{ .name = "theme", .typ = "string" },
+            .{ .name = "size",  .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
         .name   = "get_current_workspace",
         .desc   = "Return the node ID of the currently active workspace, or nil.",
         .params = &.{},
