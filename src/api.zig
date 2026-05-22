@@ -75,6 +75,15 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
+        .name   = "setenv",
+        .desc   = "Set an environment variable in the WM process, inherited by all subsequently spawned windows.",
+        .params = &.{
+            .{ .name = "key", .typ = "string" },
+            .{ .name = "val", .typ = "string" },
+        },
+        .ret = "nil",
+    },
+    .{
         .name   = "focus_left",
         .desc   = "Move focus to the window on the left.",
         .params = &.{},

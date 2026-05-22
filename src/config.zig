@@ -101,6 +101,7 @@ fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) 
 const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
+    .{ .func = ziglua.wrap(l_setenv),                            .name = "setenv" },
     .{ .func = ziglua.wrap(l_exec_once),                         .name = "exec_once" },
     .{ .func = ziglua.wrap(l_set_arranger),                      .name = "set_arranger" },
     .{ .func = ziglua.wrap(l_set_default_arranger),              .name = "set_default_arranger" },
@@ -583,6 +584,13 @@ fn l_bind(lua: *Lua) i32 {
         _ = lua.pushString("wm.bind: failed to bind key");
         return lua.raiseError();
     };
+    return 0;
+}
+
+fn l_setenv(lua: *Lua) i32 {
+    const key = lua.checkString(1);
+    const val = lua.checkString(2);
+    _ = c.setenv(key.ptr, val.ptr, 1);
     return 0;
 }
 
