@@ -220,6 +220,7 @@ pub fn build(b: *std.Build) void {
     config_mod.addImport("c", c_mod);
     config_mod.addImport("api", api_mod);
     config_mod.linkSystemLibrary("X11", .{});
+    config_mod.linkSystemLibrary("Xcursor", .{});
     graph_mod.addImport("c", c_mod);
 
     // Here we define an executable. An executable needs to have a root module
@@ -272,6 +273,7 @@ pub fn build(b: *std.Build) void {
     exe.use_llvm = true;
     exe.use_lld = true;
     exe.root_module.linkSystemLibrary("X11", .{});
+    exe.root_module.linkSystemLibrary("Xcursor", .{});
     exe.root_module.addImport("ziglua", ziglua.module("zlua"));
 
     // This declares intent for the executable to be installed into the

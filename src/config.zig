@@ -1997,20 +1997,30 @@ fn l_set_cursor_theme(lua: *Lua) i32 {
     const theme = lua.checkString(1);
     const size: c_int = @intCast(lua.checkInteger(2));
 
-    // set env vars for newly spawned apps
     _ = c.setenv("XCURSOR_THEME", theme.ptr, 1);
     var size_buf: [16]u8 = undefined;
     const size_str = std.fmt.bufPrintZ(&size_buf, "{}", .{size}) catch return 0;
     _ = c.setenv("XCURSOR_SIZE", size_str.ptr, 1);
 
-    // set RESOURCE_MANAGER on root window for X11 apps
     var buf: [256]u8 = undefined;
     const prop = std.fmt.bufPrint(&buf, "Xcursor.theme: {s}\nXcursor.size: {}", .{theme, size}) catch return 0;
-    const resource_manager = c.XInternAtom(global_wm.display, "RESOURCE_MANAGER", 0);
     const xa_string = c.XInternAtom(global_wm.display, "STRING", 0);
-_ = c.XChangeProperty(global_wm.display, global_wm.root,
-    resource_manager, xa_string, 8, c.PropModeReplace,
-    prop.ptr, @intCast(prop.len));
+    const resource_manager = c.XInternAtom(global_wm.display, "RESOURCE_MANAGER", 0);
+    _ = c.XChangeProperty(global_wm.display, global_wm.root,
+        resource_manager, xa_string, 8, c.PropModeReplace,
+        prop.ptr, @intCast(prop.len));
+
+    // create and set cursor on root and all frames
+    const cursor = c.XcursorLibraryLoadCursor(global_wm.display, "left_ptr");
+    if (cursor != 0) {
+        _ = c.XDefineCursor(global_wm.display, global_wm.root, cursor);
+        var it = global_wm.frames.valueIterator();
+        while (it.next()) |frame| {
+            _ = c.XDefineCursor(global_wm.display, frame.*, cursor);
+        }
+        _ = c.XFreeCursor(global_wm.display, cursor);
+    }
+
     _ = c.XFlush(global_wm.display);
     return 0;
 }
