@@ -191,6 +191,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_fullscreen),                    .name = "set_fullscreen" },
     .{ .func = ziglua.wrap(l_toggle_fullscreen),                 .name = "toggle_fullscreen" },
     .{ .func = ziglua.wrap(l_reload_config),                     .name = "reload_config" },
+    .{ .func = ziglua.wrap(l_reload_visuals),                    .name = "reload_visuals" },
     .{ .func = ziglua.wrap(l_get_window_pid),                    .name = "get_window_pid" },
     .{ .func = ziglua.wrap(l_get_urgent),                        .name = "get_urgent" },
     .{ .func = ziglua.wrap(l_set_urgent),                        .name = "set_urgent" },
@@ -1913,6 +1914,73 @@ fn l_set_focus_follows_mouse(lua: *Lua) i32 {
 fn l_reload_config(lua: *Lua) i32 {
     _ = lua;
     global_wm.pending_reload = true;
+    return 0;
+}
+
+fn l_reload_visuals(lua: *Lua) i32 {
+    const user_path = resolve_user_path(global_wm) orelse return 0;
+    defer global_wm.allocator.free(user_path);
+    const path_z = std.mem.concatWithSentinel(global_wm.allocator, u8, &[_][]const u8{user_path}, 0) catch return 0;
+    defer global_wm.allocator.free(path_z);
+
+    lua.pushFunction(ziglua.wrap(struct {
+        fn noop(_: *Lua) i32 { return 0; }
+    }.noop));
+    const noop_ref = lua.ref(ziglua.registry_index);
+    defer lua.unref(ziglua.registry_index, noop_ref);
+
+    _ = lua.getGlobal("wm");
+    for (registrations) |reg| {
+        const is_visual = std.mem.eql(u8, reg.name, "set_default_focused_border_color")
+            or std.mem.eql(u8, reg.name, "set_default_unfocused_border_color")
+            or std.mem.eql(u8, reg.name, "set_default_urgent_border_color")
+            or std.mem.eql(u8, reg.name, "set_border_width")
+            or std.mem.eql(u8, reg.name, "set_gaps");
+        if (!is_visual) {
+            _ = lua.getIndexRaw(ziglua.registry_index, noop_ref);
+            lua.setField(-2, reg.name);
+        }
+    }
+    lua.pop(1);
+
+    const restore = struct {
+        fn run(l: *Lua) void {
+            _ = l.getGlobal("wm");
+            for (registrations) |reg| {
+                l.pushFunction(reg.func);
+                l.setField(-2, reg.name);
+            }
+            l.pop(1);
+        }
+    };
+
+    lua.doFile(path_z) catch {
+        lua.pop(1);
+        restore.run(lua);
+        return 0;
+    };
+
+    restore.run(lua);
+
+    // repaint borders
+    for (global_wm.current_graph.nodes.items) |node| {
+        const win = switch (node.content) {
+            .window => |w| w,
+            else => continue,
+        };
+        if (global_wm.frames.get(win)) |win_frame| {
+            const color = if (global_wm.focused == node)
+                node.border_color_focused orelse global_wm.default_border_color_focused
+            else
+                node.border_color_unfocused orelse global_wm.default_border_color_unfocused;
+            _ = c.XSetWindowBorder(global_wm.display, win_frame, color);
+        }
+    }
+
+    // re-resolve and flush to apply new gaps
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    _ = c.XFlush(global_wm.display);
     return 0;
 }
 

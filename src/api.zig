@@ -680,6 +680,12 @@ pub const entries = [_]ApiEntry{
         .ret    = "integer|nil",
     },
     .{
+        .name   = "reload_visuals",
+        .desc   = "Re-run the config with only visual setters active (border colors, border width, gaps), then repaint. Use for live theming without a full reload.",
+        .params = &.{},
+        .ret    = "nil",
+    },
+    .{
         .name   = "get_urgent",
         .desc   = "Return whether a window has the urgency hint set.",
         .params = &.{ .{ .name = "id", .typ = "integer" } },
