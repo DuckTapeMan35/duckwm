@@ -112,6 +112,7 @@ pub const Node = struct {
     border_color_focused: ?u32, // ARGB
     border_color_unfocused: ?u32,
 
+    pending_destroy: bool,
     on_remove: ?ReparentStrategy,
     dead: bool,
 
@@ -122,16 +123,21 @@ pub const Node = struct {
             .preview_window = null,
             .urgent = false,
             .hidden = false,
+
             .x = 0,
             .y = 0,
             .width = 0,
             .height = 0,
             .floating = false,
-            .on_remove = null,
-            .dead = false,
-            .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4), //TODO: make so no constrants don't allocate at all
+
             .border_color_focused = null,
             .border_color_unfocused = null,
+
+            .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4), //TODO: make so no constrants don't allocate at all
+
+            .pending_destroy = false,
+            .on_remove = null,
+            .dead = false,
         };
     }
 

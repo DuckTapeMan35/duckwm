@@ -157,6 +157,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_node_unfocused_border_color),   .name = "set_node_unfocused_border_color" },
     .{ .func = ziglua.wrap(l_set_default_focused_border_color),  .name = "set_default_focused_border_color" },
     .{ .func = ziglua.wrap(l_set_default_unfocused_border_color),.name = "set_default_unfocused_border_color" },
+    .{ .func = ziglua.wrap(l_set_preview_colors),                .name = "set_preview_colors" },
     .{ .func = ziglua.wrap(l_get_node_geometry),                 .name = "get_node_geometry" },
     .{ .func = ziglua.wrap(l_set_border_width),                  .name = "set_border_width" },
     .{ .func = ziglua.wrap(l_create_nested_workspace),           .name = "create_nested_workspace" },
@@ -218,6 +219,15 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_pan_disabled),                  .name = "set_pan_disabled" },
     .{ .func = ziglua.wrap(l_set_cursor_theme),                  .name = "set_cursor_theme" },
 };
+
+fn l_set_preview_colors(lua: *Lua) i32 {
+    const bg:     u32 = @intCast(lua.checkInteger(1));
+    const win_bg: u32 = @intCast(lua.checkInteger(2));
+    const border: u32 = @intCast(lua.checkInteger(3));
+    const text:   u32 = @intCast(lua.checkInteger(4));
+    global_wm.set_preview_colors(bg, win_bg, border, text);
+    return 0;
+}
 
 fn l_set_pan_disabled(lua: *Lua) i32 {
     global_wm.current_graph.pan_disabled = lua.toBoolean(1);
@@ -1514,24 +1524,17 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
 
     const saved_graph = global_wm.current_graph;
 
-    // Temporarily leave to get the root graph for the list
-    if (global_wm.current_graph.parent_node != null) {
-        global_wm.leave_workspace_silent() catch {
-            _ = lua.pushString("failed to leave workspace");
-            return lua.raiseError();
-        };
-    }
-
-    const graph = global_wm.current_graph;
+    // Get the graph that contains the current workspace nodes (our level's parent)
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse &global_wm.graph
+    else
+        &global_wm.graph;
 
     var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
     defer list.deinit(global_wm.allocator);
-    for (graph.nodes.items) |node| {
+    for (parent_graph.nodes.items) |node| {
         if (node.content == .workspace) {
-            list.append(global_wm.allocator, node) catch {
-                _ = lua.pushString("out of memory");
-                return lua.raiseError();
-            };
+            list.append(global_wm.allocator, node) catch return luaL_error_str(lua, "out of memory");
         }
     }
     std.sort.heap(*graph_mod.Node, list.items, {}, struct {
@@ -1559,44 +1562,32 @@ fn l_switch_to_workspace(lua: *Lua) i32 {
             return 0;
         }
         global_wm.previous_graph = saved_graph;
-        global_wm.enter_workspace(target) catch {
-            _ = lua.pushString("enter_workspace failed");
-            return lua.raiseError();
-        };
+        global_wm.enter_workspace(target) catch return luaL_error_str(lua, "enter_workspace failed");
         return 0;
     }
 
-    // Create missing workspace nodes up to the requested index.
+    // Create missing workspaces on the same level
+    const saved_current = global_wm.current_graph;
+    global_wm.current_graph = parent_graph;
     var last_id: u32 = 0;
     const needed = index - list.items.len;
     for (0..needed) |_| {
-        const sub = global_wm.create_workspace_graph(global_wm.current_graph.id.level + 1) catch {
-            _ = lua.pushString("failed to create workspace");
-            return lua.raiseError();
-        };
-        const node = global_wm.current_graph.add_node(.{ .workspace = sub }) catch {
-            _ = lua.pushString("failed to add node");
-            return lua.raiseError();
-        };
+        const sub = global_wm.create_workspace_graph(parent_graph.id.level + 1) catch
+            return luaL_error_str(lua, "failed to create workspace");
+        const node = parent_graph.add_node(.{ .workspace = sub }) catch
+            return luaL_error_str(lua, "failed to add node");
         sub.parent_node = node;
         node.preview_window = null;
         node.floating = false;
-        const new_id = global_wm.register_node(null, node) catch {
-            _ = lua.pushString("failed to register workspace");
-            return lua.raiseError();
-        };
-        last_id = new_id;
+        last_id = global_wm.register_node(null, node) catch
+            return luaL_error_str(lua, "failed to register workspace");
     }
+    global_wm.current_graph = saved_current;
 
-    const target_node = global_wm.get_node_by_id(last_id) orelse {
-        _ = lua.pushString("internal error: newly created workspace not found");
-        return lua.raiseError();
-    };
+    const target_node = global_wm.get_node_by_id(last_id) orelse
+        return luaL_error_str(lua, "internal error");
     global_wm.previous_graph = saved_graph;
-    global_wm.enter_workspace(target_node) catch {
-        _ = lua.pushString("enter_workspace failed");
-        return lua.raiseError();
-    };
+    global_wm.enter_workspace(target_node) catch return luaL_error_str(lua, "enter_workspace failed");
     return 0;
 }
 
@@ -1687,22 +1678,17 @@ fn l_send_to_workspace(lua: *Lua) i32 {
     const index: usize = @intCast(lua.checkInteger(2));
     if (index < 1) return 0;
 
-    // Walk up to top-level graph
-    const top_graph = blk: {
-        var g = global_wm.current_graph;
-        while (g.parent_node) |pn| {
-            g = pn.owner_graph orelse break;
-        }
-        break :blk g;
-    };
+    // Use the parent graph at the current nesting level
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse &global_wm.graph
+    else
+        &global_wm.graph;
 
-    // Collect existing workspace nodes sorted by creation ID
     var list: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
     defer list.deinit(global_wm.allocator);
-    for (top_graph.nodes.items) |node| {
+    for (parent_graph.nodes.items) |node| {
         if (node.content == .workspace) {
-            list.append(global_wm.allocator, node) catch
-                return luaL_error_str(lua, "out of memory");
+            list.append(global_wm.allocator, node) catch return luaL_error_str(lua, "out of memory");
         }
     }
     std.sort.heap(*graph_mod.Node, list.items, {}, struct {
@@ -1715,41 +1701,28 @@ fn l_send_to_workspace(lua: *Lua) i32 {
 
     if (index > list.items.len) {
         const needed = index - list.items.len;
-        const saved_graph = global_wm.current_graph;
-        global_wm.current_graph = top_graph;
+        const saved_current = global_wm.current_graph;
+        global_wm.current_graph = parent_graph;
         for (0..needed) |_| {
-            // Create workspace without preview window
-            const sub = global_wm.allocator.create(graph_mod.Graph) catch {
-                global_wm.current_graph = saved_graph;
+            const sub = global_wm.allocator.create(graph_mod.Graph) catch
                 return luaL_error_str(lua, "out of memory");
-            };
             sub.* = graph_mod.Graph.init(global_wm.allocator);
-            sub.id = global_wm.alloc_workspace_id(top_graph.id.level + 1) catch {
-                _ = lua.pushString("failed to allocate workspace ID");
-                return lua.raiseError();
-            };
-
-            const node = top_graph.add_node(.{ .workspace = sub }) catch {
-                global_wm.current_graph = saved_graph;
+            sub.id = global_wm.alloc_workspace_id(parent_graph.id.level + 1) catch
+                return luaL_error_str(lua, "failed to allocate workspace ID");
+            const node = parent_graph.add_node(.{ .workspace = sub }) catch
                 return luaL_error_str(lua, "out of memory");
-            };
             sub.parent_node = node;
             node.preview_window = null;
             node.floating = false;
-
-            _ = global_wm.register_node(null, node) catch {
-                global_wm.current_graph = saved_graph;
+            _ = global_wm.register_node(null, node) catch
                 return luaL_error_str(lua, "out of memory");
-            };
         }
-        global_wm.current_graph = saved_graph;
+        global_wm.current_graph = saved_current;
 
-        // Rebuild list
         list.clearRetainingCapacity();
-        for (top_graph.nodes.items) |node| {
+        for (parent_graph.nodes.items) |node| {
             if (node.content == .workspace) {
-                list.append(global_wm.allocator, node) catch
-                    return luaL_error_str(lua, "out of memory");
+                list.append(global_wm.allocator, node) catch return luaL_error_str(lua, "out of memory");
             }
         }
         std.sort.heap(*graph_mod.Node, list.items, {}, struct {
@@ -1763,13 +1736,8 @@ fn l_send_to_workspace(lua: *Lua) i32 {
 
     const target_ws_node = list.items[index - 1];
     const target_graph = target_ws_node.content.workspace;
-
     global_wm.send_to_workspace(node_id, target_graph) catch |err|
         return luaL_error_str(lua, @errorName(err));
-        std.debug.print("send_to_workspace: node_id={} index={} top_graph={*} current_graph={*}\n",
-            .{ node_id, index, top_graph, global_wm.current_graph });
-        std.debug.print("send_to_workspace: list.len={}\n", .{ list.items.len });
-
     return 0;
 }
 
@@ -1944,7 +1912,8 @@ fn l_reload_visuals(lua: *Lua) i32 {
             or std.mem.eql(u8, reg.name, "set_default_unfocused_border_color")
             or std.mem.eql(u8, reg.name, "set_default_urgent_border_color")
             or std.mem.eql(u8, reg.name, "set_border_width")
-            or std.mem.eql(u8, reg.name, "set_gaps");
+            or std.mem.eql(u8, reg.name, "set_gaps")
+            or std.mem.eql(u8, reg.name, "set_preview_colors");
         if (!is_visual) {
             _ = lua.getIndexRaw(ziglua.registry_index, noop_ref);
             lua.setField(-2, reg.name);

@@ -461,6 +461,7 @@ pub fn on_unmap_notify(wm: *WM, event: *c.XUnmapEvent) !void {
             break;
         }
     }
+    std.debug.print("DestroyNotify check: win={} is_frame={}\n", .{win, is_frame});
     if (is_frame) return;
 
     // Ignore windows we don't manage
@@ -487,7 +488,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         return;
     }
 
-    // Ignore frame destroy events - we handle cleanup when the client is destroyed
+    // Ignore frame destroy events
     var is_frame = false;
     var frame_iter = wm.frames.iterator();
     while (frame_iter.next()) |entry| {
@@ -512,9 +513,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     if (dying == null) return;
 
     // Determine next focus BEFORE removing anything.
-    // When a transient closes, prefer to return focus to whatever was focused
-    // before it opened (i.e. the first non-floating tiled window we can find),
-    // so the tiling layout is not disturbed.
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
 
@@ -522,7 +520,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         const dying_is_transient = if (dying) |d| d.floating else false;
 
         if (dying_is_transient) {
-            // Return focus to the most recently focused tiled window
             for (wm.current_graph.nodes.items) |node| {
                 if (node == dying) continue;
                 if (node.floating) continue;
@@ -552,11 +549,11 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Notify Lua before unmapping or destroying anything, so it can query properties if needed.
-    // Transients are floating so the is_floating check already suppresses the arranger call.
+    // Notify Lua before unmapping or destroying anything
     if (dying_id) |id| {
         const is_floating = if (dying) |d| d.floating else false;
-        if (!is_floating) {
+        const in_current = if (dying) |d| d.owner_graph == wm.current_graph else false;
+        if (!is_floating and in_current) {
             wm.call_arranger(wm.current_graph, "unmap", id, null);
         }
     }
@@ -583,8 +580,8 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     // Remove from graph
     if (dying) |d| {
         std.debug.print("Destroying node for window {} (id {})\n", .{ win, dying_id orelse 0 });
-        if (d.owner_graph) |g| {
-            g.remove_node(d);
+        if (d.owner_graph) |og| {
+            og.remove_node(d);
         }
     }
 

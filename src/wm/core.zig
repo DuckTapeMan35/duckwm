@@ -11,6 +11,7 @@ const resize_mod = @import("resize.zig");
 const events_mod = @import("events.zig");
 const float_mod = @import("float.zig");
 const ipc_mod = @import("ipc.zig");
+const preview_mod = @import("preview.zig");
 
 pub fn notify_error(wm: *WM, msg: []const u8) void {
     wm.show_error_bar(msg);
@@ -370,6 +371,24 @@ pub const WM = struct {
             std.posix.close(self.inotify_fd);
             self.inotify_fd = -1;
         }
+    }
+
+    pub fn repaint_preview(self: *WM, node: *Node) void {
+        if (node.content != .workspace) return;
+        const sub = node.content.workspace;
+        const pw = node.preview_window orelse return;
+        preview_mod.draw_preview(
+            self.display, pw, sub,
+            node.width, node.height,
+        );
+    }
+
+    pub fn set_preview_colors(self: *WM, bg: u32, win_bg: u32, border: u32, text: u32) void {
+        _ = self;
+        preview_mod.preview_colors.bg     = bg;
+        preview_mod.preview_colors.win_bg = win_bg;
+        preview_mod.preview_colors.border = border;
+        preview_mod.preview_colors.text   = text;
     }
 
     pub fn alloc_workspace_id(self: *WM, level: u32) !graph_mod.GraphId {
@@ -819,8 +838,9 @@ pub const WM = struct {
                             _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
                             _ = c.XMoveResizeWindow(self.display, pw, 0, 0, w, h);
                             _ = c.XResizeWindow(self.display, pw, w, h);
-                            _ = c.XMapWindow(self.display, pw);
                             _ = c.XMapWindow(self.display, win_frame);
+                            _ = c.XMapWindow(self.display, pw);
+                            self.repaint_preview(node);
                         }
                     }
                 },
@@ -867,7 +887,7 @@ pub const WM = struct {
     }
 
     pub fn exchange(self: *WM, a: *Node, b: *Node) !void {
-        // 1. Find node IDs (needed for registry updates)
+        // 1. Find node IDs
         var a_id: ?u32 = null;
         var b_id: ?u32 = null;
         var it = self.node_registry.iterator();
@@ -878,39 +898,80 @@ pub const WM = struct {
         const id_a = a_id orelse return error.InvalidNode;
         const id_b = b_id orelse return error.InvalidNode;
 
-        // 2. Remember current windows
-        const win_a = switch (a.content) { .window => |w| w, else => null };
-        const win_b = switch (b.content) { .window => |w| w, else => null };
-        if (win_a == null and win_b == null) return;
+        // 2. Swap contents
+        const content_a = a.content;
+        const content_b = b.content;
+        if (content_a == .empty and content_b == .empty) return;
 
-        // 3. Clear both nodes (updates window_to_node_id)
-        if (win_a != null) self.set_node_empty(id_a);
-        if (win_b != null) self.set_node_empty(id_b);
+        // 3. Update window_to_node_id for window nodes
+        switch (content_a) {
+            .window => |win| _ = self.window_to_node_id.remove(win),
+            else => {},
+        }
+        switch (content_b) {
+            .window => |win| _ = self.window_to_node_id.remove(win),
+            else => {},
+        }
 
-        // 4. Place windows into the opposite nodes
-        if (win_b) |w| try self.set_node_window(id_a, w);
-        if (win_a) |w| try self.set_node_window(id_b, w);
+        // 4. Swap preview_window and content
+        const pw_a = a.preview_window;
+        const pw_b = b.preview_window;
+        a.content = content_b;
+        b.content = content_a;
+        a.preview_window = pw_b;
+        b.preview_window = pw_a;
 
-        // 5. Update focused pointer
+        // 5. Update workspace parent_node pointers
+        switch (a.content) {
+            .workspace => |sub| sub.parent_node = a,
+            else => {},
+        }
+        switch (b.content) {
+            .workspace => |sub| sub.parent_node = b,
+            else => {},
+        }
+
+        // 6. Update window_to_node_id for new positions
+        switch (a.content) {
+            .window => |win| try self.window_to_node_id.put(win, id_a),
+            else => {},
+        }
+        switch (b.content) {
+            .window => |win| try self.window_to_node_id.put(win, id_b),
+            else => {},
+        }
+
+        // 7. Update window_to_node_id for swapped preview windows
+        if (pw_a) |pw| {
+            _ = self.window_to_node_id.remove(pw);
+            try self.window_to_node_id.put(pw, id_b);
+        }
+        if (pw_b) |pw| {
+            _ = self.window_to_node_id.remove(pw);
+            try self.window_to_node_id.put(pw, id_a);
+        }
+
+        // 8. Update focused pointer
         if (self.focused == a) self.focused = b
         else if (self.focused == b) self.focused = a;
 
-        // 6. Move frames to match node geometry (crucial for floating windows)
+        // 9. Move frames to match new geometry
         for ([_]*Node{ a, b }) |node| {
-            switch (node.content) {
-                .window => |win| {
-                    if (self.frames.get(win)) |win_frame| {
-                        _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, node.width, node.height);
-                        const client_w = node.width;
-                        const client_h = node.height;
-                        _ = c.XResizeWindow(self.display, win, client_w, client_h);
-                    }
-                },
-                else => {},
+            const win_for_frame = switch (node.content) {
+                .window => |win| win,
+                .workspace => node.preview_window orelse continue,
+                .empty => continue,
+            };
+            if (self.frames.get(win_for_frame)) |win_frame| {
+                _ = c.XMoveResizeWindow(self.display, win_frame,
+                    node.x, node.y, node.width, node.height);
+                switch (node.content) {
+                    .window => |win| _ = c.XResizeWindow(self.display, win, node.width, node.height),
+                    else => {},
+                }
             }
         }
 
-        // 7. Flush (also raises floating windows and redraws borders)
         try self.flush(self.current_graph);
     }
 
@@ -968,6 +1029,9 @@ pub const WM = struct {
 
     pub fn leave_workspace(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
+        // Don't leave if the parent is the root graph (top-level)
+        const parent = self.workspace_stack.items[self.workspace_stack.items.len - 1];
+        if (parent == &self.graph) return;
         hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
@@ -981,6 +1045,8 @@ pub const WM = struct {
 
     pub fn leave_workspace_silent(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
+        const parent = self.workspace_stack.items[self.workspace_stack.items.len - 1];
+        if (parent == &self.graph) return;
         hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
@@ -1124,6 +1190,35 @@ pub const WM = struct {
         _ = std.os.linux.waitpid(pid, &status, 0);
     }
 
+    fn kill_graph_windows(self: *WM, g: *graph_mod.Graph) void {
+        const wm_delete = c.XInternAtom(self.display, "WM_DELETE_WINDOW", 0);
+        const wm_protocols = c.XInternAtom(self.display, "WM_PROTOCOLS", 0);
+        for (g.nodes.items) |node| {
+            switch (node.content) {
+                .window => |win| {
+                    // Send close request FIRST so the client receives it
+                    var ev: c.XEvent = std.mem.zeroes(c.XEvent);
+                    ev.xclient.type = c.ClientMessage;
+                    ev.xclient.window = win;
+                    ev.xclient.message_type = wm_protocols;
+                    ev.xclient.format = 32;
+                    ev.xclient.data.l[0] = @intCast(wm_delete);
+                    ev.xclient.data.l[1] = c.CurrentTime;
+                    _ = c.XSendEvent(self.display, win, 0, c.NoEventMask, &ev);
+                    // Remove from registry so DestroyNotify is ignored
+                    if (self.window_to_node_id.get(win)) |id| {
+                        _ = self.node_registry.remove(id);
+                        _ = self.window_to_node_id.remove(win);
+                    }
+                    // Don't destroy frame — let client die naturally
+                },
+                .workspace => |sub| self.kill_graph_windows(sub),
+                .empty => {},
+            }
+        }
+        _ = c.XFlush(self.display);
+    }
+
     pub fn kill_client(self: *WM) !void {
         const node = self.focused orelse return;
         switch (node.content) {
@@ -1140,12 +1235,14 @@ pub const WM = struct {
                 _ = c.XSendEvent(self.display, win, 0, c.NoEventMask, &ev);
             },
             .workspace => {
-                 // If we're currently inside this workspace, leave it first.
                 if (node.content.workspace == self.current_graph) {
                     try self.leave_workspace();
                 }
-                // Destroying the preview window will trigger DestroyNotify,
-                // which handles all cleanup (frame, Lua callback, graph removal).
+                // Clean up children first — removes from registry so their
+                // DestroyNotify events are ignored
+                self.kill_graph_windows(node.content.workspace);
+                // Destroy preview — triggers normal on_destroy_notify path
+                // which calls arranger unmap, remove_node (frees sub-graph), resolve/flush
                 if (node.preview_window) |pw| {
                     _ = c.XDestroyWindow(self.display, pw);
                 }
@@ -1251,7 +1348,7 @@ pub const WM = struct {
         const sub = try self.create_workspace_graph(level);
         const pw = c.XCreateSimpleWindow(
             self.display, self.root,
-            0, 0, 200, 150, 0, 0, 0x4488ff
+            0, 0, 200, 150, 0, 0, 0x1a1a2e
         );
         var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         wa.override_redirect = 1;
@@ -1263,8 +1360,8 @@ pub const WM = struct {
         node.floating = false;
 
         try self.frame(pw, node);
-        _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
-
+        _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask | c.ExposureMask);
+        self.repaint_preview(node);
         return node;
     }
 
@@ -1280,12 +1377,12 @@ pub const WM = struct {
         root_node.y = 0;
         _ = try self.register_node(null, root_node);
 
-        // 2. Workspace sub‑graph (now with default gaps and arranger name)
+        // 2. Workspace sub-graph
         const sub = try self.create_workspace_graph(1);
 
         const pw = c.XCreateSimpleWindow(
             self.display, self.root,
-            0, 0, 200, 150, 0, 0, 0x4488ff
+            0, 0, 200, 150, 0, 0, 0x1a1a2e
         );
         var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         wa.override_redirect = 1;
@@ -1297,7 +1394,7 @@ pub const WM = struct {
         ws_node.floating = false;
 
         try self.frame(pw, ws_node);
-        _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask);
+        _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask | c.ExposureMask);
         _ = try self.register_node(pw, ws_node);
 
         // 3. Constraint to fill root
@@ -1306,10 +1403,11 @@ pub const WM = struct {
         } };
         try self.current_graph.add_constraint(ws_node, g);
 
-        // 4. Resolve and enter
+        // 4. Resolve, paint, then enter
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
+        self.repaint_preview(ws_node);  // paint while still on parent graph
         try self.enter_workspace(ws_node);
     }
 

@@ -222,6 +222,8 @@ pub fn build(b: *std.Build) void {
     config_mod.linkSystemLibrary("X11", .{});
     config_mod.linkSystemLibrary("Xcursor", .{});
     graph_mod.addImport("c", c_mod);
+    c_mod.linkSystemLibrary("xft", .{ .use_pkg_config = .force });
+    c_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .force });
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function

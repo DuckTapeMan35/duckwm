@@ -821,6 +821,17 @@ pub const entries = [_]ApiEntry{
         .ret = "nil",
     },
     .{
+        .name   = "set_preview_colors",
+        .desc   = "Set the colors used when drawing workspace preview thumbnails.",
+        .params = &.{
+            .{ .name = "bg",     .typ = "integer" },
+            .{ .name = "win_bg", .typ = "integer" },
+            .{ .name = "border", .typ = "integer" },
+            .{ .name = "text",   .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
         .name   = "get_current_workspace",
         .desc   = "Return the node ID of the currently active workspace, or nil.",
         .params = &.{},
