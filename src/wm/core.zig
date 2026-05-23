@@ -142,6 +142,7 @@ pub const WM = struct {
     node_registry: std.AutoHashMap(u32, *Node),
     window_to_node_id: std.AutoHashMap(c.Window, u32),
     next_node_id: u32,
+    rules: std.ArrayListUnmanaged(i32),
     lua: ?*Lua,
     default_arranger_ref: i32,
     default_arranger_name: []const u8,
@@ -244,6 +245,7 @@ pub const WM = struct {
             .window_to_node_id = std.AutoHashMap(c.Window, u32).init(allocator),
             .next_node_id = 1,
             .lua = null,
+            .rules = .{ .items = &.{}, .capacity = 0 },
             .default_arranger_ref = 0,
             .default_arranger_name = "",
             .border_width = 2,
@@ -301,6 +303,10 @@ pub const WM = struct {
     }
 
     pub fn deinit(self: *WM) void {
+        for (self.rules.items) |ref| {
+            if (self.lua) |lua| lua.unref(ziglua.registry_index, ref);
+        }
+        self.rules.deinit(self.allocator);
         if (self.lua) |lua| lua.deinit();
         self.keybinds.deinit();
         if (self.default_arranger_name.len > 0) {
@@ -402,6 +408,21 @@ pub const WM = struct {
         const number = entry.value_ptr.*;
         entry.value_ptr.* += 1;
         return .{ .level = level, .number = number };
+    }
+
+    pub fn call_rules(self: *WM, event_str: [:0]const u8, node_id: u32) void {
+        const lua = self.lua orelse return;
+        for (self.rules.items) |ref| {
+            const top = lua.getTop();
+            _ = lua.getIndexRaw(ziglua.registry_index, ref);
+            _ = lua.pushString(event_str);
+            lua.pushInteger(@intCast(node_id));
+            lua.protectedCall(.{ .args = 2, .results = 0 }) catch |err| {
+                const msg = lua.toString(-1) catch null;
+                std.debug.print("rule error: {} {s}\n", .{err, msg orelse ""});
+                lua.setTop(top);
+            };
+        }
     }
 
     // Call the arranger for `graph` (or the default) with the given event.

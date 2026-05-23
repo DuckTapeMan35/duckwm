@@ -220,7 +220,32 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_cursor_theme),                  .name = "set_cursor_theme" },
     .{ .func = ziglua.wrap(l_get_current_level),                 .name = "get_current_level" },
     .{ .func = ziglua.wrap(l_get_node_level),                    .name = "get_node_level" },
+    .{ .func = ziglua.wrap(l_add_rule),                          .name = "add_rule" },
+    .{ .func = ziglua.wrap(l_remove_rule),                       .name = "remove_rule" },
 };
+
+fn l_add_rule(lua: *Lua) i32 {
+    lua.checkType(1, .function);
+    lua.pushValue(1);
+    const ref = lua.ref(ziglua.registry_index);
+    global_wm.rules.append(global_wm.allocator, ref) catch
+        return luaL_error_str(lua, "out of memory");
+    lua.pushInteger(@intCast(ref));
+    return 1;
+}
+
+fn l_remove_rule(lua: *Lua) i32 {
+    const ref: i32 = @intCast(lua.checkInteger(1));
+    const lua_vm = global_wm.lua orelse return 0;
+    for (global_wm.rules.items, 0..) |r, i| {
+        if (r == ref) {
+            lua_vm.unref(ziglua.registry_index, ref);
+            _ = global_wm.rules.swapRemove(i);
+            break;
+        }
+    }
+    return 0;
+}
 
 fn l_get_current_level(lua: *Lua) i32 {
     lua.pushInteger(@intCast(global_wm.current_graph.id.level));
@@ -2079,7 +2104,13 @@ fn setup_lua(wm: *WM, lua: *Lua) void {
 }
 
 fn reset_vm(wm: *WM) !*Lua {
-    if (wm.lua) |old| old.deinit();
+    if (wm.lua) |old| {
+        for (wm.rules.items) |ref| {
+            old.unref(ziglua.registry_index, ref);
+        }
+        wm.rules.clearRetainingCapacity();
+        old.deinit();
+    }
     const lua = try Lua.init(wm.allocator);
     wm.lua = lua;
     setup_lua(wm, lua);

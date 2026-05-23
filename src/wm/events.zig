@@ -223,6 +223,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
                 }
             }
         }
+        wm.call_rules("pre_map", id);
         wm.call_arranger(wm.current_graph, "pre_map", id, prev_id);
         const is_floating = if (wm.node_registry.get(id)) |n| n.floating else false;
         if (!is_floating) {
@@ -330,6 +331,19 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
     const net_wm_window_type    = c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE", 0);
     const net_wm_strut_partial  = c.XInternAtom(wm.display, "_NET_WM_STRUT_PARTIAL", 0);
     const wm_hints_atom         = c.XInternAtom(wm.display, "WM_HINTS", 0);
+    const wm_class_atom = c.XInternAtom(wm.display, "WM_CLASS", 0);
+    const net_wm_name_atom = c.XInternAtom(wm.display, "_NET_WM_NAME", 0);
+    const wm_name_atom = c.XInternAtom(wm.display, "WM_NAME", 0);
+
+    if (ev.atom == wm_class_atom or ev.atom == net_wm_name_atom or ev.atom == wm_name_atom) {
+        if (wm.window_to_node_id.get(win)) |node_id| {
+            if (wm.node_registry.get(node_id)) |node| {
+                if (node.owner_graph == wm.current_graph) {
+                    wm.call_rules("prop", node_id);
+                }
+            }
+        }
+    }
 
     if (ev.atom == net_wm_window_type) {
         if (wm.window_to_node_id.contains(win)) {

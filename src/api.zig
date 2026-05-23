@@ -855,4 +855,16 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "id", .typ = "integer" } },
         .ret    = "integer|nil",
     },
+    .{
+        .name   = "add_rule",
+        .desc   = "Register a global window rule function. Fires on 'pre_map', 'prop' (class/title change), and 'map' events for every window regardless of arranger. Returns a handle for use with remove_rule.",
+        .params = &.{ .{ .name = "fn", .typ = "function(event: string, id: integer)" } },
+        .ret    = "integer",
+    },
+    .{
+        .name   = "remove_rule",
+        .desc   = "Remove a previously registered rule by its handle.",
+        .params = &.{ .{ .name = "handle", .typ = "integer" } },
+        .ret    = "nil",
+    },
 };
