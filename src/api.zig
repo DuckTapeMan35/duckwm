@@ -843,4 +843,16 @@ pub const entries = [_]ApiEntry{
         .params = &.{ .{ .name = "mode", .typ = "'none'|'previous'" } },
         .ret    = "nil",
     },
+    .{
+        .name   = "get_current_level",
+        .desc   = "Return the nesting level of the current workspace (0 = top level).",
+        .params = &.{},
+        .ret    = "integer",
+    },
+    .{
+        .name   = "get_node_level",
+        .desc   = "Return the nesting level of the graph that owns a node.",
+        .params = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret    = "integer|nil",
+    },
 };

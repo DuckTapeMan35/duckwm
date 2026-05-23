@@ -51,6 +51,8 @@ fn restack_docks(wm: *WM) void {
     while (it.next()) |entry| {
         const win = entry.key_ptr.*;
         const s   = entry.value_ptr.*;
+        var attrs: c.XWindowAttributes = undefined;
+        if (c.XGetWindowAttributes(wm.display, win, &attrs) == 0) continue;
         if (s.top > 0) {
             _ = c.XMoveWindow(wm.display, win, 0, top);
             top += @intCast(s.top);
@@ -452,6 +454,15 @@ pub fn on_unmap_notify(wm: *WM, event: *c.XUnmapEvent) !void {
         return;
     }
 
+    // Clean up dock strut if the dock unmaps
+    if (wm.dock_struts.remove(win)) {
+        restack_docks(wm);
+        try wm.resolve(wm.current_graph);
+        try wm.rebuild_focus_edges();
+        try wm.flush(wm.current_graph);
+        return;
+    }
+
     // Ignore frame unmap events
     var is_frame = false;
     var frame_iter = wm.frames.iterator();
@@ -461,7 +472,6 @@ pub fn on_unmap_notify(wm: *WM, event: *c.XUnmapEvent) !void {
             break;
         }
     }
-    std.debug.print("DestroyNotify check: win={} is_frame={}\n", .{win, is_frame});
     if (is_frame) return;
 
     // Ignore windows we don't manage
@@ -1202,10 +1212,13 @@ pub fn update_net_active_window(wm: *WM, active_window: c.Window) void {
         XA_WINDOW, 32, c.PropModeReplace,
         @ptrCast(&new_val), 1);
 }
-
 pub fn announce_supported_hints(wm: *WM) void {
     const net_supported = c.XInternAtom(wm.display, "_NET_SUPPORTED", 0);
     const xa_atom = c.XInternAtom(wm.display, "ATOM", 0);
+    const net_supporting_wm_check = c.XInternAtom(wm.display, "_NET_SUPPORTING_WM_CHECK", 0);
+    const net_wm_name = c.XInternAtom(wm.display, "_NET_WM_NAME", 0);
+    const utf8_string = c.XInternAtom(wm.display, "UTF8_STRING", 0);
+    const xa_window = c.XInternAtom(wm.display, "WINDOW", 0);
 
     const atoms = [_]c.Atom{
         c.XInternAtom(wm.display, "_NET_WM_STATE", 0),
@@ -1215,13 +1228,25 @@ pub fn announce_supported_hints(wm: *WM) void {
         c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE_DOCK", 0),
         c.XInternAtom(wm.display, "_NET_WM_WINDOW_TYPE_TOOLBAR", 0),
         c.XInternAtom(wm.display, "_NET_WM_STRUT_PARTIAL", 0),
-        c.XInternAtom(wm.display, "_NET_WM_PID", 0),
         c.XInternAtom(wm.display, "_NET_WORKAREA", 0),
         c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0),
         c.XInternAtom(wm.display, "WM_HINTS", 0),
+        net_supporting_wm_check,
+        net_wm_name,
     };
-
     _ = c.XChangeProperty(wm.display, wm.root, net_supported,
         xa_atom, 32, c.PropModeReplace,
         @ptrCast(&atoms), @intCast(atoms.len));
+
+    wm.check_win = c.XCreateSimpleWindow(
+        wm.display, wm.root, -1, -1, 1, 1, 0, 0, 0);
+    _ = c.XChangeProperty(wm.display, wm.root,
+        net_supporting_wm_check, xa_window, 32, c.PropModeReplace,
+        @ptrCast(&wm.check_win), 1);
+    _ = c.XChangeProperty(wm.display, wm.check_win,
+        net_supporting_wm_check, xa_window, 32, c.PropModeReplace,
+        @ptrCast(&wm.check_win), 1);
+    _ = c.XChangeProperty(wm.display, wm.check_win,
+        net_wm_name, utf8_string, 8, c.PropModeReplace,
+        "duckwm", 6);
 }

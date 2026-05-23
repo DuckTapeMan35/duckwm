@@ -218,7 +218,28 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_arranger_name),                 .name = "get_arranger_name" },
     .{ .func = ziglua.wrap(l_set_pan_disabled),                  .name = "set_pan_disabled" },
     .{ .func = ziglua.wrap(l_set_cursor_theme),                  .name = "set_cursor_theme" },
+    .{ .func = ziglua.wrap(l_get_current_level),                 .name = "get_current_level" },
+    .{ .func = ziglua.wrap(l_get_node_level),                    .name = "get_node_level" },
 };
+
+fn l_get_current_level(lua: *Lua) i32 {
+    lua.pushInteger(@intCast(global_wm.current_graph.id.level));
+    return 1;
+}
+
+fn l_get_node_level(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    const g = node.owner_graph orelse {
+        lua.pushNil();
+        return 1;
+    };
+    lua.pushInteger(@intCast(g.id.level));
+    return 1;
+}
 
 fn l_set_preview_colors(lua: *Lua) i32 {
     const bg:     u32 = @intCast(lua.checkInteger(1));

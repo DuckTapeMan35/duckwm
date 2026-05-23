@@ -66,6 +66,7 @@ pub const WM = struct {
     overlay_windows: std.AutoHashMap(c.Window, void),
     focus_follows_mouse: bool,
     click_to_focus: bool,
+    check_win: c.Window,
 
     // user defined keybindings
     keybinds: std.AutoHashMap(KeybindKey, Keybind),
@@ -176,6 +177,7 @@ pub const WM = struct {
             .overlay_windows = std.AutoHashMap(c.Window, void).init(allocator),
             .focus_follows_mouse = true,
             .click_to_focus = false,
+            .check_win = 0,
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
@@ -312,6 +314,9 @@ pub const WM = struct {
         self.node_registry.deinit();
         self.window_to_node_id.deinit();
         self.dock_struts.deinit();
+        if(self.check_win != 0) {
+            _ = c.XDestroyWindow(self.display, self.check_win);
+        }
         if (self.ipc_fd >= 0) {
             _ = std.os.linux.close(self.ipc_fd);
         }
@@ -848,9 +853,19 @@ pub const WM = struct {
             }
         }
         float_mod.raise_floating_windows(self);
+        var dead_docks = std.ArrayListUnmanaged(c.Window){ .items = &.{}, .capacity = 0 };
+        defer dead_docks.deinit(self.allocator);
         var dock_it = self.dock_struts.keyIterator();
         while (dock_it.next()) |win| {
+            var attrs: c.XWindowAttributes = undefined;
+            if (c.XGetWindowAttributes(self.display, win.*, &attrs) == 0) {
+                dead_docks.append(self.allocator, win.*) catch {};
+                continue;
+            }
             _ = c.XRaiseWindow(self.display, win.*);
+        }
+        for (dead_docks.items) |win| {
+            _ = self.dock_struts.remove(win);
         }
         _ = c.XFlush(self.display);
     }
@@ -1416,6 +1431,7 @@ pub const WM = struct {
         events_mod.wm_detected = false;
         _ = c.XSetErrorHandler(events_mod.on_wm_detected);
         events_mod.announce_supported_hints(self);
+        _ = c.XSync(self.display, 0);
         _ = c.XSelectInput(self.display, self.root,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
             c.KeyPressMask | c.ButtonPressMask | c.ButtonReleaseMask |
