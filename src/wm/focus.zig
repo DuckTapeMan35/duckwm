@@ -9,7 +9,6 @@ const Direction = graph_mod.Direction;
 pub fn rebuild_focus_edges(wm: *WM) !void {
     wm.current_graph.focus_edges.clearRetainingCapacity();
     const nodes = wm.current_graph.nodes.items;
-
     for (nodes) |a| {
         const a_win = switch (a.content) {
             .window => true,
@@ -17,14 +16,12 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
             .empty => false,
         };
         if (!a_win) continue;
-
         const ax = a.x;
         const ay = a.y;
         const aw: i32 = @intCast(a.width);
         const ah: i32 = @intCast(a.height);
         const a_cx = ax + @divTrunc(aw, 2);
         const a_cy = ay + @divTrunc(ah, 2);
-
         for (nodes) |b| {
             if (a == b) continue;
             const b_win = switch (b.content) {
@@ -33,30 +30,42 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
                 .empty => false,
             };
             if (!b_win) continue;
-
             const bx = b.x;
             const by = b.y;
             const bw: i32 = @intCast(b.width);
             const bh: i32 = @intCast(b.height);
             const b_cx = bx + @divTrunc(bw, 2);
             const b_cy = by + @divTrunc(bh, 2);
-
             const dx = b_cx - a_cx;
             const dy = b_cy - a_cy;
-
             if (dx == 0 and dy == 0) continue;
 
-            if (@abs(dx) >= @abs(dy)) {
-                if (dx < 0) {
-                    try wm.current_graph.add_focus_edge(a, b, .Left);
-                } else {
-                    try wm.current_graph.add_focus_edge(a, b, .Right);
-                }
+            const abs_dx = @abs(dx);
+            const abs_dy = @abs(dy);
+
+            // Always add the primary direction
+            if (abs_dx >= abs_dy) {
+                if (dx < 0) try wm.current_graph.add_focus_edge(a, b, .Left)
+                else        try wm.current_graph.add_focus_edge(a, b, .Right);
             } else {
-                if (dy < 0) {
-                    try wm.current_graph.add_focus_edge(a, b, .Up);
-                } else {
-                    try wm.current_graph.add_focus_edge(a, b, .Down);
+                if (dy < 0) try wm.current_graph.add_focus_edge(a, b, .Up)
+                else        try wm.current_graph.add_focus_edge(a, b, .Down);
+            }
+
+            // Also add secondary direction whenever both components are non-trivial
+            // (secondary component is at least 25% of primary)
+            if (abs_dx > 0 and abs_dy > 0) {
+                const minor = @min(abs_dx, abs_dy);
+                const major = @max(abs_dx, abs_dy);
+                if (minor * 4 >= major) {
+                    // secondary
+                    if (abs_dx < abs_dy) {
+                        if (dx < 0) try wm.current_graph.add_focus_edge(a, b, .Left)
+                        else        try wm.current_graph.add_focus_edge(a, b, .Right);
+                    } else {
+                        if (dy < 0) try wm.current_graph.add_focus_edge(a, b, .Up)
+                        else        try wm.current_graph.add_focus_edge(a, b, .Down);
+                    }
                 }
             }
         }

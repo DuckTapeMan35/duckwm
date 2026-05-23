@@ -15,6 +15,106 @@ const Registration = struct {
     name: [:0]const u8,
 };
 
+fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, g: *graph_mod.Graph, depth: u32) void {
+    var ind = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
+    defer ind.deinit(allocator);
+    for (0..depth) |_| ind.appendSlice(allocator, "  ") catch {};
+
+    buf.print(allocator, "{s}Graph [level={}, number={}]\n\n", .{
+        ind.items, g.id.level, g.id.number,
+    }) catch {};
+
+    for (g.nodes.items) |node| {
+        const type_str: []const u8 = switch (node.content) {
+            .window    => "window",
+            .empty     => "empty",
+            .workspace => "workspace",
+        };
+        const id = global_wm.get_id_for_node(node) orelse 0;
+        buf.print(allocator, "{s}  [{d}] {s} x={} y={} w={} h={} floating={}\n", .{
+            ind.items, id, type_str,
+            node.x, node.y, node.width, node.height, node.floating,
+        }) catch {};
+    }
+
+    buf.print(allocator, "{s}\n", .{ind.items}) catch {};
+
+    for (g.nodes.items) |node| {
+        const from_id = global_wm.get_id_for_node(node) orelse 0;
+        for (node.constraints.items) |con| {
+            switch (con) {
+                .left_of, .right_of, .above, .below,
+                .align_left, .align_top, .align_right, .align_bottom,
+                .equal_width, .equal_height => {
+                    const other: *graph_mod.Node = switch (con) {
+                        .left_of      => |o| o,
+                        .right_of     => |o| o,
+                        .above        => |o| o,
+                        .below        => |o| o,
+                        .align_left   => |o| o,
+                        .align_top    => |o| o,
+                        .align_right  => |o| o,
+                        .align_bottom => |o| o,
+                        .equal_width  => |o| o,
+                        .equal_height => |o| o,
+                        else => unreachable,
+                    };
+                    const to_id = global_wm.get_id_for_node(other) orelse 0;
+                    const name: []const u8 = switch (con) {
+                        .left_of      => "left_of",
+                        .right_of     => "right_of",
+                        .above        => "above",
+                        .below        => "below",
+                        .align_left   => "align_left",
+                        .align_top    => "align_top",
+                        .align_right  => "align_right",
+                        .align_bottom => "align_bottom",
+                        .equal_width  => "equal_width",
+                        .equal_height => "equal_height",
+                        else => unreachable,
+                    };
+                    buf.print(allocator, "{s}  [{d}] --{s}--> [{d}]\n", .{
+                        ind.items, from_id, name, to_id,
+                    }) catch {};
+                },
+                .grid_cell => |gc| {
+                    const cont_id = global_wm.get_id_for_node(gc.container) orelse 0;
+                    buf.print(allocator, "{s}  [{d}] --grid_cell(col={},row={},cols={},rows={})--> [{d}]\n", .{
+                        ind.items, from_id, gc.col, gc.row, gc.cols, gc.rows, cont_id,
+                    }) catch {};
+                },
+                .grid_cell_abs => |gc| {
+                    const cont_id = global_wm.get_id_for_node(gc.container) orelse 0;
+                    buf.print(allocator, "{s}  [{d}] --grid_cell_abs(x={},y={},w={},h={})--> [{d}]\n", .{
+                        ind.items, from_id, gc.x, gc.y, gc.w, gc.h, cont_id,
+                    }) catch {};
+                },
+                .split => |s| {
+                    const cont_id = global_wm.get_id_for_node(s.container) orelse 0;
+                    buf.print(allocator, "{s}  [{d}] --split({s},count={})--> [{d}]\n", .{
+                        ind.items, from_id,
+                        if (s.axis == .horizontal) "h" else "v",
+                        s.count, cont_id,
+                    }) catch {};
+                },
+                .fixed_width  => |w| buf.print(allocator, "{s}  [{d}] fixed_width={}\n",      .{ ind.items, from_id, w }) catch {},
+                .fixed_height => |h| buf.print(allocator, "{s}  [{d}] fixed_height={}\n",     .{ ind.items, from_id, h }) catch {},
+                .fixed_x      => |x| buf.print(allocator, "{s}  [{d}] fixed_x={}\n",          .{ ind.items, from_id, x }) catch {},
+                .fixed_y      => |y| buf.print(allocator, "{s}  [{d}] fixed_y={}\n",          .{ ind.items, from_id, y }) catch {},
+                .fixed_ratio  => |r| buf.print(allocator, "{s}  [{d}] fixed_ratio={d:.3}\n",  .{ ind.items, from_id, r }) catch {},
+            }
+        }
+    }
+
+    buf.print(allocator, "{s}\n", .{ind.items}) catch {};
+
+    for (g.nodes.items) |node| {
+        if (node.content == .workspace) {
+            print_graph_to_buf(buf, allocator, node.content.workspace, depth + 1);
+        }
+    }
+}
+
 fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) void {
     // Call factory to get arranger function
     _ = lua.getIndexRaw(ziglua.registry_index, factory_ref);
@@ -174,7 +274,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_destroy_container),                 .name = "destroy_container" },
     .{ .func = ziglua.wrap(l_reparent),                          .name = "reparent" },
     .{ .func = ziglua.wrap(l_get_container_of),                  .name = "get_container_of" },
-    .{ .func = ziglua.wrap(l_set_on_remove_promote),             .name = "set_on_remove_promote" },
+    .{ .func = ziglua.wrap(l_set_reparent_strategy),             .name = "set_reparent_strategy" },
     .{ .func = ziglua.wrap(l_unregister_node),                   .name = "unregister_node" },
     .{ .func = ziglua.wrap(l_get_cursor_pos),                    .name = "get_cursor_pos" },
     .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused),    .name = "get_cursor_relative_to_focused" },
@@ -222,7 +322,16 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_node_level),                    .name = "get_node_level" },
     .{ .func = ziglua.wrap(l_add_rule),                          .name = "add_rule" },
     .{ .func = ziglua.wrap(l_remove_rule),                       .name = "remove_rule" },
+    .{ .func = ziglua.wrap(l_print_graph),                       .name = "print_graph" },
 };
+
+fn l_print_graph(lua: *Lua) i32 {
+    var buf = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
+    defer buf.deinit(global_wm.allocator);
+    print_graph_to_buf(&buf, global_wm.allocator, global_wm.current_graph, 0);
+    _ = lua.pushString(buf.items);
+    return 1;
+}
 
 fn l_add_rule(lua: *Lua) i32 {
     lua.checkType(1, .function);
@@ -1787,14 +1896,24 @@ fn l_send_to_workspace(lua: *Lua) i32 {
     return 0;
 }
 
-fn l_set_on_remove_promote(lua: *Lua) i32 {
+fn l_set_reparent_strategy(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
-    const node = global_wm.get_node_by_id(id) orelse {
-        std.debug.print("set_on_remove_promote: id {} NOT FOUND\n", .{id});
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    if (lua.typeOf(2) == .nil or lua.typeOf(2) == .none) {
+        node.on_remove = null;
         return 0;
-    };
-    node.on_remove = .promote;
-    std.debug.print("set_on_remove_promote: id {} set OK, content={s}\n", .{id, @tagName(node.content)});
+    }
+    const strategy = lua.checkString(2);
+    if (std.mem.eql(u8, strategy, "promote")) {
+        node.on_remove = .promote;
+    } else if (std.mem.eql(u8, strategy, "remove")) {
+        node.on_remove = .remove;
+    } else if (std.mem.eql(u8, strategy, "empty")) {
+        node.on_remove = .leave_empty;
+    } else {
+        _ = lua.pushString("set_reparent_strategy: unknown strategy, expected 'promote', 'remove', or 'empty'");
+        return lua.raiseError();
+    }
     return 0;
 }
 

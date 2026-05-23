@@ -565,10 +565,13 @@ pub const entries = [_]ApiEntry{
         .ret    = "nil",
     },
     .{
-        .name   = "set_on_remove_promote",
-        .desc   = "Set on_remove=promote: when removed, sibling is promoted into its slot.",
-        .params = &.{ .{ .name = "id", .typ = "integer" } },
-        .ret    = "nil",
+        .name   = "set_reparent_strategy",
+        .desc   = "Set the reparenting strategy for a node when it is removed. 'promote' promotes its sibling into its container slot, 'remove' removes the node entirely, 'empty' leaves an empty slot. Pass nil to clear.",
+        .params = &.{
+            .{ .name = "id",       .typ = "integer" },
+            .{ .name = "strategy", .typ = "'promote'|'remove'|'empty'|nil" },
+        },
+        .ret = "nil",
     },
     .{
         .name   = "unregister_node",
@@ -865,6 +868,12 @@ pub const entries = [_]ApiEntry{
         .name   = "remove_rule",
         .desc   = "Remove a previously registered rule by its handle.",
         .params = &.{ .{ .name = "handle", .typ = "integer" } },
+        .ret    = "nil",
+    },
+    .{
+        .name   = "print_graph",
+        .desc   = "Return a string representation of the current graph, showing nodes and constraint relationships as labeled arrows. Recurses into nested workspaces.",
+        .params = &.{},
         .ret    = "nil",
     },
 };
