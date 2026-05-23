@@ -80,6 +80,29 @@ fn get_transient_for(wm: *WM, win: c.Window) ?c.Window {
     return null;
 }
 
+fn is_focusable_panel(display: *c.Display, win: c.Window) bool {
+    const net_wm_window_type = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE", 0);
+    const override_type = c.XInternAtom(display, "_KDE_NET_WM_WINDOW_TYPE_OVERRIDE", 0);
+
+    var actual_type: c.Atom = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var prop: ?*c_ulong = null;
+
+    if (c.XGetWindowProperty(display, win, net_wm_window_type,
+        0, 8, 0, 0, &actual_type, &actual_format, &nitems, &bytes_after,
+        @ptrCast(&prop)) != c.Success) return false;
+    defer if (prop) |p| { _ = c.XFree(@ptrCast(p)); };
+    if (nitems == 0 or actual_format != 32) return false;
+
+    const atoms: [*]c_ulong = @ptrCast(prop);
+    for (atoms[0..nitems]) |a| {
+        if (a == override_type) return true;
+    }
+    return false;
+}
+
 fn is_dialog(display: *c.Display, win: c.Window) bool {
     const net_wm_window_type = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE", 0);
     const net_wm_window_type_dialog = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", 0);
@@ -151,6 +174,10 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
+        // If it also wants to be focusable, track it
+        if (is_focusable_panel(wm.display, req.window)) {
+            try wm.overlay_windows.put(req.window, {});
+        }
         return;
     }
 
@@ -236,6 +263,12 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         }
         return;
     }
+}
+
+pub fn on_map_notify(wm: *WM, ev: *c.XMapEvent) void {
+    if (!wm.overlay_windows.contains(ev.window)) return;
+    _ = c.XSetInputFocus(wm.display, ev.window, c.RevertToParent, c.CurrentTime);
+    _ = c.XFlush(wm.display);
 }
 
 pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
@@ -412,6 +445,12 @@ fn sweep_dead_containers(wm: *WM) void {
 
 pub fn on_unmap_notify(wm: *WM, event: *c.XUnmapEvent) !void {
     const win = event.window;
+
+    // Restore focus when a focusable panel hides
+    if (wm.overlay_windows.contains(win)) {
+        if (wm.focused) |n| wm.focus(n);
+        return;
+    }
 
     // Ignore frame unmap events
     var is_frame = false;
@@ -600,6 +639,8 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         focus_mod.clear_active_window(wm);
         _ = c.XSetInputFocus(wm.display, wm.root, c.RevertToParent, c.CurrentTime);
     }
+
+    _ = wm.overlay_windows.remove(win);
 
     if (wm.current_graph.nodes.items.len > 0) {
         try wm.resolve(wm.current_graph);

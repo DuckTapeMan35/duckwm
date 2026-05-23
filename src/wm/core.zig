@@ -62,6 +62,7 @@ pub const WM = struct {
     screen_height: u32,
     frames: std.AutoHashMap(c.Window, c.Window),
     dock_struts: std.AutoHashMap(c.Window, Strut),
+    overlay_windows: std.AutoHashMap(c.Window, void),
     focus_follows_mouse: bool,
     click_to_focus: bool,
 
@@ -171,6 +172,7 @@ pub const WM = struct {
             .screen_height = @intCast(c.XDisplayHeight(display, 0)),
             .frames = std.AutoHashMap(c.Window, c.Window).init(allocator),
             .dock_struts = std.AutoHashMap(c.Window, Strut).init(allocator),
+            .overlay_windows = std.AutoHashMap(c.Window, void).init(allocator),
             .focus_follows_mouse = true,
             .click_to_focus = false,
 
@@ -1399,6 +1401,7 @@ pub const WM = struct {
                     c.ClientMessage    => try events_mod.on_client_message(self, &e.xclient),
                     c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
                     c.UnmapNotify      => try events_mod.on_unmap_notify(self, &e.xunmap),
+                    c.MapNotify        => events_mod.on_map_notify(self, &e.xmap),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }
