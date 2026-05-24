@@ -520,15 +520,16 @@ fn l_set_layout(lua: *Lua) i32 {
 fn l_get_layout(lua: *Lua) i32 {
     const g = global_wm.current_graph;
 
-    _ = lua.checkStack(20) catch {};
+    lua.checkStack(20) catch {};
 
-    // build parent map
+    // build parent map from split constraints, skipping floating nodes
     var parent_map = std.AutoHashMapUnmanaged(*graph_mod.Node, *graph_mod.Node){};
     defer parent_map.deinit(global_wm.allocator);
     var parent_idx_map = std.AutoHashMapUnmanaged(*graph_mod.Node, u8){};
     defer parent_idx_map.deinit(global_wm.allocator);
 
     for (g.nodes.items) |node| {
+        if (node.floating) continue;
         for (node.constraints.items) |con| {
             if (con == .split) {
                 for (0..con.split.count) |i| {
@@ -539,19 +540,18 @@ fn l_get_layout(lua: *Lua) i32 {
         }
     }
 
-    // result table at index 1
+    // result table
     lua.newTable();
 
-    // by_id table at index 2
+    // by_id table
     lua.newTable();
 
-    // build node tables, storing in by_id
     for (g.nodes.items) |node| {
+        if (node.floating) continue;
         const id = global_wm.get_id_for_node(node) orelse continue;
 
-        _ = lua.checkStack(30) catch {};
+        lua.checkStack(30) catch {};
 
-        // node table
         lua.newTable();
 
         lua.pushInteger(@intCast(id));
@@ -584,10 +584,10 @@ fn l_get_layout(lua: *Lua) i32 {
             lua.pushNil(); lua.setField(-2, "parent_idx");
         }
 
-        // constraints array
+        // constraints
         lua.newTable();
         for (node.constraints.items, 0..) |con, ci| {
-            _ = lua.checkStack(20) catch {};
+            lua.checkStack(20) catch {};
             lua.newTable();
             switch (con) {
                 .fixed_x      => |v| { _ = lua.pushString("fixed_x");      lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
@@ -620,14 +620,12 @@ fn l_get_layout(lua: *Lua) i32 {
                     lua.pushInteger(@intCast(s.count)); lua.setField(-2, "count");
                     lua.pushInteger(@intCast(global_wm.get_id_for_node(s.container) orelse 0));
                     lua.setField(-2, "container");
-                    // ratios
                     lua.newTable();
                     for (0..s.count) |ri| {
                         lua.pushNumber(s.ratios[ri]);
                         lua.setIndexRaw(-2, @intCast(ri + 1));
                     }
                     lua.setField(-2, "ratios");
-                    // children
                     lua.newTable();
                     for (0..s.count) |ci2| {
                         lua.pushInteger(@intCast(global_wm.get_id_for_node(s.children[ci2]) orelse 0));
@@ -646,40 +644,41 @@ fn l_get_layout(lua: *Lua) i32 {
                 .equal_width  => |o| { _ = lua.pushString("equal_width");  lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
                 .equal_height => |o| { _ = lua.pushString("equal_height"); lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
             }
-            lua.setIndexRaw(-2, @intCast(ci + 1)); // constraints[ci+1] = con_table
+            lua.setIndexRaw(-2, @intCast(ci + 1));
         }
-        lua.setField(-2, "constraints"); // node.constraints = constraints_table
+        lua.setField(-2, "constraints");
 
-        // node table is at top, by_id is at -2, result is at -3
         // dup node table and store in by_id[id]
-        lua.pushValue(-1);              // dup node table
-        lua.setIndexRaw(-3, @intCast(id)); // by_id[id] = node_table, pops dup
-        // node table still at top
-        // we'll collect into nodes array below, for now just leave it
-        // actually we need to store it — push into a temp list
-        // simplest: store directly into nodes array now
-        // but we don't have nodes array yet...
-        // solution: store in by_id now, build nodes array from by_id after
-        lua.pop(1); // pop node table (it's stored in by_id)
+        lua.pushValue(-1);
+        lua.setIndexRaw(-3, @intCast(id));
+        lua.pop(1); // pop node table (stored in by_id)
     }
 
-    // now build nodes array from g.nodes order, pulling from by_id
-    lua.newTable(); // nodes array, stack: result, by_id, nodes
-    for (g.nodes.items, 0..) |node, i| {
+    // build nodes array from g.nodes order, pulling from by_id
+    lua.newTable();
+    var ni: usize = 0;
+    for (g.nodes.items) |node| {
+        if (node.floating) continue;
         const id = global_wm.get_id_for_node(node) orelse continue;
         lua.pushInteger(@intCast(id));
-        _ = lua.getTable(-3); // by_id[id] → pushes node table, stack: result, by_id, nodes, node
-        lua.setIndexRaw(-2, @intCast(i + 1)); // nodes[i+1] = node, pops node
+        _ = lua.getTable(-3); // by_id[id]
+        if (lua.typeOf(-1) == .nil) {
+            lua.pop(1);
+            continue;
+        }
+        lua.setIndexRaw(-2, @intCast(ni + 1));
+        ni += 1;
     }
-    lua.setField(-3, "nodes"); // result.nodes = nodes, pops nodes; stack: result, by_id
+    lua.setField(-3, "nodes");
 
     // set by_id on result
-    lua.setField(-2, "by_id"); // result.by_id = by_id, pops by_id; stack: result
+    lua.setField(-2, "by_id");
 
     // windows array
     lua.newTable();
     var wi: usize = 0;
     for (g.nodes.items) |node| {
+        if (node.floating) continue;
         switch (node.content) {
             .window, .workspace => {
                 if (global_wm.get_id_for_node(node)) |id| {
@@ -691,7 +690,7 @@ fn l_get_layout(lua: *Lua) i32 {
             else => {},
         }
     }
-    lua.setField(-2, "windows"); // result.windows = windows
+    lua.setField(-2, "windows");
 
     // focused
     if (global_wm.focused) |f| {
@@ -705,9 +704,10 @@ fn l_get_layout(lua: *Lua) i32 {
     }
     lua.setField(-2, "focused");
 
-    // root: empty node not referenced as a split child
+    // root: non-floating empty node with no parent in parent_map
     var root_id: u32 = 0;
     for (g.nodes.items) |node| {
+        if (node.floating) continue;
         if (node.content != .empty) continue;
         if (parent_map.get(node) == null) {
             if (global_wm.get_id_for_node(node)) |id| {
@@ -723,7 +723,7 @@ fn l_get_layout(lua: *Lua) i32 {
     }
     lua.setField(-2, "root");
 
-    return 1; // result table
+    return 1;
 }
 
 fn l_get_split_ratios(lua: *Lua) i32 {
@@ -1072,6 +1072,7 @@ fn l_show_window(lua: *Lua) i32 {
                     _ = c.XMapWindow(global_wm.display, frame);
                     _ = c.XMapWindow(global_wm.display, pw);
                     _ = c.XRaiseWindow(global_wm.display, frame);
+                    global_wm.repaint_preview(node);
                     _ = c.XFlush(global_wm.display);
                     global_wm.focus(node);
                 }
@@ -1994,11 +1995,14 @@ fn l_set_floating(lua: *Lua) i32 {
     const node = global_wm.get_node_by_id(id) orelse return 0;
     if (node.content != .window) return 0;
     if (node.floating == val) return 0;
-    node.floating = val;
     node.constraints.clearRetainingCapacity();
     if (val) {
+        // call arranger BEFORE setting floating so get_layout still sees it
+        global_wm.call_arranger(global_wm.current_graph, "unmap", id, null);
+        node.floating = true;
         global_wm.center_node(node);
     } else {
+        node.floating = false;
         var prev_id: ?u32 = null;
         if (global_wm.focused) |f| {
             if (f != node) {
@@ -2009,10 +2013,10 @@ fn l_set_floating(lua: *Lua) i32 {
             }
         }
         global_wm.call_arranger(global_wm.current_graph, "map", id, prev_id);
-        global_wm.resolve(global_wm.current_graph) catch {};
-        global_wm.rebuild_focus_edges() catch {};
-        global_wm.flush(global_wm.current_graph) catch {};
     }
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
     return 0;
 }
 

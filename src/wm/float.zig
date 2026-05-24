@@ -39,10 +39,17 @@ pub fn toggle_floating(wm: *WM) !void {
         }
         wm.call_arranger(wm.current_graph, "map", id, prev_id);
     } else {
+        // call arranger first while node is still tiled
+        var node_id_for_arranger: ?u32 = null;
+        var it2 = wm.node_registry.iterator();
+        while (it2.next()) |entry| {
+            if (entry.value_ptr.* == focused) { node_id_for_arranger = entry.key_ptr.*; break; }
+        }
+        if (node_id_for_arranger) |nid| wm.call_arranger(wm.current_graph, "unmap", nid, null);
+
         focused.floating = true;
         focused.constraints.clearRetainingCapacity();
         center_node(wm, focused);
-        wm.call_arranger(wm.current_graph, "unmap", id, null);
     }
 
     try wm.resolve(wm.current_graph);
