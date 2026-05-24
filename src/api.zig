@@ -1109,6 +1109,13 @@ pub const entries = [_]ApiEntry{
         .params   = &.{ .{ .name = "id", .typ = "integer" } },
         .ret      = "integer|nil",
     },
+    .{
+        .category = "Node Graph",
+        .name     = "get_split_ratios",
+        .desc     = "Return the current split ratios of a container node as a table, or nil if the node has no split constraint.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "number[]|nil",
+    },
 
     // =========================================================
     // Debug

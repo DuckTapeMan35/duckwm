@@ -30,7 +30,6 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32) !bool {
     }
     var changed = false;
     for (wm.current_graph.nodes.items) |node| {
-        if (node.content == .empty) continue;
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (right == edge_x) {
             node.width = @intCast(@as(i32, @intCast(node.width)) + delta);
@@ -69,7 +68,6 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32) !bool {
     }
     var changed = false;
     for (wm.current_graph.nodes.items) |node| {
-        if (node.content == .empty) continue;
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (bottom == edge_y) {
             node.height = @intCast(@as(i32, @intCast(node.height)) + delta);

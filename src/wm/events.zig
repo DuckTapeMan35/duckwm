@@ -578,7 +578,8 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         const is_floating = if (dying) |d| d.floating else false;
         const in_current = if (dying) |d| d.owner_graph == wm.current_graph else false;
         if (!is_floating and in_current) {
-            wm.call_arranger(wm.current_graph, "unmap", id, null);
+            const prev_id: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
+            wm.call_arranger(wm.current_graph, "unmap", id, prev_id);
         }
     }
 
@@ -1016,6 +1017,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
             if (node.floating) {
                 float_mod.raise_floating_windows(wm);
             } else {
+                wm.sync_constraints_from_geometry();
                 for (wm.current_graph.nodes.items) |n| {
                     if (n.floating) continue;
                     switch (n.content) {
@@ -1037,6 +1039,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
             if (node.floating) {
                 float_mod.raise_floating_windows(wm);
             } else {
+                wm.sync_constraints_from_geometry();
                 // Fire resize on all tiled window nodes in current graph
                 for (wm.current_graph.nodes.items) |n| {
                     if (n.floating) continue;

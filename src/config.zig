@@ -91,11 +91,15 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
                 },
                 .split => |s| {
                     const cont_id = global_wm.get_id_for_node(s.container) orelse 0;
-                    buf.print(allocator, "{s}  [{d}] --split({s},count={})--> [{d}]\n", .{
+                    buf.print(allocator, "{s}  [{d}] --split({s},count={}", .{
                         ind.items, from_id,
                         if (s.axis == .horizontal) "h" else "v",
-                        s.count, cont_id,
+                        s.count,
                     }) catch {};
+                    for (0..s.count) |i| {
+                        buf.print(allocator, ",r={d:.3}", .{s.ratios[i]}) catch {};
+                    }
+                    buf.print(allocator, ")--> [{d}]\n", .{cont_id}) catch {};
                 },
                 .fixed_width  => |w| buf.print(allocator, "{s}  [{d}] fixed_width={}\n",      .{ ind.items, from_id, w }) catch {},
                 .fixed_height => |h| buf.print(allocator, "{s}  [{d}] fixed_height={}\n",     .{ ind.items, from_id, h }) catch {},
@@ -326,7 +330,28 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_print_graph),                       .name = "print_graph" },
     .{ .func = ziglua.wrap(l_get_workspace_positions),           .name = "get_workspace_positions" },
     .{ .func = ziglua.wrap(l_get_current_workspace_position),    .name = "get_current_workspace_position" },
+    .{ .func = ziglua.wrap(l_get_split_ratios),                  .name = "get_split_ratios" },
 };
+
+fn l_get_split_ratios(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    for (node.constraints.items) |con| {
+        if (con == .split) {
+            lua.newTable();
+            for (0..con.split.count) |i| {
+                lua.pushNumber(con.split.ratios[i]);
+                lua.setIndexRaw(-2, @intCast(i + 1));
+            }
+            return 1;
+        }
+    }
+    lua.pushNil();
+    return 1;
+}
 
 fn l_get_workspace_positions(lua: *Lua) i32 {
     const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
