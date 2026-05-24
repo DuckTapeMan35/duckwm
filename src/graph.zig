@@ -112,7 +112,6 @@ pub const Node = struct {
     border_color_focused: ?u32, // ARGB
     border_color_unfocused: ?u32,
 
-    pending_destroy: bool,
     on_remove: ?ReparentStrategy,
     dead: bool,
 
@@ -135,7 +134,6 @@ pub const Node = struct {
 
             .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4), //TODO: make so no constrants don't allocate at all
 
-            .pending_destroy = false,
             .on_remove = null,
             .dead = false,
         };
@@ -177,6 +175,10 @@ pub const Graph = struct {
     arranger_ref: i32,
     arranger_index: i32,
     arranger_name: []const u8,
+    preview_bg: ?u32,
+    preview_win_bg: ?u32,
+    preview_border: ?u32,
+    preview_text: ?u32,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -202,6 +204,10 @@ pub const Graph = struct {
             .arranger_ref = 0,
             .arranger_index = 0,
             .arranger_name = "",
+            .preview_bg     = null,
+            .preview_win_bg = null,
+            .preview_border = null,
+            .preview_text   = null,
             .allocator = allocator,
         };
     }

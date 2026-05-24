@@ -27,8 +27,8 @@ pub const categories = [_][]const u8{
     "Geometry",
     "Appearance",
     "Rules",
+    "Node Graph",
     "Debug",
-    "IPC & Process",
 };
 
 pub const constants = [_]Constant{
@@ -427,15 +427,17 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Workspaces",
-        .name     = "set_preview_colors",
-        .desc     = "Set the colors used when drawing workspace preview thumbnails. Colors are 0xRRGGBB.",
-        .params   = &.{
-            .{ .name = "bg",     .typ = "integer" },
-            .{ .name = "win_bg", .typ = "integer" },
-            .{ .name = "border", .typ = "integer" },
-            .{ .name = "text",   .typ = "integer" },
-        },
-        .ret = "nil",
+        .name     = "get_workspace_positions",
+        .desc     = "Return a list of positional indices (1-based) for all workspaces at the current level, sorted by creation order. Use this for bar display — index N corresponds to switch_to_workspace(N).",
+        .params   = &.{},
+        .ret      = "integer[]",
+    },
+    .{
+        .category = "Workspaces",
+        .name     = "get_current_workspace_position",
+        .desc     = "Return the positional index (1-based) of the currently active workspace, matching switch_to_workspace. Returns nil if not found.",
+        .params   = &.{},
+        .ret      = "integer|nil",
     },
 
     // =========================================================
@@ -965,6 +967,31 @@ pub const entries = [_]ApiEntry{
         .desc     = "Override the unfocused border color for a specific node (0xRRGGBB).",
         .params   = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "color", .typ = "integer" } },
         .ret      = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "set_preview_colors",
+        .desc     = "Set the colors used when drawing workspace preview thumbnails. Colors are 0xRRGGBB.",
+        .params   = &.{
+            .{ .name = "bg",     .typ = "integer" },
+            .{ .name = "win_bg", .typ = "integer" },
+            .{ .name = "border", .typ = "integer" },
+            .{ .name = "text",   .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+    .category = "Appearance",
+        .name     = "set_preview_colors_workspace",
+        .desc     = "Override the preview colors for a specific workspace node. Falls back to global preview colors for any value not set.",
+        .params   = &.{
+            .{ .name = "id",     .typ = "integer" },
+            .{ .name = "bg",     .typ = "integer" },
+            .{ .name = "win_bg", .typ = "integer" },
+            .{ .name = "border", .typ = "integer" },
+            .{ .name = "text",   .typ = "integer" },
+        },
+        .ret = "nil",
     },
 
     // =========================================================

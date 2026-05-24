@@ -199,6 +199,7 @@ fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) 
 }
 
 const registrations = [_]Registration{
+    .{ .func = ziglua.wrap(l_set_preview_colors_workspace),      .name = "set_preview_colors_workspace" },
     .{ .func = ziglua.wrap(l_bind),                              .name = "bind" },
     .{ .func = ziglua.wrap(l_spawn),                             .name = "spawn" },
     .{ .func = ziglua.wrap(l_setenv),                            .name = "setenv" },
@@ -323,7 +324,82 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_add_rule),                          .name = "add_rule" },
     .{ .func = ziglua.wrap(l_remove_rule),                       .name = "remove_rule" },
     .{ .func = ziglua.wrap(l_print_graph),                       .name = "print_graph" },
+    .{ .func = ziglua.wrap(l_get_workspace_positions),           .name = "get_workspace_positions" },
+    .{ .func = ziglua.wrap(l_get_current_workspace_position),    .name = "get_current_workspace_position" },
 };
+
+fn l_get_workspace_positions(lua: *Lua) i32 {
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse &global_wm.graph
+    else
+        &global_wm.graph;
+
+    // Full list sorted by creation ID
+    var all: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
+    defer all.deinit(global_wm.allocator);
+    for (parent_graph.nodes.items) |node| {
+        if (node.content == .workspace)
+            all.append(global_wm.allocator, node) catch return 0;
+    }
+    std.sort.heap(*graph_mod.Node, all.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    // Return positional indices (1-based) for occupied or current workspaces
+    lua.newTable();
+    var out_idx: i64 = 1;
+    for (all.items, 0..) |node, i| {
+        const sub = node.content.workspace;
+        const is_current = (sub == global_wm.current_graph);
+        var has_content = false;
+        for (sub.nodes.items) |n| {
+            switch (n.content) {
+                .window, .workspace => { has_content = true; break; },
+                else => {},
+            }
+        }
+        if (is_current or has_content) {
+            lua.pushInteger(@intCast(i + 1)); // actual position in full list
+            lua.setIndexRaw(-2, out_idx);
+            out_idx += 1;
+        }
+    }
+    return 1;
+}
+
+fn l_get_current_workspace_position(lua: *Lua) i32 {
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse &global_wm.graph
+    else
+        &global_wm.graph;
+
+    var all: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
+    defer all.deinit(global_wm.allocator);
+    for (parent_graph.nodes.items) |node| {
+        if (node.content == .workspace)
+            all.append(global_wm.allocator, node) catch return 0;
+    }
+    std.sort.heap(*graph_mod.Node, all.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    for (all.items, 0..) |node, i| {
+        if (node.content.workspace == global_wm.current_graph) {
+            lua.pushInteger(@intCast(i + 1));
+            return 1;
+        }
+    }
+    lua.pushNil();
+    return 1;
+}
 
 fn l_print_graph(lua: *Lua) i32 {
     var buf = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
@@ -381,6 +457,30 @@ fn l_set_preview_colors(lua: *Lua) i32 {
     const border: u32 = @intCast(lua.checkInteger(3));
     const text:   u32 = @intCast(lua.checkInteger(4));
     global_wm.set_preview_colors(bg, win_bg, border, text);
+    for (global_wm.current_graph.nodes.items) |node| {
+        if (node.content == .workspace and !node.hidden) {
+            global_wm.repaint_preview(node);
+        }
+    }
+    _ = c.XFlush(global_wm.display);
+    return 0;
+}
+
+fn l_set_preview_colors_workspace(lua: *Lua) i32 {
+    const id:     u32 = @intCast(lua.checkInteger(1));
+    const bg:     u32 = @intCast(lua.checkInteger(2));
+    const win_bg: u32 = @intCast(lua.checkInteger(3));
+    const border: u32 = @intCast(lua.checkInteger(4));
+    const text:   u32 = @intCast(lua.checkInteger(5));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    if (node.content != .workspace) return 0;
+    const sub = node.content.workspace;
+    sub.preview_bg     = bg;
+    sub.preview_win_bg = win_bg;
+    sub.preview_border = border;
+    sub.preview_text   = text;
+    global_wm.repaint_preview(node);
+    _ = c.XFlush(global_wm.display);
     return 0;
 }
 

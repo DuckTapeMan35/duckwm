@@ -1065,13 +1065,36 @@ pub const WM = struct {
 
     pub fn leave_workspace(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
-        // Don't leave if the parent is the root graph (top-level)
-        const parent = self.workspace_stack.items[self.workspace_stack.items.len - 1];
-        if (parent == &self.graph) return;
+
+        // Find the first entry in the stack that is at a lower level
+        const current_level = self.current_graph.id.level;
+        var target_idx: ?usize = null;
+        var i = self.workspace_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            const g = self.workspace_stack.items[i];
+            if (g == &self.graph) break; // never pop past root
+            if (g.id.level < current_level) {
+                target_idx = i;
+                break;
+            }
+        }
+
+        _ = if (target_idx) |idx|
+            self.workspace_stack.items[idx]
+        else
+            return; // nothing to go up to
+
         hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
+
+        // Pop down to target
+        while (self.workspace_stack.items.len > target_idx.? + 1) {
+            _ = self.workspace_stack.pop();
+        }
         self.current_graph = self.workspace_stack.pop().?;
+
         show_graph_frames(self, self.current_graph);
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
@@ -1081,11 +1104,25 @@ pub const WM = struct {
 
     pub fn leave_workspace_silent(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
-        const parent = self.workspace_stack.items[self.workspace_stack.items.len - 1];
-        if (parent == &self.graph) return;
+        const current_level = self.current_graph.id.level;
+        var target_idx: ?usize = null;
+        var i = self.workspace_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            const g = self.workspace_stack.items[i];
+            if (g == &self.graph) break;
+            if (g.id.level < current_level) {
+                target_idx = i;
+                break;
+            }
+        }
+        const idx = target_idx orelse return;
         hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
+        while (self.workspace_stack.items.len > idx + 1) {
+            _ = self.workspace_stack.pop();
+        }
         self.current_graph = self.workspace_stack.pop().?;
     }
 
@@ -1274,6 +1311,19 @@ pub const WM = struct {
                 if (node.content.workspace == self.current_graph) {
                     try self.leave_workspace();
                 }
+                // Check for siblings with content at the same level
+                if (node.owner_graph) |og| {
+                    const killed_level = node.content.workspace.id.level;
+                    for (og.nodes.items) |sibling| {
+                        if (sibling == node) continue;
+                        if (sibling.content != .workspace) continue;
+                        if (sibling.content.workspace.id.level != killed_level) continue;
+                        if (graph_has_content(sibling.content.workspace)) {
+                            self.notify("Windows left behind", "Other workspaces at this level still have windows open");
+                            break;
+                        }
+                    }
+                }
                 // Clean up children first — removes from registry so their
                 // DestroyNotify events are ignored
                 self.kill_graph_windows(node.content.workspace);
@@ -1285,6 +1335,22 @@ pub const WM = struct {
             },
             else => {},
         }
+    }
+
+    fn graph_has_content(g: *graph_mod.Graph) bool {
+        for (g.nodes.items) |node| {
+            switch (node.content) {
+                .window => return true,
+                .workspace => |sub| if (graph_has_content(sub)) return true,
+                .empty => {},
+            }
+        }
+        return false;
+    }
+
+    pub fn notify(self: *WM, summary: []const u8, body: []const u8) void {
+        const argv = [_][]const u8{ "notify-send", "-a", "duckwm", summary, body };
+        self.spawn(&argv) catch {};
     }
 
     pub fn show_error_bar(self: *WM, msg: []const u8) void {

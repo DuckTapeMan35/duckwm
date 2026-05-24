@@ -27,6 +27,12 @@ fn get_wm_class(display: *c.Display, win: c.Window, buf: []u8) []const u8 {
 }
 
 pub fn draw_preview(display: *c.Display, pw: c.Window, sub: *Graph, preview_w: u32, preview_h: u32) void {
+    const colors = PreviewColors{
+        .bg     = sub.preview_bg     orelse preview_colors.bg,
+        .win_bg = sub.preview_win_bg orelse preview_colors.win_bg,
+        .border = sub.preview_border orelse preview_colors.border,
+        .text   = sub.preview_text   orelse preview_colors.text,
+    };
     var src_x1: i32 = std.math.maxInt(i32);
     var src_y1: i32 = std.math.maxInt(i32);
     var src_x2: i32 = std.math.minInt(i32);
@@ -48,7 +54,7 @@ pub fn draw_preview(display: *c.Display, pw: c.Window, sub: *Graph, preview_w: u
     defer _ = c.XFreeGC(display, gc);
 
     // Background
-    _ = c.XSetForeground(display, gc, preview_colors.bg & 0xFFFFFF);
+    _ = c.XSetForeground(display, gc, colors.bg & 0xFFFFFF);
     _ = c.XFillRectangle(display, pw, gc, 0, 0, preview_w, preview_h);
 
     if (src_x1 == std.math.maxInt(i32)) return;
@@ -70,9 +76,9 @@ pub fn draw_preview(display: *c.Display, pw: c.Window, sub: *Graph, preview_w: u
 
     var xft_color: c.XftColor = undefined;
     var render_color = c.XRenderColor{
-        .red   = @intCast(((preview_colors.text >> 16) & 0xFF) * 0x101),
-        .green = @intCast(((preview_colors.text >> 8)  & 0xFF) * 0x101),
-        .blue  = @intCast(((preview_colors.text)       & 0xFF) * 0x101),
+        .red   = @intCast(((colors.text >> 16) & 0xFF) * 0x101),
+        .green = @intCast(((colors.text >> 8)  & 0xFF) * 0x101),
+        .blue  = @intCast(((colors.text)       & 0xFF) * 0x101),
         .alpha = 0xffff,
     };
     _ = c.XftColorAllocValue(display, visual, colormap, &render_color, &xft_color);
@@ -100,11 +106,11 @@ pub fn draw_preview(display: *c.Display, pw: c.Window, sub: *Graph, preview_w: u
         const iy: i32 = @intFromFloat(ry);
 
         // Window background
-        _ = c.XSetForeground(display, gc, preview_colors.win_bg & 0xFFFFFF);
+        _ = c.XSetForeground(display, gc, colors.win_bg & 0xFFFFFF);
         _ = c.XFillRectangle(display, pw, gc, ix, iy, rw, rh);
 
         // Border
-        _ = c.XSetForeground(display, gc, preview_colors.border & 0xFFFFFF);
+        _ = c.XSetForeground(display, gc, colors.border & 0xFFFFFF);
         _ = c.XDrawRectangle(display, pw, gc, ix, iy, rw - 1, rh - 1);
 
         if (rw > 8 and rh > 8) {

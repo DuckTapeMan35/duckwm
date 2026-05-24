@@ -603,7 +603,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     // Remove from graph
     if (dying) |d| {
-        std.debug.print("Destroying node for window {} (id {})\n", .{ win, dying_id orelse 0 });
         if (d.owner_graph) |og| {
             og.remove_node(d);
         }
