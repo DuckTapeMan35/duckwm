@@ -119,6 +119,28 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
     }
 }
 
+
+fn applyOther(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime tag: std.meta.Tag(graph_mod.Constraint)) void {
+    _ = lua.getField(-1, "other");
+    const other_id: u32 = @intCast(lua.toInteger(-1) catch 0);
+    lua.pop(1);
+    const other = global_wm.get_node_by_id(other_id) orelse return;
+    g.add_constraint(node, switch (tag) {
+        .left_of     => .{ .left_of     = other },
+        .right_of    => .{ .right_of    = other },
+        .above       => .{ .above       = other },
+        .below       => .{ .below       = other },
+        .align_left  => .{ .align_left  = other },
+        .align_top   => .{ .align_top   = other },
+        .align_right => .{ .align_right = other },
+        .align_bottom=> .{ .align_bottom= other },
+        .equal_width => .{ .equal_width = other },
+        .equal_height=> .{ .equal_height= other },
+        else => return,
+    }) catch {};
+}
+
+
 fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) void {
     // Call factory to get arranger function
     _ = lua.getIndexRaw(ziglua.registry_index, factory_ref);
@@ -331,7 +353,378 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_get_workspace_positions),           .name = "get_workspace_positions" },
     .{ .func = ziglua.wrap(l_get_current_workspace_position),    .name = "get_current_workspace_position" },
     .{ .func = ziglua.wrap(l_get_split_ratios),                  .name = "get_split_ratios" },
+    .{ .func = ziglua.wrap(l_get_layout),                        .name = "get_layout" },
+    .{ .func = ziglua.wrap(l_set_layout),                        .name = "set_layout" },
 };
+
+fn l_set_layout(lua: *Lua) i32 {
+    lua.checkType(1, .table);
+    const g = global_wm.current_graph;
+
+    // get nodes array
+    _ = lua.getField(1, "nodes");
+    if (lua.typeOf(-1) != .table) {
+        lua.pop(1);
+        return luaL_error_str(lua, "set_layout: expected table with 'nodes' array");
+    }
+    const n_nodes: usize = @intCast(lua.lenRaw(-1));
+
+    // first pass: clear all constraints for nodes in the layout
+    for (0..n_nodes) |i| {
+        _ = lua.getIndexRaw(-1, @intCast(i + 1));
+        _ = lua.getField(-1, "id");
+        const id: u32 = @intCast(lua.toInteger(-1) catch 0);
+        lua.pop(1);
+        if (id != 0) {
+            if (global_wm.get_node_by_id(id)) |node| {
+                node.constraints.clearRetainingCapacity();
+            }
+        }
+        lua.pop(1);
+    }
+
+    // second pass: apply constraints
+    for (0..n_nodes) |i| {
+        _ = lua.getIndexRaw(-1, @intCast(i + 1));
+
+        _ = lua.getField(-1, "id");
+        const id: u32 = @intCast(lua.toInteger(-1) catch 0);
+        lua.pop(1);
+
+        const node = global_wm.get_node_by_id(id) orelse {
+            lua.pop(1);
+            continue;
+        };
+
+        _ = lua.getField(-1, "constraints");
+        if (lua.typeOf(-1) == .table) {
+            const n_cons: usize = @intCast(lua.lenRaw(-1));
+            for (0..n_cons) |ci| {
+                _ = lua.getIndexRaw(-1, @intCast(ci + 1));
+
+                _ = lua.getField(-1, "type");
+                const con_type = lua.toString(-1) catch {
+                    lua.pop(2);
+                    continue;
+                };
+                lua.pop(1);
+
+                if (std.mem.eql(u8, con_type, "fixed_x")) {
+                    _ = lua.getField(-1, "value");
+                    const v: i32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    g.add_constraint(node, .{ .fixed_x = v }) catch {};
+                } else if (std.mem.eql(u8, con_type, "fixed_y")) {
+                    _ = lua.getField(-1, "value");
+                    const v: i32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    g.add_constraint(node, .{ .fixed_y = v }) catch {};
+                } else if (std.mem.eql(u8, con_type, "fixed_width")) {
+                    _ = lua.getField(-1, "value");
+                    const v: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    g.add_constraint(node, .{ .fixed_width = v }) catch {};
+                } else if (std.mem.eql(u8, con_type, "fixed_height")) {
+                    _ = lua.getField(-1, "value");
+                    const v: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    g.add_constraint(node, .{ .fixed_height = v }) catch {};
+                } else if (std.mem.eql(u8, con_type, "fixed_ratio")) {
+                    _ = lua.getField(-1, "value");
+                    const v: f32 = @floatCast(lua.toNumber(-1) catch 0);
+                    lua.pop(1);
+                    g.add_constraint(node, .{ .fixed_ratio = v }) catch {};
+                } else if (std.mem.eql(u8, con_type, "grid_cell")) {
+                    _ = lua.getField(-1, "col");  const col:  u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "row");  const row:  u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "cols"); const cols: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "rows"); const rows: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "container");
+                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    const cont = global_wm.get_node_by_id(cont_id) orelse { lua.pop(1); continue; };
+                    g.add_constraint(node, .{ .grid_cell = .{
+                        .col = col, .row = row, .cols = cols, .rows = rows, .container = cont,
+                    }}) catch {};
+                } else if (std.mem.eql(u8, con_type, "grid_cell_abs")) {
+                    _ = lua.getField(-1, "x"); const x: i32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "y"); const y: i32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "w"); const w: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "h"); const h: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "container");
+                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    const cont = global_wm.get_node_by_id(cont_id) orelse { lua.pop(1); continue; };
+                    g.add_constraint(node, .{ .grid_cell_abs = .{
+                        .x = x, .y = y, .w = w, .h = h, .container = cont,
+                    }}) catch {};
+                } else if (std.mem.eql(u8, con_type, "split")) {
+                    _ = lua.getField(-1, "axis");
+                    const axis_str = lua.toString(-1) catch "h"; lua.pop(1);
+                    const axis: graph_mod.SplitAxis = if (std.mem.eql(u8, axis_str, "h")) .horizontal else .vertical;
+                    _ = lua.getField(-1, "count");
+                    const count: u8 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "container");
+                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    const cont = global_wm.get_node_by_id(cont_id) orelse { lua.pop(1); continue; };
+
+                    var con = graph_mod.Constraint{ .split = .{
+                        .container = cont,
+                        .axis      = axis,
+                        .count     = count,
+                        .ratios    = undefined,
+                        .children  = undefined,
+                    }};
+
+                    _ = lua.getField(-1, "ratios");
+                    for (0..count) |ri| {
+                        _ = lua.getIndexRaw(-1, @intCast(ri + 1));
+                        con.split.ratios[ri] = @floatCast(lua.toNumber(-1) catch 0.5);
+                        lua.pop(1);
+                    }
+                    lua.pop(1);
+
+                    _ = lua.getField(-1, "children");
+                    for (0..count) |ci2| {
+                        _ = lua.getIndexRaw(-1, @intCast(ci2 + 1));
+                        const child_id: u32 = @intCast(lua.toInteger(-1) catch 0);
+                        lua.pop(1);
+                        con.split.children[ci2] = global_wm.get_node_by_id(child_id) orelse {
+                            lua.pop(2);
+                            return luaL_error_str(lua, "set_layout: invalid child id in split");
+                        };
+                    }
+                    lua.pop(1);
+
+                    g.add_constraint(node, con) catch {};
+                } else if (std.mem.eql(u8, con_type, "left_of"))     { applyOther(lua, g, node, .left_of);     }
+                  else if (std.mem.eql(u8, con_type, "right_of"))    { applyOther(lua, g, node, .right_of);    }
+                  else if (std.mem.eql(u8, con_type, "above"))       { applyOther(lua, g, node, .above);       }
+                  else if (std.mem.eql(u8, con_type, "below"))       { applyOther(lua, g, node, .below);       }
+                  else if (std.mem.eql(u8, con_type, "align_left"))  { applyOther(lua, g, node, .align_left);  }
+                  else if (std.mem.eql(u8, con_type, "align_top"))   { applyOther(lua, g, node, .align_top);   }
+                  else if (std.mem.eql(u8, con_type, "align_right")) { applyOther(lua, g, node, .align_right); }
+                  else if (std.mem.eql(u8, con_type, "align_bottom")){ applyOther(lua, g, node, .align_bottom);}
+                  else if (std.mem.eql(u8, con_type, "equal_width")) { applyOther(lua, g, node, .equal_width); }
+                  else if (std.mem.eql(u8, con_type, "equal_height")){ applyOther(lua, g, node, .equal_height);}
+
+                lua.pop(1); // constraint table
+            }
+        }
+        lua.pop(1); // constraints
+        lua.pop(1); // node table
+    }
+
+    lua.pop(1); // nodes array
+    return 0;
+}
+
+fn l_get_layout(lua: *Lua) i32 {
+    const g = global_wm.current_graph;
+
+    _ = lua.checkStack(20) catch {};
+
+    // build parent map
+    var parent_map = std.AutoHashMapUnmanaged(*graph_mod.Node, *graph_mod.Node){};
+    defer parent_map.deinit(global_wm.allocator);
+    var parent_idx_map = std.AutoHashMapUnmanaged(*graph_mod.Node, u8){};
+    defer parent_idx_map.deinit(global_wm.allocator);
+
+    for (g.nodes.items) |node| {
+        for (node.constraints.items) |con| {
+            if (con == .split) {
+                for (0..con.split.count) |i| {
+                    parent_map.put(global_wm.allocator, con.split.children[i], node) catch {};
+                    parent_idx_map.put(global_wm.allocator, con.split.children[i], @intCast(i + 1)) catch {};
+                }
+            }
+        }
+    }
+
+    // result table at index 1
+    lua.newTable();
+
+    // by_id table at index 2
+    lua.newTable();
+
+    // build node tables, storing in by_id
+    for (g.nodes.items) |node| {
+        const id = global_wm.get_id_for_node(node) orelse continue;
+
+        _ = lua.checkStack(30) catch {};
+
+        // node table
+        lua.newTable();
+
+        lua.pushInteger(@intCast(id));
+        lua.setField(-2, "id");
+
+        _ = switch (node.content) {
+            .window    => lua.pushString("window"),
+            .empty     => lua.pushString("empty"),
+            .workspace => lua.pushString("workspace"),
+        };
+        lua.setField(-2, "type");
+
+        lua.pushInteger(node.x);      lua.setField(-2, "x");
+        lua.pushInteger(node.y);      lua.setField(-2, "y");
+        lua.pushInteger(node.width);  lua.setField(-2, "width");
+        lua.pushInteger(node.height); lua.setField(-2, "height");
+
+        if (parent_map.get(node)) |pn| {
+            if (global_wm.get_id_for_node(pn)) |pid| {
+                lua.pushInteger(@intCast(pid));
+                lua.setField(-2, "parent");
+                lua.pushInteger(@intCast(parent_idx_map.get(node) orelse 1));
+                lua.setField(-2, "parent_idx");
+            } else {
+                lua.pushNil(); lua.setField(-2, "parent");
+                lua.pushNil(); lua.setField(-2, "parent_idx");
+            }
+        } else {
+            lua.pushNil(); lua.setField(-2, "parent");
+            lua.pushNil(); lua.setField(-2, "parent_idx");
+        }
+
+        // constraints array
+        lua.newTable();
+        for (node.constraints.items, 0..) |con, ci| {
+            _ = lua.checkStack(20) catch {};
+            lua.newTable();
+            switch (con) {
+                .fixed_x      => |v| { _ = lua.pushString("fixed_x");      lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
+                .fixed_y      => |v| { _ = lua.pushString("fixed_y");      lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
+                .fixed_width  => |v| { _ = lua.pushString("fixed_width");  lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
+                .fixed_height => |v| { _ = lua.pushString("fixed_height"); lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
+                .fixed_ratio  => |v| { _ = lua.pushString("fixed_ratio");  lua.setField(-2, "type"); lua.pushNumber(v);  lua.setField(-2, "value"); },
+                .grid_cell => |gc| {
+                    _ = lua.pushString("grid_cell"); lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(gc.col));  lua.setField(-2, "col");
+                    lua.pushInteger(@intCast(gc.row));  lua.setField(-2, "row");
+                    lua.pushInteger(@intCast(gc.cols)); lua.setField(-2, "cols");
+                    lua.pushInteger(@intCast(gc.rows)); lua.setField(-2, "rows");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(gc.container) orelse 0));
+                    lua.setField(-2, "container");
+                },
+                .grid_cell_abs => |gc| {
+                    _ = lua.pushString("grid_cell_abs"); lua.setField(-2, "type");
+                    lua.pushInteger(gc.x); lua.setField(-2, "x");
+                    lua.pushInteger(gc.y); lua.setField(-2, "y");
+                    lua.pushInteger(gc.w); lua.setField(-2, "w");
+                    lua.pushInteger(gc.h); lua.setField(-2, "h");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(gc.container) orelse 0));
+                    lua.setField(-2, "container");
+                },
+                .split => |s| {
+                    _ = lua.pushString("split"); lua.setField(-2, "type");
+                    _ = lua.pushString(if (s.axis == .horizontal) "h" else "v");
+                    lua.setField(-2, "axis");
+                    lua.pushInteger(@intCast(s.count)); lua.setField(-2, "count");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(s.container) orelse 0));
+                    lua.setField(-2, "container");
+                    // ratios
+                    lua.newTable();
+                    for (0..s.count) |ri| {
+                        lua.pushNumber(s.ratios[ri]);
+                        lua.setIndexRaw(-2, @intCast(ri + 1));
+                    }
+                    lua.setField(-2, "ratios");
+                    // children
+                    lua.newTable();
+                    for (0..s.count) |ci2| {
+                        lua.pushInteger(@intCast(global_wm.get_id_for_node(s.children[ci2]) orelse 0));
+                        lua.setIndexRaw(-2, @intCast(ci2 + 1));
+                    }
+                    lua.setField(-2, "children");
+                },
+                .left_of      => |o| { _ = lua.pushString("left_of");      lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .right_of     => |o| { _ = lua.pushString("right_of");     lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .above        => |o| { _ = lua.pushString("above");        lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .below        => |o| { _ = lua.pushString("below");        lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .align_left   => |o| { _ = lua.pushString("align_left");   lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .align_top    => |o| { _ = lua.pushString("align_top");    lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .align_right  => |o| { _ = lua.pushString("align_right");  lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .align_bottom => |o| { _ = lua.pushString("align_bottom"); lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .equal_width  => |o| { _ = lua.pushString("equal_width");  lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .equal_height => |o| { _ = lua.pushString("equal_height"); lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+            }
+            lua.setIndexRaw(-2, @intCast(ci + 1)); // constraints[ci+1] = con_table
+        }
+        lua.setField(-2, "constraints"); // node.constraints = constraints_table
+
+        // node table is at top, by_id is at -2, result is at -3
+        // dup node table and store in by_id[id]
+        lua.pushValue(-1);              // dup node table
+        lua.setIndexRaw(-3, @intCast(id)); // by_id[id] = node_table, pops dup
+        // node table still at top
+        // we'll collect into nodes array below, for now just leave it
+        // actually we need to store it — push into a temp list
+        // simplest: store directly into nodes array now
+        // but we don't have nodes array yet...
+        // solution: store in by_id now, build nodes array from by_id after
+        lua.pop(1); // pop node table (it's stored in by_id)
+    }
+
+    // now build nodes array from g.nodes order, pulling from by_id
+    lua.newTable(); // nodes array, stack: result, by_id, nodes
+    for (g.nodes.items, 0..) |node, i| {
+        const id = global_wm.get_id_for_node(node) orelse continue;
+        lua.pushInteger(@intCast(id));
+        _ = lua.getTable(-3); // by_id[id] → pushes node table, stack: result, by_id, nodes, node
+        lua.setIndexRaw(-2, @intCast(i + 1)); // nodes[i+1] = node, pops node
+    }
+    lua.setField(-3, "nodes"); // result.nodes = nodes, pops nodes; stack: result, by_id
+
+    // set by_id on result
+    lua.setField(-2, "by_id"); // result.by_id = by_id, pops by_id; stack: result
+
+    // windows array
+    lua.newTable();
+    var wi: usize = 0;
+    for (g.nodes.items) |node| {
+        switch (node.content) {
+            .window, .workspace => {
+                if (global_wm.get_id_for_node(node)) |id| {
+                    lua.pushInteger(@intCast(id));
+                    lua.setIndexRaw(-2, @intCast(wi + 1));
+                    wi += 1;
+                }
+            },
+            else => {},
+        }
+    }
+    lua.setField(-2, "windows"); // result.windows = windows
+
+    // focused
+    if (global_wm.focused) |f| {
+        if (global_wm.get_id_for_node(f)) |fid| {
+            lua.pushInteger(@intCast(fid));
+        } else {
+            lua.pushNil();
+        }
+    } else {
+        lua.pushNil();
+    }
+    lua.setField(-2, "focused");
+
+    // root: empty node not referenced as a split child
+    var root_id: u32 = 0;
+    for (g.nodes.items) |node| {
+        if (node.content != .empty) continue;
+        if (parent_map.get(node) == null) {
+            if (global_wm.get_id_for_node(node)) |id| {
+                root_id = id;
+                break;
+            }
+        }
+    }
+    if (root_id != 0) {
+        lua.pushInteger(@intCast(root_id));
+    } else {
+        lua.pushNil();
+    }
+    lua.setField(-2, "root");
+
+    return 1; // result table
+}
 
 fn l_get_split_ratios(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));

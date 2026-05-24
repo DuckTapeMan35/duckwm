@@ -105,9 +105,15 @@ fn is_focusable_panel(display: *c.Display, win: c.Window) bool {
     return false;
 }
 
-fn is_dialog(display: *c.Display, win: c.Window) bool {
+fn should_float(display: *c.Display, win: c.Window) bool {
     const net_wm_window_type = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE", 0);
-    const net_wm_window_type_dialog = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", 0);
+    const dialog   = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", 0);
+    const utility  = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_UTILITY", 0);
+    const splash   = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_SPLASH", 0);
+    const popup    = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_POPUP_MENU", 0);
+    const menu     = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_MENU", 0);
+    const tooltip  = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_TOOLTIP", 0);
+    const notification = c.XInternAtom(display, "_NET_WM_WINDOW_TYPE_NOTIFICATION", 0);
 
     var actual_type: c.Atom = 0;
     var actual_format: c_int = 0;
@@ -116,15 +122,17 @@ fn is_dialog(display: *c.Display, win: c.Window) bool {
     var prop: ?*c_ulong = null;
 
     if (c.XGetWindowProperty(display, win, net_wm_window_type,
-        0, 2, 0, 0, &actual_type, &actual_format, &nitems, &bytes_after,
+        0, 8, 0, 0, &actual_type, &actual_format, &nitems, &bytes_after,
         @ptrCast(&prop)) != c.Success) return false;
-    if (nitems == 0) return false;
-    defer if (prop) |p| {_ = c.XFree(@ptrCast(p));};
-    if (actual_format != 32) return false;
+    defer if (prop) |p| { _ = c.XFree(@ptrCast(p)); };
+    if (nitems == 0 or actual_format != 32) return false;
 
     const atoms: [*]c_ulong = @ptrCast(prop);
     for (atoms[0..nitems]) |a| {
-        if (a == net_wm_window_type_dialog) return true;
+        if (a == dialog or a == utility or a == splash or
+            a == popup  or a == menu    or a == tooltip or
+            a == notification)
+            return true;
     }
     return false;
 }
@@ -141,7 +149,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     }
     std.debug.print("MapRequest: win={} w={} h={}\n", .{req.window, attrs.width, attrs.height});
 
-    const is_transient = get_transient_for(wm, req.window) != null or is_dialog(wm.display, req.window);
+    const is_transient = get_transient_for(wm, req.window) != null or should_float(wm.display, req.window);
 
     if (!is_transient and is_dock_or_toolbar(wm.display, req.window)) {
         _ = c.XMapWindow(wm.display, req.window);

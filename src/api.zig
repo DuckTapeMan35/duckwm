@@ -634,6 +634,35 @@ pub const entries = [_]ApiEntry{
         .params   = &.{ .{ .name = "button", .typ = "integer" } },
         .ret      = "nil",
     },
+    .{
+        .category = "Layout & Arrangers",
+        .name     = "get_layout",
+        .desc     =
+            \\Return the current graph as a rich Lua table with:
+            \\  nodes    — array of all node tables
+            \\  by_id    — map id -> node table (same objects as nodes, O(1) lookup)
+            \\  windows  — array of window/workspace node ids
+            \\  focused  — id of currently focused node, or nil
+            \\  root     — id of root container node, or nil
+            \\Each node table has: id, type, x, y, width, height, constraints, parent, parent_idx.
+            \\parent is the id of the split container that owns this node, or nil if root.
+            \\parent_idx is 1 or 2 indicating which child slot in the parent split.
+        ,
+        .params = &.{},
+        .ret    = "{ nodes: node[], by_id: table, windows: integer[], focused: integer|nil, root: integer|nil }",
+    },
+    .{
+    .category = "Layout & Arrangers",
+        .name     = "set_layout",
+        .desc     =
+            \\Apply a layout table to the current graph. Accepts the same format returned by get_layout.
+            \\Clears all constraints on nodes present in the table, then applies the constraints
+            \\described in each node's constraints array. Nodes are matched by id.
+            \\Typically called after mutating the table returned by get_layout.
+        ,
+        .params = &.{ .{ .name = "layout", .typ = "{ nodes: node[] }" } },
+        .ret    = "nil",
+    },
 
     // =========================================================
     // Constraints
