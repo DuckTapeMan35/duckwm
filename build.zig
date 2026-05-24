@@ -20,7 +20,7 @@ const MetaStep = struct {
     }
 
     fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
-        @setEvalBranchQuota(10000);
+        @setEvalBranchQuota(100000);
         const self: *MetaStep = @fieldParentPtr("step", step);
         const b = self.b;
         const io = b.graph.io;
@@ -58,21 +58,50 @@ const MetaStep = struct {
         {
             var buf: std.ArrayListUnmanaged(u8) = .empty;
             defer buf.deinit(b.allocator);
-            try buf.appendSlice(b.allocator, "# duckwm Lua API\n\n## Constants\n\n");
+            try buf.appendSlice(b.allocator, "# duckwm Lua API\n\n");
+
+            // Table of contents
+            try buf.appendSlice(b.allocator, "## Contents\n\n");
+            try buf.appendSlice(b.allocator, "- [Constants](#constants)\n");
+            inline for (api.categories) |cat| {
+                var anchor: [128]u8 = undefined;
+                var ai: usize = 0;
+                for (cat) |ch| {
+                    anchor[ai] = if (ch == ' ' or ch == '&') '-' else std.ascii.toLower(ch);
+                    ai += 1;
+                }
+                try buf.print(b.allocator, "- [{s}](#{s})\n", .{ cat, anchor[0..ai] });
+            }
+            try buf.appendSlice(b.allocator, "\n");
+
+            // Constants
+            try buf.appendSlice(b.allocator, "## Constants\n\n");
             inline for (api.constants) |con| {
                 try buf.print(b.allocator, "- **`wm.{s}`** — {s}\n", .{ con.name, con.desc });
             }
-            try buf.appendSlice(b.allocator, "\n## Functions\n\n");
-            inline for (api.entries) |entry| {
-                var sig: std.ArrayListUnmanaged(u8) = .empty;
-                defer sig.deinit(b.allocator);
-                inline for (entry.params, 0..) |p, i| {
-                    if (i > 0) try sig.appendSlice(b.allocator, ", ");
-                    try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
-                }
-                try buf.print(b.allocator, "### `wm.{s}({s})`\n\n{s}\n\n", .{ entry.name, sig.items, entry.desc });
-                if (!std.mem.eql(u8, entry.ret, "nil")) {
-                    try buf.print(b.allocator, "**Returns:** `{s}`\n\n", .{entry.ret});
+            try buf.appendSlice(b.allocator, "\n");
+
+            // Functions by category
+            inline for (api.categories) |cat| {
+                try buf.print(b.allocator, "## {s}\n\n", .{cat});
+                inline for (api.entries) |entry| {
+                    if (comptime !std.mem.eql(u8, entry.category, cat)) continue;
+                    var sig: std.ArrayListUnmanaged(u8) = .empty;
+                    defer sig.deinit(b.allocator);
+                    inline for (entry.params, 0..) |p, i| {
+                        if (i > 0) try sig.appendSlice(b.allocator, ", ");
+                        try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
+                    }
+                    try buf.print(b.allocator, "### `wm.{s}({s})`\n\n{s}\n\n", .{ entry.name, sig.items, entry.desc });
+                    if (entry.params.len > 0) {
+                        inline for (entry.params) |p| {
+                            try buf.print(b.allocator, "- **{s}** `{s}`\n", .{ p.name, p.typ });
+                        }
+                        try buf.appendSlice(b.allocator, "\n");
+                    }
+                    if (!std.mem.eql(u8, entry.ret, "nil")) {
+                        try buf.print(b.allocator, "**Returns:** `{s}`\n\n", .{entry.ret});
+                    }
                 }
             }
             try root.writeFile(io, .{ .sub_path = "API.md", .data = buf.items });
@@ -88,41 +117,54 @@ const MetaStep = struct {
                 \\categories: api reference
                 \\@end
                 \\
-                \\* Constants
+                \\* Contents
                 \\
             );
-            inline for (api.constants) |con| {
-                try buf.print(b.allocator,
-                    \\  - `wm.{s}` — {s}
-                    \\
-                , .{ con.name, con.desc });
+            try buf.appendSlice(b.allocator, "  - {* Constants}\n");
+            inline for (api.categories) |cat| {
+                try buf.print(b.allocator, "  - {{* {s}}}\n", .{cat});
             }
-            try buf.appendSlice(b.allocator, "\n* Functions\n\n");
-            inline for (api.entries) |entry| {
-                var sig: std.ArrayListUnmanaged(u8) = .empty;
-                defer sig.deinit(b.allocator);
-                inline for (entry.params, 0..) |p, i| {
-                    if (i > 0) try sig.appendSlice(b.allocator, ", ");
-                    try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
+            try buf.appendSlice(b.allocator, "\n");
+
+            // Constants
+            try buf.appendSlice(b.allocator, "* Constants\n\n");
+            inline for (api.constants) |con| {
+                try buf.print(b.allocator, "  - `wm.{s}` — {s}\n", .{ con.name, con.desc });
+            }
+            try buf.appendSlice(b.allocator, "\n");
+
+            // Functions by category
+            inline for (api.categories) |cat| {
+                try buf.print(b.allocator, "* {s}\n\n", .{cat});
+                inline for (api.entries) |entry| {
+                    if (comptime !std.mem.eql(u8, entry.category, cat)) continue;
+                    var sig: std.ArrayListUnmanaged(u8) = .empty;
+                    defer sig.deinit(b.allocator);
+                    inline for (entry.params, 0..) |p, i| {
+                        if (i > 0) try sig.appendSlice(b.allocator, ", ");
+                        try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
+                    }
+                    try buf.print(b.allocator, "** `wm.{s}({s})`\n", .{ entry.name, sig.items });
+                    var lines = std.mem.splitScalar(u8, entry.desc, '\n');
+                    while (lines.next()) |line| {
+                        const trimmed = std.mem.trim(u8, line, " \t");
+                        if (trimmed.len == 0) {
+                            try buf.appendSlice(b.allocator, "\n");
+                        } else {
+                            try buf.print(b.allocator, "   {s}\n", .{trimmed});
+                        }
+                    }
+                    if (entry.params.len > 0) {
+                        try buf.appendSlice(b.allocator, "\n");
+                        inline for (entry.params) |p| {
+                            try buf.print(b.allocator, "   - *{s}* `{s}`\n", .{ p.name, p.typ });
+                        }
+                    }
+                    if (!std.mem.eql(u8, entry.ret, "nil")) {
+                        try buf.print(b.allocator, "   - *Returns:* `{s}`\n", .{entry.ret});
+                    }
+                    try buf.appendSlice(b.allocator, "\n");
                 }
-                try buf.print(b.allocator,
-                    \\** `wm.{s}({s})`
-                    \\   {s}
-                    \\
-                , .{ entry.name, sig.items, entry.desc });
-                inline for (entry.params) |p| {
-                    try buf.print(b.allocator,
-                        \\   - *{s}* `{s}`
-                        \\
-                    , .{ p.name, p.typ });
-                }
-                if (!std.mem.eql(u8, entry.ret, "nil")) {
-                    try buf.print(b.allocator,
-                        \\   - *Returns:* `{s}`
-                        \\
-                    , .{entry.ret});
-                }
-                try buf.appendSlice(b.allocator, "\n");
             }
             try root.writeFile(io, .{ .sub_path = "API.norg", .data = buf.items });
         }
