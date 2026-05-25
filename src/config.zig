@@ -2429,11 +2429,8 @@ fn l_send_to_workspace(lua: *Lua) i32 {
         const saved_current = global_wm.current_graph;
         global_wm.current_graph = parent_graph;
         for (0..needed) |_| {
-            const sub = global_wm.allocator.create(graph_mod.Graph) catch
+            const sub = global_wm.create_workspace_graph(parent_graph.id.level + 1) catch
                 return luaL_error_str(lua, "out of memory");
-            sub.* = graph_mod.Graph.init(global_wm.allocator);
-            sub.id = global_wm.alloc_workspace_id(parent_graph.id.level + 1) catch
-                return luaL_error_str(lua, "failed to allocate workspace ID");
             const node = parent_graph.add_node(.{ .workspace = sub }) catch
                 return luaL_error_str(lua, "out of memory");
             sub.parent_node = node;
