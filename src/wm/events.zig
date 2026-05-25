@@ -1209,11 +1209,27 @@ pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
 
 pub fn on_expose(wm: *WM, ev: *c.XExposeEvent) void {
     if (ev.count != 0) return;
+    // Check if it's a regular client frame
     if (wm.get_client_from_frame(ev.window)) |client| {
         if (wm.window_to_node_id.get(client)) |node_id| {
             if (wm.node_registry.get(node_id)) |node| {
                 wm.draw_frame_borders(ev.window, node);
+                return;
             }
+        }
+    }
+    // Check if it's a workspace preview frame
+    var it = wm.frames.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.* == ev.window) {
+            const pw = entry.key_ptr.*;
+            if (wm.window_to_node_id.get(pw)) |node_id| {
+                if (wm.node_registry.get(node_id)) |node| {
+                    wm.draw_frame_borders(ev.window, node);
+                    wm.repaint_preview(node);
+                }
+            }
+            return;
         }
     }
 }
