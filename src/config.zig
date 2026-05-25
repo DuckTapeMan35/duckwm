@@ -2640,12 +2640,17 @@ fn l_reload_visuals(lua: *Lua) i32 {
 
     _ = lua.getGlobal("wm");
     for (registrations) |reg| {
-        const is_visual = std.mem.eql(u8, reg.name, "set_default_focused_border_color")
+        const is_visual =
+            std.mem.eql(u8,    reg.name, "set_default_focused_border_color")
             or std.mem.eql(u8, reg.name, "set_default_unfocused_border_color")
             or std.mem.eql(u8, reg.name, "set_default_urgent_border_color")
             or std.mem.eql(u8, reg.name, "set_border_width")
             or std.mem.eql(u8, reg.name, "set_gaps")
-            or std.mem.eql(u8, reg.name, "set_preview_colors");
+            or std.mem.eql(u8, reg.name, "set_preview_colors")
+            or std.mem.eql(u8, reg.name, "set_preview_colors_workspace")
+            or std.mem.eql(u8, reg.name, "clear_node_border_side_colors")
+            or std.mem.eql(u8, reg.name, "set_border_side_colors_focused_only")
+            or std.mem.eql(u8, reg.name, "set_cursor_theme");
         if (!is_visual) {
             _ = lua.getIndexRaw(ziglua.registry_index, noop_ref);
             lua.setField(-2, reg.name);
@@ -2669,21 +2674,18 @@ fn l_reload_visuals(lua: *Lua) i32 {
         restore.run(lua);
         return 0;
     };
-
     restore.run(lua);
 
-    // repaint borders
+    // repaint all borders using draw_frame_borders
     for (global_wm.current_graph.nodes.items) |node| {
         const win = switch (node.content) {
-            .window => |w| w,
-            else => continue,
+            .window    => |w| w,
+            .workspace => node.preview_window orelse continue,
+            .empty     => continue,
         };
         if (global_wm.frames.get(win)) |win_frame| {
-            const color = if (global_wm.focused == node)
-                node.border_color_focused orelse global_wm.default_border_color_focused
-            else
-                node.border_color_unfocused orelse global_wm.default_border_color_unfocused;
-            _ = c.XSetWindowBorder(global_wm.display, win_frame, color);
+            _ = c.XClearWindow(global_wm.display, win_frame);
+            global_wm.draw_frame_borders(win_frame, node);
         }
     }
 
