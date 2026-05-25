@@ -358,7 +358,22 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_node_border_side_color),         .name = "set_node_border_side_color" },
     .{ .func = ziglua.wrap(l_clear_node_border_side_colors),      .name = "clear_node_border_side_colors" },
     .{ .func = ziglua.wrap(l_set_border_side_colors_focused_only),.name = "set_border_side_colors_focused_only" },
+    .{ .func = ziglua.wrap(l_get_node_border_side_colors),        .name = "get_node_border_side_colors" },
 };
+
+fn l_get_node_border_side_colors(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse {
+        lua.pushNil();
+        return 1;
+    };
+    lua.newTable();
+    if (node.border_color_top) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "top"); }
+    if (node.border_color_bottom) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "bottom"); }
+    if (node.border_color_left) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "left"); }
+    if (node.border_color_right) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "right"); }
+    return 1;
+}
 
 fn l_set_node_border_side_color(lua: *Lua) i32 {
     const id: u32    = @intCast(lua.checkInteger(1));

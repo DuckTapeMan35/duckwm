@@ -1084,6 +1084,13 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .category = "Appearance",
+        .name     = "get_node_border_side_colors",
+        .desc     = "Return a table with the per-side border color overrides for a node. Only sides that have been explicitly set are present. Keys are 'top', 'bottom', 'left', 'right'. Returns nil if the node is not found.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "{ top: integer?, bottom: integer?, left: integer?, right: integer? }|nil",
+    },
 
     // =========================================================
     // Node Graph
