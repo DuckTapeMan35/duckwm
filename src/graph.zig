@@ -111,6 +111,10 @@ pub const Node = struct {
 
     border_color_focused: ?u32, // ARGB
     border_color_unfocused: ?u32,
+    border_color_top: ?u32,
+    border_color_bottom: ?u32,
+    border_color_left: ?u32,
+    border_color_right: ?u32,
 
     on_remove: ?ReparentStrategy,
     dead: bool,
@@ -131,6 +135,10 @@ pub const Node = struct {
 
             .border_color_focused = null,
             .border_color_unfocused = null,
+            .border_color_top = null,
+            .border_color_bottom = null,
+            .border_color_left = null,
+            .border_color_right = null,
 
             .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4), //TODO: make so no constrants don't allocate at all
 

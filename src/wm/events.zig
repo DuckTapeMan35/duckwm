@@ -1207,6 +1207,17 @@ pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     wm.flush(wm.current_graph) catch {};
 }
 
+pub fn on_expose(wm: *WM, ev: *c.XExposeEvent) void {
+    if (ev.count != 0) return;
+    if (wm.get_client_from_frame(ev.window)) |client| {
+        if (wm.window_to_node_id.get(client)) |node_id| {
+            if (wm.node_registry.get(node_id)) |node| {
+                wm.draw_frame_borders(ev.window, node);
+            }
+        }
+    }
+}
+
 pub fn on_leave_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     if (ev.mode != c.NotifyNormal) return;
 

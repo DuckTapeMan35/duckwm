@@ -147,6 +147,7 @@ pub const WM = struct {
     default_arranger_ref: i32,
     default_arranger_name: []const u8,
     border_width: i32,
+    border_side_colors_focused_only: bool,
     default_border_color_focused: u32,
     default_border_color_unfocused: u32,
     default_border_color_urgent: u32,
@@ -249,6 +250,7 @@ pub const WM = struct {
             .default_arranger_ref = 0,
             .default_arranger_name = "",
             .border_width = 2,
+            .border_side_colors_focused_only = true,
             .default_border_color_focused = 0x5294e2,
             .default_border_color_unfocused = 0x333333,
             .default_border_color_urgent = 0xe53935,
@@ -552,6 +554,55 @@ pub const WM = struct {
         _ = c.XSetWindowBorder(self.display, win_frame, color);
     }
 
+    pub fn draw_frame_borders(self: *WM, win_frame: c.Window, node: *Node) void {
+        const bw = self.border_width;
+        if (bw <= 0) return;
+
+        var root_ret: c.Window = undefined;
+        var x: c_int = 0; var y: c_int = 0;
+        var w: c_uint = 0; var h: c_uint = 0;
+        var bw_ret: c_uint = 0; var depth: c_uint = 0;
+        _ = c.XGetGeometry(self.display, win_frame, &root_ret,
+            &x, &y, &w, &h, &bw_ret, &depth);
+
+        const gc = c.XCreateGC(self.display, win_frame, 0, null);
+        defer _ = c.XFreeGC(self.display, gc);
+
+        const focused = (self.focused == node);
+        const base_color: u32 = if (node.urgent)
+            node.border_color_focused orelse self.default_border_color_urgent
+        else if (focused)
+            node.border_color_focused orelse self.default_border_color_focused
+        else
+            node.border_color_unfocused orelse self.default_border_color_unfocused;
+
+        const show_sides = !self.border_side_colors_focused_only or focused;
+        const top_color    = if (show_sides) node.border_color_top    orelse base_color else base_color;
+        const bottom_color = if (show_sides) node.border_color_bottom orelse base_color else base_color;
+        const left_color   = if (show_sides) node.border_color_left   orelse base_color else base_color;
+        const right_color  = if (show_sides) node.border_color_right  orelse base_color else base_color;
+
+        const ibw: c_int = @intCast(bw);
+        const iw: c_int  = @intCast(w);
+        const ih: c_int  = @intCast(h);
+
+        _ = c.XSetForeground(self.display, gc, top_color);
+        _ = c.XFillRectangle(self.display, win_frame, gc,
+            0, 0, w, @intCast(bw));
+
+        _ = c.XSetForeground(self.display, gc, bottom_color);
+        _ = c.XFillRectangle(self.display, win_frame, gc,
+            0, ih - ibw, w, @intCast(bw));
+
+        _ = c.XSetForeground(self.display, gc, left_color);
+        _ = c.XFillRectangle(self.display, win_frame, gc,
+            0, 0, @intCast(bw), h);
+
+        _ = c.XSetForeground(self.display, gc, right_color);
+        _ = c.XFillRectangle(self.display, win_frame, gc,
+            iw - ibw, 0, @intCast(bw), h);
+    }
+
     pub fn frame(self: *WM, win: c.Window, node: *Node) !void {
         const border_color = if (self.focused == node)
             node.border_color_focused orelse self.default_border_color_focused
@@ -586,7 +637,7 @@ pub const WM = struct {
             attrs.y,
             @intCast(attrs.width),
             @intCast(attrs.height),
-            @intCast(self.border_width),
+            0,
             depth,
             c.InputOutput,
             visual,
@@ -610,7 +661,7 @@ pub const WM = struct {
         _ = c.XSelectInput(self.display, win_frame,
             c.SubstructureRedirectMask | c.SubstructureNotifyMask |
             c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask |
-            c.EnterWindowMask | c.LeaveWindowMask);
+            c.EnterWindowMask | c.LeaveWindowMask | c.ExposureMask);
 
         _ = c.XAddToSaveSet(self.display, win);
         _ = c.XReparentWindow(self.display, win, win_frame, self.border_width, self.border_width);
@@ -793,11 +844,13 @@ pub const WM = struct {
 
                         const x = @max(-32768, @min(32767, raw_x));
                         const y = @max(-32768, @min(32767, raw_y));
-                        const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
-                        const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
+                        const fw = @max(1, node.width  -| gap_left -| gap_right);
+                        const fh = @max(1, node.height -| gap_top  -| gap_bottom);
+                        const cw = fw -| 2 * bw;
+                        const ch = fh -| 2 * bw;
 
-                        _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
-                        _ = c.XMoveResizeWindow(self.display, win, 0, 0, w, h);
+                        _ = c.XMoveResizeWindow(self.display, win_frame, x, y, fw, fh);
+                        _ = c.XMoveResizeWindow(self.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
                         _ = c.XMapWindow(self.display, win);
                         _ = c.XMapWindow(self.display, win_frame);
@@ -809,8 +862,8 @@ pub const WM = struct {
                         ce.xconfigure.window = win;
                         ce.xconfigure.x = x;
                         ce.xconfigure.y = y;
-                        ce.xconfigure.width = @intCast(w);
-                        ce.xconfigure.height = @intCast(h);
+                        ce.xconfigure.width = @intCast(@max(1, cw));
+                        ce.xconfigure.height = @intCast(@max(1, ch));
                         ce.xconfigure.border_width = 0;
                         ce.xconfigure.above = c.None;
                         ce.xconfigure.override_redirect = 0;
@@ -858,12 +911,14 @@ pub const WM = struct {
 
                             const x = @max(-32768, @min(32767, raw_x));
                             const y = @max(-32768, @min(32767, raw_y));
-                            const w = @max(1, node.width  -| gap_left -| gap_right  -| 2 * bw);
-                            const h = @max(1, node.height -| gap_top  -| gap_bottom -| 2 * bw);
+                            const pfw = @max(1, node.width  -| gap_left -| gap_right);
+                            const pfh = @max(1, node.height -| gap_top  -| gap_bottom);
+                            const pcw = pfw -| 2 * bw;
+                            const pch = pfh -| 2 * bw;
 
-                            _ = c.XMoveResizeWindow(self.display, win_frame, x, y, w, h);
-                            _ = c.XMoveResizeWindow(self.display, pw, 0, 0, w, h);
-                            _ = c.XResizeWindow(self.display, pw, w, h);
+                            _ = c.XMoveResizeWindow(self.display, win_frame, x, y, pfw, pfh);
+                            _ = c.XMoveResizeWindow(self.display, pw, @intCast(bw), @intCast(bw), @max(1, pcw), @max(1, pch));
+                            _ = c.XResizeWindow(self.display, pw, @max(1, pcw), @max(1, pch));
                             _ = c.XMapWindow(self.display, win_frame);
                             _ = c.XMapWindow(self.display, pw);
                             self.repaint_preview(node);
@@ -1728,6 +1783,7 @@ pub const WM = struct {
                     c.PropertyNotify   => try events_mod.on_property_notify(self, &e.xproperty),
                     c.UnmapNotify      => try events_mod.on_unmap_notify(self, &e.xunmap),
                     c.MapNotify        => events_mod.on_map_notify(self, &e.xmap),
+                    c.Expose           => events_mod.on_expose(self, &e.xexpose),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }

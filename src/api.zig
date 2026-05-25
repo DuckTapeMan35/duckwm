@@ -1022,6 +1022,33 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .category = "Appearance",
+        .name     = "set_node_border_side_color",
+        .desc     = "Set the color of a single border side for a node. side is 'top', 'bottom', 'left', or 'right'. Overrides the base border color for that side only. Pass 0xRRGGBB.",
+        .params   = &.{
+            .{ .name = "id",    .typ = "integer" },
+            .{ .name = "side",  .typ = "'top'|'bottom'|'left'|'right'" },
+            .{ .name = "color", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "clear_node_border_side_colors",
+        .desc     = "Clear all per-side border color overrides for a node, reverting to the base focused/unfocused color on all sides.",
+        .params   = &.{
+            .{ .name = "id", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "set_border_side_colors_focused_only",
+        .desc     = "When true, per-side border color overrides are only shown on the focused window. Unfocused windows show their base unfocused color on all sides. Default: false.",
+        .params   = &.{ .{ .name = "enabled", .typ = "boolean" } },
+        .ret      = "nil",
+    },
 
     // =========================================================
     // Rules

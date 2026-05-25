@@ -140,8 +140,8 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     };
     node.urgent = false;
     if (wm.frames.get(win)) |frame| {
-        const color = node.border_color_focused orelse wm.default_border_color_focused;
-        _ = c.XSetWindowBorder(wm.display, frame, color);
+        _ = c.XClearWindow(wm.display, frame);
+        wm.draw_frame_borders(frame, node);
     }
     _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
 
@@ -212,12 +212,12 @@ pub fn set_focus(wm: *WM, node: *Node) void {
             .empty => continue,
         };
         if (wm.frames.get(n_win)) |frame| {
-            const color = if (n == node)
-                n.border_color_focused orelse wm.default_border_color_focused
-            else
-                n.border_color_unfocused orelse wm.default_border_color_unfocused;
-            _ = c.XSetWindowBorder(wm.display, frame, color);
+            _ = c.XClearWindow(wm.display, frame);
+            wm.draw_frame_borders(frame, n);
         }
+    }
+    if (wm.get_id_for_node(node)) |id| {
+        wm.call_arranger(wm.current_graph, "focus", id, null);
     }
     events_mod.update_net_active_window(wm, win);
 }

@@ -64,10 +64,12 @@ pub fn raise_floating_windows(wm: *WM) void {
         switch (node.content) {
             .window => |win| {
                 if (wm.frames.get(win)) |frame| {
-                    const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
-                    const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
+                    const fw: u32 = node.width;
+                    const fh: u32 = node.height;
+                    const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * bw)));
+                    const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * bw)));
                     _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
-                    _ = c.XMoveResizeWindow(wm.display, win, 0, 0, @max(1, fw), @max(1, fh));
+                    _ = c.XMoveResizeWindow(wm.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                     _ = c.XRaiseWindow(wm.display, frame);
 
                     var ce: c.XEvent = std.mem.zeroes(c.XEvent);
@@ -88,10 +90,12 @@ pub fn raise_floating_windows(wm: *WM) void {
             .workspace => {
                 if (node.preview_window) |pw| {
                     if (wm.frames.get(pw)) |frame| {
-                        const fw: u32 = node.width  -| @as(u32, @intCast(@max(0, 2 * bw)));
-                        const fh: u32 = node.height -| @as(u32, @intCast(@max(0, 2 * bw)));
+                        const fw: u32 = node.width;
+                        const fh: u32 = node.height;
+                        const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * bw)));
+                        const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * bw)));
                         _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
-                        _ = c.XMoveResizeWindow(wm.display, pw, 0, 0, @max(1, fw), @max(1, fh));
+                        _ = c.XMoveResizeWindow(wm.display, pw, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                         _ = c.XRaiseWindow(wm.display, frame);
                     }
                 }
