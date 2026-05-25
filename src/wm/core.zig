@@ -1061,6 +1061,7 @@ pub const WM = struct {
         } else {
             self.focused = null;
         }
+        self.update_ewmh();
     }
 
     pub fn leave_workspace(self: *WM) !void {
@@ -1100,6 +1101,7 @@ pub const WM = struct {
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
         if (focus_mod.top_left_window(self)) |n| self.focus(n);
+        self.update_ewmh();
     }
 
     pub fn leave_workspace_silent(self: *WM) !void {
@@ -1194,6 +1196,95 @@ pub const WM = struct {
         }
 
         self.current_graph = saved_graph;
+        switch (node.content) {
+            .window => |win| self.update_net_wm_desktop(win),
+            else => {},
+        }
+        self.update_ewmh();
+    }
+
+    pub fn update_ewmh(self: *WM) void {
+        const XA_CARDINAL = c.XInternAtom(self.display, "CARDINAL", 0);
+        const XA_WINDOW   = c.XInternAtom(self.display, "WINDOW", 0);
+
+        const parent_graph: *graph_mod.Graph = if (self.current_graph.parent_node) |pn|
+            pn.owner_graph orelse &self.graph
+        else
+            &self.graph;
+
+        // _NET_NUMBER_OF_DESKTOPS
+        var n_desktops: c_ulong = 0;
+        for (parent_graph.nodes.items) |node| {
+            if (node.content == .workspace) n_desktops += 1;
+        }
+        if (n_desktops == 0) n_desktops = 1;
+        _ = c.XChangeProperty(self.display, self.root,
+            c.XInternAtom(self.display, "_NET_NUMBER_OF_DESKTOPS", 0),
+            XA_CARDINAL, 32, c.PropModeReplace,
+            @ptrCast(&n_desktops), 1);
+
+        // _NET_CURRENT_DESKTOP
+        var current_idx: c_ulong = 0;
+        var idx: c_ulong = 0;
+        for (parent_graph.nodes.items) |node| {
+            if (node.content != .workspace) continue;
+            if (node.content.workspace == self.current_graph) {
+                current_idx = idx;
+                break;
+            }
+            idx += 1;
+        }
+        _ = c.XChangeProperty(self.display, self.root,
+            c.XInternAtom(self.display, "_NET_CURRENT_DESKTOP", 0),
+            XA_CARDINAL, 32, c.PropModeReplace,
+            @ptrCast(&current_idx), 1);
+
+        // _NET_CLIENT_LIST
+        var client_list: std.ArrayListUnmanaged(c.Window) = .{ .items = &.{}, .capacity = 0 };
+        defer client_list.deinit(self.allocator);
+        var it = self.window_to_node_id.iterator();
+        while (it.next()) |entry| {
+            const win = entry.key_ptr.*;
+            if (self.workspace_previews.contains(win)) continue;
+            client_list.append(self.allocator, win) catch {};
+        }
+        if (client_list.items.len > 0) {
+            _ = c.XChangeProperty(self.display, self.root,
+                c.XInternAtom(self.display, "_NET_CLIENT_LIST", 0),
+                XA_WINDOW, 32, c.PropModeReplace,
+                @ptrCast(client_list.items.ptr),
+                @intCast(client_list.items.len));
+        } else {
+            _ = c.XDeleteProperty(self.display, self.root,
+                c.XInternAtom(self.display, "_NET_CLIENT_LIST", 0));
+        }
+    }
+
+    pub fn update_net_wm_desktop(self: *WM, win: c.Window) void {
+        const XA_CARDINAL = c.XInternAtom(self.display, "CARDINAL", 0);
+        const node_id = self.window_to_node_id.get(win) orelse return;
+        const node = self.node_registry.get(node_id) orelse return;
+        const owner = node.owner_graph orelse return;
+
+        const parent_graph: *graph_mod.Graph = if (owner.parent_node) |pn|
+            pn.owner_graph orelse &self.graph
+        else
+            &self.graph;
+
+        var desktop_idx: c_ulong = 0;
+        var idx: c_ulong = 0;
+        for (parent_graph.nodes.items) |n| {
+            if (n.content != .workspace) continue;
+            if (n.content.workspace == owner) {
+                desktop_idx = idx;
+                break;
+            }
+            idx += 1;
+        }
+        _ = c.XChangeProperty(self.display, win,
+            c.XInternAtom(self.display, "_NET_WM_DESKTOP", 0),
+            XA_CARDINAL, 32, c.PropModeReplace,
+            @ptrCast(&desktop_idx), 1);
     }
 
     pub fn exchange_left(self: *WM) anyerror!void {

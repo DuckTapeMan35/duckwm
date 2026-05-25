@@ -184,6 +184,8 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
+        wm.update_ewmh();
+        wm.update_net_wm_desktop(req.window);
         // If it also wants to be focusable, track it
         if (is_focusable_panel(wm.display, req.window)) {
             try wm.overlay_windows.put(req.window, {});
@@ -675,6 +677,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
+        wm.update_ewmh();
     } else {
         wm.reset_root_state();
         wm.current_graph.focus_edges.clearRetainingCapacity();
@@ -1254,6 +1257,10 @@ pub fn announce_supported_hints(wm: *WM) void {
         c.XInternAtom(wm.display, "_NET_WM_STRUT_PARTIAL", 0),
         c.XInternAtom(wm.display, "_NET_WORKAREA", 0),
         c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0),
+        c.XInternAtom(wm.display, "_NET_NUMBER_OF_DESKTOPS", 0),
+        c.XInternAtom(wm.display, "_NET_CURRENT_DESKTOP", 0),
+        c.XInternAtom(wm.display, "_NET_CLIENT_LIST", 0),
+        c.XInternAtom(wm.display, "_NET_WM_DESKTOP", 0),
         c.XInternAtom(wm.display, "WM_HINTS", 0),
         net_supporting_wm_check,
         net_wm_name,
