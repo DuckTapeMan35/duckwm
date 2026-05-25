@@ -68,7 +68,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Core",
         .name     = "reload_visuals",
-        .desc     = "Re-run the config with only visual setters active (border colors, border width, gaps), then repaint. Faster than a full reload — use for live theming.",
+        .desc     = "Re-run the config with only visual setters active. Faster than a full reload — use for live theming.",
         .params   = &.{},
         .ret      = "nil",
     },
