@@ -2919,6 +2919,12 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
     }
     var prev_id: ?u32 = null;
     for (ids.items) |id| {
+        if (wm.get_node_by_id(id)) |node| {
+            if (node.content == .workspace and node.content.workspace == saved_graph) {
+                prev_id = id;
+                continue;
+            }
+        }
         wm.call_arranger(g, "map", id, prev_id);
         prev_id = id;
     }
