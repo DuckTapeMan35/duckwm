@@ -1119,34 +1119,27 @@ pub const WM = struct {
         self.update_ewmh();
     }
 
-    pub fn leave_workspace(self: *WM) !void {
-        if (self.workspace_stack.items.len == 0) return;
-
-        // Find the first entry in the stack that is at a lower level
+    fn find_leave_target(self: *WM) ?usize {
         const current_level = self.current_graph.id.level;
-        var target_idx: ?usize = null;
         var i = self.workspace_stack.items.len;
         while (i > 0) {
             i -= 1;
             const g = self.workspace_stack.items[i];
-            if (g == &self.graph) break; // never pop past root
-            if (g.id.level < current_level) {
-                target_idx = i;
-                break;
-            }
+            if (g == &self.graph) break;
+            if (g.id.level < current_level) return i;
         }
+        return null;
+    }
 
-        _ = if (target_idx) |idx|
-            self.workspace_stack.items[idx]
-        else
-            return; // nothing to go up to
+    pub fn leave_workspace(self: *WM) !void {
+        if (self.workspace_stack.items.len == 0) return;
+        const target_idx = self.find_leave_target() orelse return;
 
         hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
 
-        // Pop down to target
-        while (self.workspace_stack.items.len > target_idx.? + 1) {
+        while (self.workspace_stack.items.len > target_idx + 1) {
             _ = self.workspace_stack.pop();
         }
         self.current_graph = self.workspace_stack.pop().?;
@@ -1161,23 +1154,13 @@ pub const WM = struct {
 
     pub fn leave_workspace_silent(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
-        const current_level = self.current_graph.id.level;
-        var target_idx: ?usize = null;
-        var i = self.workspace_stack.items.len;
-        while (i > 0) {
-            i -= 1;
-            const g = self.workspace_stack.items[i];
-            if (g == &self.graph) break;
-            if (g.id.level < current_level) {
-                target_idx = i;
-                break;
-            }
-        }
-        const idx = target_idx orelse return;
+        const target_idx = self.find_leave_target() orelse return;
+
         hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
-        while (self.workspace_stack.items.len > idx + 1) {
+
+        while (self.workspace_stack.items.len > target_idx + 1) {
             _ = self.workspace_stack.pop();
         }
         self.current_graph = self.workspace_stack.pop().?;

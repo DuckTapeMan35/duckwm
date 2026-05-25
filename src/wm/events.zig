@@ -619,46 +619,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Sweep orphaned empty containers left behind by Lua
-    {
-        var i: usize = 0;
-        while (i < wm.current_graph.nodes.items.len) {
-            const node = wm.current_graph.nodes.items[i];
-            if (node.content != .empty or node.constraints.items.len != 0) {
-                i += 1;
-                continue;
-            }
-            var referenced = false;
-            for (wm.current_graph.nodes.items) |other| {
-                if (other == node) continue;
-                for (other.constraints.items) |con| {
-                    switch (con) {
-                        .grid_cell => |g| if (g.container == node) {
-                            referenced = true;
-                            break;
-                        },
-                        else => {},
-                    }
-                    if (referenced) break;
-                }
-                if (referenced) break;
-            }
-            if (!referenced) {
-                var it = wm.node_registry.iterator();
-                while (it.next()) |entry| {
-                    if (entry.value_ptr.* == node) {
-                        _ = wm.node_registry.remove(entry.key_ptr.*);
-                        break;
-                    }
-                }
-                node.deinit(wm.allocator);
-                wm.allocator.destroy(node);
-                _ = wm.current_graph.nodes.swapRemove(i);
-            } else {
-                i += 1;
-            }
-        }
-    }
+    sweep_dead_containers(wm);
 
     // Update focus
     if (focused_is_dying) {
