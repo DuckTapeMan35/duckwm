@@ -1,6 +1,6 @@
 const std = @import("std");
-
 const c = @import("c").c;
+const cs = @import("solver");
 
 const NodeContent = union(enum) {
     window: c.Window,
@@ -19,38 +19,32 @@ pub const GraphId = struct {
 };
 
 pub const Constraint = union(enum) {
-    // Position constraints (directed)
-    left_of:  *Node,   // this.right == other.left
-    right_of: *Node,   // this.left == other.right
-    above:    *Node,   // this.bottom == other.top
-    below:    *Node,   // this.top == other.bottom
+    left_of:  *Node,
+    right_of: *Node,
+    above:    *Node,
+    below:    *Node,
 
-    // Alignment (directed, but we'll treat as equality)
-    align_left:   *Node,   // this.x == other.x
-    align_top:    *Node,   // this.y == other.y
-    align_right:  *Node,   // this.x + width == other.x + other.width
-    align_bottom: *Node,   // this.y + height == other.y + other.height
+    align_left:   *Node,
+    align_top:    *Node,
+    align_right:  *Node,
+    align_bottom: *Node,
 
-    // Size constraints (symmetric, handled via union-find)
-    equal_width:  *Node,   // this.width == other.width
-    equal_height: *Node,   // this.height == other.height
+    equal_width:  *Node,
+    equal_height: *Node,
 
-    // Aspect ratio (self)
-    fixed_ratio: f32,      // width / height == ratio
+    fixed_ratio: f32,
 
-    // fixed constraints
     fixed_width:  u32,
     fixed_height: u32,
     fixed_x: i32,
     fixed_y: i32,
 
-    // Grid placement (requires container)
     grid_cell: struct {
         col: u32,
         row: u32,
         cols: u32,
         rows: u32,
-        container: *Node,   // the node that defines the grid area
+        container: *Node,
     },
     grid_cell_abs: struct {
         x: i32,
@@ -97,7 +91,7 @@ const FocusEdge = struct {
 pub const Node = struct {
     content: NodeContent,
     owner_graph: ?*Graph,
-    preview_window: ?c.Window, // non-null for workspace nodes
+    preview_window: ?c.Window,
     urgent: bool,
     hidden: bool,
 
@@ -109,7 +103,7 @@ pub const Node = struct {
 
     constraints: std.ArrayListUnmanaged(Constraint),
 
-    border_color_focused: ?u32, // ARGB
+    border_color_focused: ?u32,
     border_color_unfocused: ?u32,
     border_color_top: ?u32,
     border_color_bottom: ?u32,
@@ -140,7 +134,7 @@ pub const Node = struct {
             .border_color_left = null,
             .border_color_right = null,
 
-            .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4), //TODO: make so no constrants don't allocate at all
+            .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4),
 
             .on_remove = null,
             .dead = false,
@@ -297,7 +291,6 @@ pub const Graph = struct {
                             }
                             std.debug.print("promote: grandparent={} gp_col={} gp_row={} gp_cols={} gp_rows={}\n",
                                 .{grandparent != null, gp_col, gp_row, gp_cols, gp_rows});
-                            // Remove sibling's old grid_cell pointing at cont
                             var i: usize = 0;
                             while (i < sib.constraints.items.len) {
                                 if (sib.constraints.items[i] == .grid_cell and
@@ -354,24 +347,24 @@ pub const Graph = struct {
 
     pub fn constraint_involves_node(con: Constraint, node: *Node) bool {
         return switch (con) {
-            .left_of => |other| other == node,
-            .right_of => |other| other == node,
-            .above => |other| other == node,
-            .below => |other| other == node,
-            .align_left => |other| other == node,
-            .align_top => |other| other == node,
-            .align_right => |other| other == node,
+            .left_of      => |other| other == node,
+            .right_of     => |other| other == node,
+            .above        => |other| other == node,
+            .below        => |other| other == node,
+            .align_left   => |other| other == node,
+            .align_top    => |other| other == node,
+            .align_right  => |other| other == node,
             .align_bottom => |other| other == node,
-            .equal_width => |other| other == node,
+            .equal_width  => |other| other == node,
             .equal_height => |other| other == node,
-            .fixed_ratio => false,
-            .grid_cell => |g| g.container == node,
-            .grid_cell_abs => |g| g.container == node,
-            .fixed_width => false,
+            .fixed_ratio  => false,
+            .grid_cell    => |g| g.container == node,
+            .grid_cell_abs=> |g| g.container == node,
+            .fixed_width  => false,
             .fixed_height => false,
-            .fixed_x => false,
-            .fixed_y => false,
-            .split => |s| blk: {
+            .fixed_x      => false,
+            .fixed_y      => false,
+            .split        => |s| blk: {
                 if (s.container == node) break :blk true;
                 for (0..s.count) |i| {
                     if (s.children[i] == node) break :blk true;
@@ -382,7 +375,7 @@ pub const Graph = struct {
     }
 
     pub fn add_constraint(self: *Graph, node: *Node, constraint: Constraint) !void {
-        if (node.floating) return; // No constraints on floating nodes
+        if (node.floating) return;
         try node.constraints.append(self.allocator, constraint);
     }
 
@@ -409,224 +402,272 @@ pub const Graph = struct {
     }
 
     pub fn solve(self: *Graph, screen_width: u32, screen_height: u32) !void {
-        // 1. Initialize all nodes to a default size if they have zero area
-        const default_w = screen_width;
-        const default_h = screen_height;
-        for (self.nodes.items) |node| {
-            if (node.width == 0 and node.height == 0) {
-                node.width = default_w;
-                node.height = default_h;
+        const n = self.nodes.items.len;
+        if (n == 0) return;
+
+        // Map node pointer -> index
+        var node_idx = std.AutoHashMapUnmanaged(*Node, usize){};
+        defer node_idx.deinit(self.allocator);
+        for (self.nodes.items, 0..) |nd, i| {
+            try node_idx.put(self.allocator, nd, i);
+        }
+
+        const n_vars = n * 4;
+        var solver = try cs.Solver.init(self.allocator, n_vars);
+        defer solver.deinit();
+
+        // Seed solver with current node values so underdetermined variables
+        // stay at their current position rather than snapping to zero.
+        for (self.nodes.items, 0..) |nd, i| {
+            solver.vals[cs.var_x(i)] = @floatFromInt(nd.x);
+            solver.vals[cs.var_y(i)] = @floatFromInt(nd.y);
+            solver.vals[cs.var_w(i)] = @floatFromInt(
+                if (nd.width  > 0) nd.width  else screen_width);
+            solver.vals[cs.var_h(i)] = @floatFromInt(
+                if (nd.height > 0) nd.height else screen_height);
+        }
+
+        // Default: fill screen (weak, overridden by any real constraint)
+        for (0..n) |i| {
+            const nd = self.nodes.items[i];
+            if (nd.floating) continue;
+            try solver.add_fixed(cs.var_x(i), 0,                           cs.WEAK);
+            try solver.add_fixed(cs.var_y(i), 0,                           cs.WEAK);
+            try solver.add_fixed(cs.var_w(i), @floatFromInt(screen_width),  cs.WEAK);
+            try solver.add_fixed(cs.var_h(i), @floatFromInt(screen_height), cs.WEAK);
+        }
+
+        for (self.nodes.items, 0..) |nd, i| {
+            if (nd.floating) continue;
+            for (nd.constraints.items) |con| {
+                switch (con) {
+
+                    .fixed_x => |v| {
+                        try solver.add_fixed(cs.var_x(i), @floatFromInt(v), cs.REQUIRED);
+                    },
+                    .fixed_y => |v| {
+                        try solver.add_fixed(cs.var_y(i), @floatFromInt(v), cs.REQUIRED);
+                    },
+                    .fixed_width => |v| {
+                        try solver.add_fixed(cs.var_w(i), @floatFromInt(v), cs.REQUIRED);
+                    },
+                    .fixed_height => |v| {
+                        try solver.add_fixed(cs.var_h(i), @floatFromInt(v), cs.REQUIRED);
+                    },
+
+                    // w = ratio * h  =>  w - ratio*h = 0
+                    .fixed_ratio => |r| {
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_w(i)), @intCast(cs.var_h(i)), 0,0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -@as(f64, r),                            0,0,0,0,0,0 },
+                            .n = 2, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+
+                    .grid_cell => |g| {
+                        const j = node_idx.get(g.container) orelse continue;
+                        if (g.cols == 0 or g.rows == 0) continue;
+                        const cw: f64 = 1.0 / @as(f64, @floatFromInt(g.cols));
+                        const ch: f64 = 1.0 / @as(f64, @floatFromInt(g.rows));
+                        const col: f64 = @floatFromInt(g.col);
+                        const row: f64 = @floatFromInt(g.row);
+
+                        // x_i = x_cont + col * (w_cont / cols)
+                        // => x_i - x_cont - (col/cols)*w_cont = 0
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -(col * cw), 0,0,0,0,0 },
+                            .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                        });
+                        // y_i = y_cont + row * (h_cont / rows)
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -(row * ch), 0,0,0,0,0 },
+                            .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                        });
+                        // w_i = w_cont / cols
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_w(i)), @intCast(cs.var_w(j)), 0,0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -cw, 0,0,0,0,0,0 },
+                            .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                        });
+                        // h_i = h_cont / rows
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_h(i)), @intCast(cs.var_h(j)), 0,0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -ch, 0,0,0,0,0,0 },
+                            .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                        });
+                    },
+
+                    .grid_cell_abs => |g| {
+                        const j = node_idx.get(g.container) orelse continue;
+                        // x_i = x_cont + g.x
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_x(j)), 0,0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, 0,0,0,0,0,0 },
+                            .n = 2, .rhs = @floatFromInt(g.x), .weight = cs.REQUIRED,
+                        });
+                        // y_i = y_cont + g.y
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_y(j)), 0,0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, 0,0,0,0,0,0 },
+                            .n = 2, .rhs = @floatFromInt(g.y), .weight = cs.REQUIRED,
+                        });
+                        try solver.add_fixed(cs.var_w(i), @floatFromInt(g.w), cs.REQUIRED);
+                        try solver.add_fixed(cs.var_h(i), @floatFromInt(g.h), cs.REQUIRED);
+                    },
+
+                    .split => |s| {
+                        const j = node_idx.get(s.container) orelse continue;
+                        var ratio_sum: f64 = 0;
+                        for (0..s.count) |k| ratio_sum += s.ratios[k];
+                        if (ratio_sum <= 0) continue;
+
+                        var offset: f64 = 0;
+                        for (0..s.count) |k| {
+                            const child = s.children[k];
+                            const ck = node_idx.get(child) orelse continue;
+                            const r: f64 = @as(f64, s.ratios[k]) / ratio_sum;
+
+                            if (s.axis == .horizontal) {
+                                // x_child = x_cont + offset * w_cont
+                                try solver.add(.{
+                                    .vars   = [8]u32{ @intCast(cs.var_x(ck)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0,0 },
+                                    .coeffs = [8]f64{ 1.0, -1.0, -offset, 0,0,0,0,0 },
+                                    .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                                });
+                                // w_child = r * w_cont
+                                try solver.add(.{
+                                    .vars   = [8]u32{ @intCast(cs.var_w(ck)), @intCast(cs.var_w(j)), 0,0,0,0,0,0 },
+                                    .coeffs = [8]f64{ 1.0, -r, 0,0,0,0,0,0 },
+                                    .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                                });
+                                // y_child = y_cont
+                                try solver.add_diff(cs.var_y(ck), cs.var_y(j), 0, cs.REQUIRED);
+                                // h_child = h_cont
+                                try solver.add_diff(cs.var_h(ck), cs.var_h(j), 0, cs.REQUIRED);
+                            } else {
+                                // y_child = y_cont + offset * h_cont
+                                try solver.add(.{
+                                    .vars   = [8]u32{ @intCast(cs.var_y(ck)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0,0 },
+                                    .coeffs = [8]f64{ 1.0, -1.0, -offset, 0,0,0,0,0 },
+                                    .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                                });
+                                // h_child = r * h_cont
+                                try solver.add(.{
+                                    .vars   = [8]u32{ @intCast(cs.var_h(ck)), @intCast(cs.var_h(j)), 0,0,0,0,0,0 },
+                                    .coeffs = [8]f64{ 1.0, -r, 0,0,0,0,0,0 },
+                                    .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                                });
+                                // x_child = x_cont
+                                try solver.add_diff(cs.var_x(ck), cs.var_x(j), 0, cs.REQUIRED);
+                                // w_child = w_cont
+                                try solver.add_diff(cs.var_w(ck), cs.var_w(j), 0, cs.REQUIRED);
+                            }
+                            offset += r;
+                        }
+                    },
+
+                    // Positional — STRONG not REQUIRED so over-constrained
+                    // systems relax gracefully instead of producing garbage.
+                    // Your example: A left_of B, B above C, C below A —
+                    // all three equations go into the solver simultaneously
+                    // and the SCC solver finds the consistent solution.
+
+                    .left_of => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        // x_other = x_i + w_i  =>  x_other - x_i - w_i = 0
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_x(j)), @intCast(cs.var_x(i)), @intCast(cs.var_w(i)), 0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
+                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+                    .right_of => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        // x_i = x_other + w_other  =>  x_i - x_other - w_other = 0
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
+                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+                    .above => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        // y_other = y_i + h_i  =>  y_other - y_i - h_i = 0
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_y(j)), @intCast(cs.var_y(i)), @intCast(cs.var_h(i)), 0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
+                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+                    .below => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        // y_i = y_other + h_other  =>  y_i - y_other - h_other = 0
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
+                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+
+                    .align_left => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        try solver.add_diff(cs.var_x(i), cs.var_x(j), 0, cs.STRONG);
+                    },
+                    .align_top => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        try solver.add_diff(cs.var_y(i), cs.var_y(j), 0, cs.STRONG);
+                    },
+                    .align_right => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        // x_i + w_i = x_other + w_other
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_w(i)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, 1.0, -1.0, -1.0, 0,0,0,0 },
+                            .n = 4, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+                    .align_bottom => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        // y_i + h_i = y_other + h_other
+                        try solver.add(.{
+                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_h(i)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0 },
+                            .coeffs = [8]f64{ 1.0, 1.0, -1.0, -1.0, 0,0,0,0 },
+                            .n = 4, .rhs = 0, .weight = cs.STRONG,
+                        });
+                    },
+
+                    .equal_width => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        try solver.add_diff(cs.var_w(i), cs.var_w(j), 0, cs.MEDIUM);
+                    },
+                    .equal_height => |other| {
+                        const j = node_idx.get(other) orelse continue;
+                        try solver.add_diff(cs.var_h(i), cs.var_h(j), 0, cs.MEDIUM);
+                    },
+                }
             }
         }
 
-        var changed = true;
-        var iter: usize = 0;
-        const max_iter = 50;
+        try solver.solve();
 
-        while (changed and iter < max_iter) {
-            changed = false;
-            iter += 1;
-
-            // Phase 1: apply all non-equality constraints (directed)
-            for (self.nodes.items) |node| {
-                if (node.floating) continue;
-                for (node.constraints.items) |con| {
-                    // Skip equalities here – handle them in phase 2
-                    switch (con) {
-                        .equal_width, .equal_height => continue,
-                        else => {
-                            if (apply_one(node, con)) changed = true;
-                        },
-                    }
-                }
-            }
-
-            // Phase 2: enforce equalities symmetrically
-            for (self.nodes.items) |node| {
-                for (node.constraints.items) |con| {
-                    if (node.floating) continue;
-                    switch (con) {
-                        .equal_width => |other| {
-                            if (other.floating) continue;
-                            const avg = (node.width + other.width) / 2;
-                            if (node.width != avg) {
-                                node.width = avg;
-                                changed = true;
-                            }
-                            if (other.width != avg) {
-                                other.width = avg;
-                                changed = true;
-                            }
-                        },
-                        .equal_height => |other| {
-                            if (other.floating) continue;
-                            const avg = (node.height + other.height) / 2;
-                            if (node.height != avg) {
-                                node.height = avg;
-                                changed = true;
-                            }
-                            if (other.height != avg) {
-                                other.height = avg;
-                                changed = true;
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            }
-
-            for (self.nodes.items) |node| {
-                if (node.floating) continue;
-                const node_right = node.x + @as(i32, @intCast(node.width));
-                const node_bottom = node.y + @as(i32, @intCast(node.height));
-                const screen_w = @as(i32, @intCast(screen_width));
-                const screen_h = @as(i32, @intCast(screen_height));
-
-                if (node_right > screen_w) {
-                    node.width = @as(u32, @intCast(@max(0, screen_w - node.x)));
-                }
-                if (node_bottom > screen_h) {
-                    node.height = @as(u32, @intCast(@max(0, screen_h - node.y)));
-                }
-                if (node.x < 0) node.x = 0;
-                if (node.y < 0) node.y = 0;
-            }
-
-        }
-
-        for (self.nodes.items) |node| {
-            if (node.floating) continue;
-            if (node.width  < 1) node.width  = 1;
-            if (node.height < 1) node.height = 1;
-        }
-
-        if (iter >= max_iter) {
-            std.debug.print("Warning: constraint solver did not converge after {} iterations\n", .{max_iter});
+        // Write results back, clamping to valid pixel ranges.
+        // We clamp AFTER solving so the solver itself sees unclamped
+        // values — clamping inside the solver would break constraints
+        // that depend on nodes near screen edges.
+        const sw: f64 = @floatFromInt(screen_width);
+        const sh: f64 = @floatFromInt(screen_height);
+        for (self.nodes.items, 0..) |nd, i| {
+            if (nd.floating) continue;
+            const x = @max(0.0, @min(sw,       solver.vals[cs.var_x(i)]));
+            const y = @max(0.0, @min(sh,       solver.vals[cs.var_y(i)]));
+            const w = @max(1.0, @min(sw - x,   solver.vals[cs.var_w(i)]));
+            const h = @max(1.0, @min(sh - y,   solver.vals[cs.var_h(i)]));
+            nd.x      = @intFromFloat(@round(x));
+            nd.y      = @intFromFloat(@round(y));
+            nd.width  = @intFromFloat(@round(w));
+            nd.height = @intFromFloat(@round(h));
         }
     }
-
-    fn apply_one(src: *Node, con: Constraint) bool {
-        switch (con) {
-            .left_of => |dst| {
-                if (dst.floating) return false;
-                const new_x = src.x + @as(i32, @intCast(src.width));
-                if (dst.x != new_x) { dst.x = new_x; return true; }
-            },
-            .right_of => |dst| {
-                if (dst.floating) return false;
-                const new_x = dst.x + @as(i32, @intCast(dst.width));
-                if (src.x != new_x) { src.x = new_x; return true; }
-            },
-            .above => |dst| {
-                if (dst.floating) return false;
-                const new_y = src.y + @as(i32, @intCast(src.height));
-                if (dst.y != new_y) { dst.y = new_y; return true; }
-            },
-            .below => |dst| {
-                if (dst.floating) return false;
-                const new_y = dst.y + @as(i32, @intCast(dst.height));
-                if (src.y != new_y) { src.y = new_y; return true; }
-            },
-            .align_left => |dst| {
-                if (dst.floating) return false;
-                if (dst.x != src.x) { dst.x = src.x; return true; }
-            },
-            .align_top => |dst| {
-                if (dst.floating) return false;
-                if (dst.y != src.y) { dst.y = src.y; return true; }
-            },
-            .align_right => |dst| {
-                if (dst.floating) return false;
-                const new_x = (src.x + @as(i32, @intCast(src.width))) - @as(i32, @intCast(dst.width));
-                if (dst.x != new_x) { dst.x = new_x; return true; }
-            },
-            .align_bottom => |dst| {
-                if (dst.floating) return false;
-                const new_y = (src.y + @as(i32, @intCast(src.height))) - @as(i32, @intCast(dst.height));
-                if (dst.y != new_y) { dst.y = new_y; return true; }
-            },
-            .fixed_ratio => |ratio| {
-                const new_h = @as(u32, @intFromFloat(@as(f32, @floatFromInt(src.width)) / ratio));
-                if (src.height != new_h) { src.height = new_h; return true; }
-            },
-            .grid_cell => |g| {
-                if (g.container.floating) return false;
-                if (g.cols == 0 or g.rows == 0) return false;
-                const base_cell_w = g.container.width  / g.cols;
-                const base_cell_h = g.container.height / g.rows;
-                const col_offset  = g.col * base_cell_w;
-                const row_offset  = g.row * base_cell_h;
-                const cell_w = @max(1, if (g.col == g.cols - 1) g.container.width  -| col_offset else base_cell_w);
-                const cell_h = @max(1, if (g.row == g.rows - 1) g.container.height -| row_offset else base_cell_h);
-                const new_x = g.container.x + @as(i32, @intCast(col_offset));
-                const new_y = g.container.y + @as(i32, @intCast(row_offset));
-                if (src.x != new_x or src.y != new_y or src.width != cell_w or src.height != cell_h) {
-                    src.x = new_x; src.y = new_y; src.width = cell_w; src.height = cell_h;
-                    return true;
-                }
-            },
-            .grid_cell_abs => |g| {
-                if (g.container.floating) return false;
-                const new_x = g.container.x + g.x;
-                const new_y = g.container.y + g.y;
-                if (src.x != new_x or src.y != new_y or src.width != g.w or src.height != g.h) {
-                    src.x = new_x; src.y = new_y; src.width = g.w; src.height = g.h;
-                    return true;
-                }
-            },
-            .fixed_width => |w| {
-                if (src.width != w) { src.width = w; return true; }
-            },
-            .fixed_height => |h| {
-                if (src.height != h) { src.height = h; return true; }
-            },
-            .fixed_x => |x| {
-                if (src.x != x) { src.x = x; return true; }
-            },
-            .fixed_y => |y| {
-                if (src.y != y) { src.y = y; return true; }
-            },
-            .split => |s| {
-                const cont = s.container;
-                if (cont.floating) return false;
-                // normalize ratios
-                var ratio_sum: f32 = 0;
-                for (0..s.count) |i| ratio_sum += s.ratios[i];
-                if (ratio_sum <= 0) return false;
-                var offset: u32 = 0;
-                var changed = false;
-                for (0..s.count) |i| {
-                    const child = s.children[i];
-                    const normalized = s.ratios[i] / ratio_sum;
-                    if (s.axis == .horizontal) {
-                        const w: u32 = if (i == s.count - 1)
-                            cont.width -| offset
-                        else
-                            @intFromFloat(@as(f32, @floatFromInt(cont.width)) * normalized);
-                        const new_x = cont.x + @as(i32, @intCast(offset));
-                        if (child.x != new_x)        { child.x = new_x;        changed = true; }
-                        if (child.y != cont.y)        { child.y = cont.y;        changed = true; }
-                        if (child.width  != w)        { child.width  = w;        changed = true; }
-                        if (child.height != cont.height) { child.height = cont.height; changed = true; }
-                        offset += w;
-                    } else {
-                        const h: u32 = if (i == s.count - 1)
-                            cont.height -| offset
-                        else
-                            @intFromFloat(@as(f32, @floatFromInt(cont.height)) * normalized);
-                        const new_y = cont.y + @as(i32, @intCast(offset));
-                        if (child.x != cont.x)        { child.x = cont.x;        changed = true; }
-                        if (child.y != new_y)          { child.y = new_y;          changed = true; }
-                        if (child.width  != cont.width)  { child.width  = cont.width;  changed = true; }
-                        if (child.height != h)         { child.height = h;         changed = true; }
-                        offset += h;
-                    }
-                }
-                return changed;
-            },
-            else => return false,
-        }
-        return false;
-    }
-
 };

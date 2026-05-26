@@ -245,6 +245,11 @@ pub fn build(b: *std.Build) void {
         .optimize = .Debug,
     });
 
+    const solver_mod = b.addModule("solver", .{
+        .root_source_file = b.path("src/solver.zig"),
+        .target = target,
+    });
+
     const meta_gen = MetaStep.create(b);
     const meta_step = b.step("meta", "Regenerate LuaLS meta and API docs");
     meta_step.dependOn(&meta_gen.step);
@@ -264,6 +269,7 @@ pub fn build(b: *std.Build) void {
     config_mod.linkSystemLibrary("X11", .{});
     config_mod.linkSystemLibrary("Xcursor", .{});
     graph_mod.addImport("c", c_mod);
+    graph_mod.addImport("solver", solver_mod);
     c_mod.linkSystemLibrary("xft", .{ .use_pkg_config = .force });
     c_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .force });
 
