@@ -2906,7 +2906,6 @@ pub fn reload(wm: *WM) void {
         };
         return;
     };
-    wm.config_error_count = 0;
     remap_all_graphs(wm, &wm.graph);
     std.debug.print("config reloaded successfully\n", .{});
 }
@@ -2970,6 +2969,7 @@ pub fn load(wm: *WM) !void {
     comptime {
         @setEvalBranchQuota(100000);
         for (api.entries) |entry| {
+            if (std.mem.eql(u8, entry.category, "Guides")) continue;
             var found = false;
             for (registrations) |reg| {
                 if (std.mem.eql(u8, entry.name, reg.name)) { found = true; break; }

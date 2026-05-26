@@ -29,6 +29,7 @@ pub const categories = [_][]const u8{
     "Rules",
     "Node Graph",
     "Debug",
+    "Guides",
 };
 
 pub const constants = [_]Constant{
@@ -452,6 +453,7 @@ pub const entries = [_]ApiEntry{
             \\  'unmap'   — a window was removed from the layout
             \\  'resize'  — a window was resized by the user
             \\  'pre_map' — fires before 'map', before constraints are applied (use for setup)
+            \\  'focus'   — fires when a window gains focus; id is the newly focused node. Use for per-window indicators or focus-driven layout changes.
             \\The arranger should set constraints on nodes using the constraint API.
         ,
         .params   = &.{
@@ -463,7 +465,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Layout & Arrangers",
         .name     = "set_default_arranger",
-        .desc     = "Set the default arranger factory used for new workspaces.",
+        .desc     = "Set the default arranger factory used for new workspaces. The factory is called with no arguments and must return an arranger function. See set_arranger for the full list of events the arranger receives.",
         .params   = &.{
             .{ .name = "fn",   .typ = "function" },
             .{ .name = "name", .typ = "string?" },
@@ -473,7 +475,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Layout & Arrangers",
         .name     = "register_arranger",
-        .desc     = "Set the arranger for a specific workspace node by ID.",
+        .desc     = "Set the arranger for a specific workspace node by ID. See set_arranger for the full list of events the arranger receives.",
         .params   = &.{
             .{ .name = "workspace_id", .typ = "integer" },
             .{ .name = "factory",      .typ = "function" },
@@ -1189,5 +1191,47 @@ pub const entries = [_]ApiEntry{
         .desc     = "Return a string representation of the current graph showing nodes, geometry, and constraint relationships as labeled arrows. Recurses into nested workspaces. Use with quack: quack print_graph | jq -r '.result'",
         .params   = &.{},
         .ret      = "string",
+    },
+    // =========================================================
+    // Guides
+    // =========================================================
+    .{
+        .category = "Guides",
+        .name     = "split_direction_indicator",
+        .desc     =
+            \\How to implement an i3-style split direction indicator using per-side border colors.
+            \\
+            \\Per-side border colors let you highlight one edge of a window to show where the
+            \\next window will open. Call set_node_border_side_color on the focused window in
+            \\response to the 'focus' arranger event, and clear it on 'unmap'.
+            \\
+            \\Example pattern inside an arranger factory:
+            \\
+            \\  local dir = "right"  -- or "down"
+            \\
+            \\  local function update_indicator()
+            \\      local id = wm.get_focused()
+            \\      if not id then return end
+            \\      wm.clear_node_border_side_colors(id)
+            \\      wm.set_node_border_side_color(id, dir == "right" and "right" or "bottom", 0x00ff00)
+            \\  end
+            \\
+            \\  return function(event, id, prev_id)
+            \\      if event == "focus" then
+            \\          update_indicator()
+            \\      elseif event == "unmap" then
+            \\          wm.clear_node_border_side_colors(id)
+            \\          update_indicator()
+            \\      elseif event == "map" then
+            \\          -- place window, then:
+            \\          update_indicator()
+            \\      end
+            \\  end
+            \\
+            \\Use set_border_side_colors_focused_only(true) if you only want the indicator
+            \\visible on the focused window and not on unfocused windows.
+        ,
+        .params = &.{},
+        .ret    = "nil",
     },
 };
