@@ -251,6 +251,7 @@ local function make_dwindle()
         local by_id = layout.by_id
         local focused_node = by_id[focused_id]
 
+        -- If focused node is tiny, fall back to splitting the largest window
         if focused_node and (focused_node.width < 20 or focused_node.height < 20) then
             local best, best_area = nil, 0
             for _, wid in ipairs(layout.windows) do
@@ -271,6 +272,7 @@ local function make_dwindle()
         local as_first = split_h and (dx < 0) or (dy < 0)
         local axis     = split_h and "h" or "v"
 
+        -- Create structural split container node
         local cont_id = wm.create_container()
         local cont = { id=cont_id, type="empty", x=0, y=0, width=0, height=0,
                        constraints={}, parent=nil, parent_idx=nil }
@@ -288,6 +290,7 @@ local function make_dwindle()
             end
             cont.parent = parent.id
         else
+            -- If focused_node was the root window, transfer its grid_cell constraint to the container
             if focused_node then
                 for i, con in ipairs(focused_node.constraints) do
                     if con.type == "grid_cell" then
@@ -305,9 +308,16 @@ local function make_dwindle()
             ratios={0.5, 0.5}, children=children, container=cont_id,
         })
 
-        if focused_node then focused_node.constraints = {} end
+        -- Corrected: Clear child constraints but register their new parent tree relationships
+        if focused_node then 
+            focused_node.constraints = {} 
+            focused_node.parent = cont_id
+        end
         local new_node = by_id[new_id]
-        if new_node then new_node.constraints = {} end
+        if new_node then 
+            new_node.constraints = {} 
+            new_node.parent = cont_id
+        end
     end
 
     local function do_remove(layout, id)
@@ -365,6 +375,17 @@ local function make_dwindle()
 
         local layout = wm.get_layout()
         local by_id  = layout.by_id
+        local _, _, ww, wh = wm.get_work_area() -- Ensure work area is calculated every event execution
+
+        -- Force synchronization of the base anchor bounds on any incoming event changes
+        if anchor_id and by_id[anchor_id] then
+            by_id[anchor_id].constraints = {
+                { type="fixed_x",      value=0  },
+                { type="fixed_y",      value=0  },
+                { type="fixed_width",  value=ww },
+                { type="fixed_height", value=wh },
+            }
+        end
 
         if event == "map" then
             local focused_id = prev_id and by_id[prev_id] and prev_id or nil
@@ -383,7 +404,6 @@ local function make_dwindle()
             end
 
             if not focused_id then
-                local _, _, ww, wh = wm.get_work_area()
                 if not anchor_id or not by_id[anchor_id] then
                     anchor_id = wm.create_container()
                     local anchor = {
@@ -399,14 +419,6 @@ local function make_dwindle()
                     table.insert(layout.nodes, anchor)
                     by_id[anchor_id] = anchor
                     layout.root = anchor_id
-                else
-                    local anchor = by_id[anchor_id]
-                    anchor.constraints = {
-                        { type="fixed_x",      value=0  },
-                        { type="fixed_y",      value=0  },
-                        { type="fixed_width",  value=ww },
-                        { type="fixed_height", value=wh },
-                    }
                 end
                 local win_node = by_id[id]
                 if win_node then
@@ -421,8 +433,13 @@ local function make_dwindle()
 
             wm.set_layout(layout)
             wm.focus(id)
+
         elseif event == "unmap" then
             do_remove(layout, id)
+            wm.set_layout(layout)
+
+        elseif event == "resize" then
+            -- Let duckwm know the dynamic geometry updates need to commit to the layout engine
             wm.set_layout(layout)
         end
     end
