@@ -140,9 +140,7 @@ fn applyOther(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime ta
     }) catch {};
 }
 
-
 fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) void {
-    // Call factory to get arranger function
     _ = lua.getIndexRaw(ziglua.registry_index, factory_ref);
     lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
         std.debug.print("arranger factory error: {}\n", .{err});
@@ -154,13 +152,11 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     }
     const arranger_ref = lua.ref(ziglua.registry_index);
 
-    // Clear old arranger ref
     if (g.arranger_ref != 0) {
         lua.unref(ziglua.registry_index, g.arranger_ref);
     }
     g.arranger_ref = arranger_ref;
 
-    // Reset pan and virtual size when switching layouts
     g.pan_x = 0;
     g.pan_y = 0;
     g.virtual_width = 0;
@@ -169,23 +165,7 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     g.lock_vertical_resize = false;
     g.pan_disabled = false;
 
-    // Reset all tiled node positions
-    for (g.nodes.items) |node| {
-        if (node.floating) continue;
-        switch (node.content) {
-            .window, .workspace => {
-                node.x = 0;
-                node.y = 0;
-            },
-            else => {},
-        }
-        node.constraints.clearRetainingCapacity();
-    }
-
-    // Resolve once to reset node positions before remapping
-    global_wm.resolve(g) catch {};
-
-    // Collect tiled node ids
+    // Collect window/workspace node pointers to remap
     var ids: std.ArrayListUnmanaged(u32) = .{ .items = &.{}, .capacity = 0 };
     defer ids.deinit(global_wm.allocator);
     for (g.nodes.items) |node| {
@@ -200,9 +180,47 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
         }
     }
 
-    // Remap all windows into new arranger
+    // Remove all empty nodes (structural containers from previous arranger)
+    var i: usize = 0;
+    while (i < g.nodes.items.len) {
+        const node = g.nodes.items[i];
+        if (node.content == .empty) {
+            var it = global_wm.node_registry.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.* == node) {
+                    _ = global_wm.node_registry.remove(entry.key_ptr.*);
+                    break;
+                }
+            }
+            node.deinit(global_wm.allocator);
+            global_wm.allocator.destroy(node);
+            _ = g.nodes.swapRemove(i);
+        } else {
+            i += 1;
+        }
+    }
+
+    // Remove all window/workspace nodes from graph temporarily so that
+    // get_layout() inside each map callback only sees windows mapped so far.
+    // This prevents arrangers from treating all windows as already-placed
+    // when deciding how to insert the first few.
+    for (ids.items) |id| {
+        const node = global_wm.node_registry.get(id) orelse continue;
+        for (g.nodes.items, 0..) |n, idx| {
+            if (n == node) {
+                _ = g.nodes.swapRemove(idx);
+                break;
+            }
+        }
+    }
+
+    // Re-add and map one at a time so each map callback sees a clean
+    // incrementally-built graph
     var prev_id: ?u32 = null;
     for (ids.items) |id| {
+        const node = global_wm.node_registry.get(id) orelse continue;
+        node.constraints.clearRetainingCapacity();
+        g.nodes.append(global_wm.allocator, node) catch {};
         global_wm.call_arranger(g, "map", id, prev_id);
         prev_id = id;
     }
