@@ -2174,7 +2174,9 @@ fn l_create_nested_workspace(lua: *Lua) i32 {
 
     global_wm.resolve(global_wm.current_graph) catch {};
     global_wm.rebuild_focus_edges() catch {};
+    node.hidden = false;
     global_wm.flush(global_wm.current_graph) catch {};
+    if (global_wm.focused) |f| global_wm.focus(f);
     lua.pushInteger(@intCast(id));
     return 1;
 }

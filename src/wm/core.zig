@@ -1627,12 +1627,11 @@ pub const WM = struct {
         var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         wa.override_redirect = 1;
         _ = c.XChangeWindowAttributes(self.display, pw, c.CWOverrideRedirect, &wa);
-
         const node = try owner_graph.add_node(.{ .workspace = sub });
         sub.parent_node = node;
         node.preview_window = pw;
         node.floating = false;
-
+        node.hidden = true;
         try self.frame(pw, node);
         _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask | c.ExposureMask);
         self.repaint_preview(node);
