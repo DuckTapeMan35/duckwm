@@ -133,6 +133,7 @@ pub fn focus_down(wm: *WM)  anyerror!void { focus_via_edges(wm, .Down); }
 
 pub fn set_focus(wm: *WM, node: *Node) void {
     wm.focused = node;
+    const g = wm.current_graph;
     const win = switch (node.content) {
         .window => |w| w,
         .workspace => node.preview_window orelse return,
@@ -146,8 +147,7 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     _ = c.XSetInputFocus(wm.display, win, c.RevertToParent, c.CurrentTime);
 
     // Snap pan to bring focused window into view
-    if (!node.floating) {
-        const g = wm.current_graph;
+    if (!node.floating and g == wm.visible_graph) {
         const work = wm.get_work_area();
         const work_x = work.x;
         const work_y = work.y;

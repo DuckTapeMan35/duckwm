@@ -570,9 +570,6 @@ pub const Graph = struct {
 
                     // Positional — STRONG not REQUIRED so over-constrained
                     // systems relax gracefully instead of producing garbage.
-                    // Your example: A left_of B, B above C, C below A —
-                    // all three equations go into the solver simultaneously
-                    // and the SCC solver finds the consistent solution.
 
                     .left_of => |other| {
                         const j = node_idx.get(other) orelse continue;
@@ -660,14 +657,20 @@ pub const Graph = struct {
         const sh: f64 = @floatFromInt(screen_height);
         for (self.nodes.items, 0..) |nd, i| {
             if (nd.floating) continue;
-            const x = @max(0.0, @min(sw,       solver.vals[cs.var_x(i)]));
-            const y = @max(0.0, @min(sh,       solver.vals[cs.var_y(i)]));
-            const w = @max(1.0, @min(sw - x,   solver.vals[cs.var_w(i)]));
-            const h = @max(1.0, @min(sh - y,   solver.vals[cs.var_h(i)]));
-            nd.x      = @intFromFloat(@round(x));
-            nd.y      = @intFromFloat(@round(y));
-            nd.width  = @intFromFloat(@round(w));
-            nd.height = @intFromFloat(@round(h));
+            const x_f = @max(0.0, @min(sw,     solver.vals[cs.var_x(i)]));
+            const y_f = @max(0.0, @min(sh,     solver.vals[cs.var_y(i)]));
+            const w_f = @max(1.0, @min(sw - x_f, solver.vals[cs.var_w(i)]));
+            const h_f = @max(1.0, @min(sh - y_f, solver.vals[cs.var_h(i)]));
+            const xi: i32 = @intFromFloat(@round(x_f));
+            const yi: i32 = @intFromFloat(@round(y_f));
+            const wi: u32 = @intCast(@max(1, @as(i32, @intFromFloat(@round(w_f)))));
+            const hi: u32 = @intCast(@max(1, @as(i32, @intFromFloat(@round(h_f)))));
+            const sw_i: i32 = @intCast(screen_width);
+            const sh_i: i32 = @intCast(screen_height);
+            nd.x      = xi;
+            nd.y      = yi;
+            nd.width  = @intCast(@max(1, @min(sw_i - xi, @as(i32, @intCast(wi)))));
+            nd.height = @intCast(@max(1, @min(sh_i - yi, @as(i32, @intCast(hi)))));
         }
     }
 };

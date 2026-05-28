@@ -75,6 +75,7 @@ pub const WM = struct {
     graph: Graph,
     focused: ?*Node,
     current_graph: *Graph,
+    visible_graph: *Graph,
     previous_graph: ?*Graph,
     workspace_switch_mode: WorkspaceSwitchMode,
     workspace_stack: std.ArrayListUnmanaged(*Graph),
@@ -188,6 +189,7 @@ pub const WM = struct {
             .workspace_previews = std.AutoHashMap(c.Window, void).init(allocator),
             .next_workspace_number = std.AutoHashMap(u32, u32).init(allocator),
             .current_graph = undefined,
+            .visible_graph = undefined,
             .previous_graph = null,
             .workspace_switch_mode = .none,
             .default_gap_inner_h = 0,
@@ -808,6 +810,11 @@ pub const WM = struct {
     }
 
     pub fn flush(self: *WM, g: *Graph) !void {
+        if (g != self.visible_graph) {
+            std.debug.print("flush: skipping non-current graph level={} number={}\n", 
+            .{ g.id.level, g.id.number });
+            return;
+        }
         self.flushing = true;
         defer self.flushing = false;
         const bw: u32 = @intCast(@max(0, self.border_width));
@@ -818,6 +825,8 @@ pub const WM = struct {
                     if (node.floating) {
                         if (!node.hidden) {
                             if (self.frames.get(win)) |win_frame| {
+                                std.debug.print("flush: mapping win={} frame={} node_x={} node_y={}\n",
+    .{ win, win_frame, node.x, node.y });
                                 _ = c.XMapWindow(self.display, win);
                                 _ = c.XMapWindow(self.display, win_frame);
                             }
@@ -850,6 +859,8 @@ pub const WM = struct {
                         _ = c.XMoveResizeWindow(self.display, win_frame, x, y, fw, fh);
                         _ = c.XMoveResizeWindow(self.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
+                        std.debug.print("flush: mapping win={} frame={} node_x={} node_y={}\n",
+    .{ win, win_frame, node.x, node.y });
                         _ = c.XMapWindow(self.display, win);
                         _ = c.XMapWindow(self.display, win_frame);
 
@@ -1078,6 +1089,9 @@ pub const WM = struct {
     }
 
     fn show_graph_frames(self: *WM, g: *Graph) void {
+        std.debug.print("show_graph_frames: level={} number={} current_level={} current_number={}\n",
+        .{ g.id.level, g.id.number, 
+           self.current_graph.id.level, self.current_graph.id.number });
         for (g.nodes.items) |node| {
             const win = switch (node.content) {
                 .window => |w| w,
@@ -1102,6 +1116,7 @@ pub const WM = struct {
         try self.workspace_stack.append(self.allocator, self.current_graph);
         // switch
         self.current_graph = sub;
+        self.visible_graph = self.current_graph;
         // show new graph
         show_graph_frames(self, sub);
         // re-layout and refresh
@@ -1141,6 +1156,7 @@ pub const WM = struct {
             _ = self.workspace_stack.pop();
         }
         self.current_graph = self.workspace_stack.pop().?;
+        self.visible_graph = self.current_graph;
 
         show_graph_frames(self, self.current_graph);
         try self.resolve(self.current_graph);
@@ -1691,6 +1707,7 @@ pub const WM = struct {
         }
         _ = c.XSetErrorHandler(events_mod.on_x_error);
         try self.create_initial_workspace();
+        self.visible_graph = self.current_graph;
 
         if (self.post_load_error) |msg| {
             self.show_error_bar(msg);

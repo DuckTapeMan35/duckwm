@@ -120,7 +120,7 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
 }
 
 
-fn applyOther(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime tag: std.meta.Tag(graph_mod.Constraint)) void {
+fn apply_other(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime tag: std.meta.Tag(graph_mod.Constraint)) void {
     _ = lua.getField(-1, "other");
     const other_id: u32 = @intCast(lua.toInteger(-1) catch 0);
     lua.pop(1);
@@ -141,6 +141,9 @@ fn applyOther(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime ta
 }
 
 fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) void {
+    const saved_current = global_wm.current_graph;
+    global_wm.current_graph = g;
+    defer global_wm.current_graph = saved_current;
     _ = lua.getIndexRaw(ziglua.registry_index, factory_ref);
     lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
         std.debug.print("arranger factory error: {}\n", .{err});
@@ -157,8 +160,6 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     }
     g.arranger_ref = arranger_ref;
 
-    g.pan_x = 0;
-    g.pan_y = 0;
     g.virtual_width = 0;
     g.virtual_height = 0;
     g.lock_horizontal_resize = false;
@@ -227,7 +228,11 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
 
     global_wm.resolve(g) catch {};
     global_wm.rebuild_focus_edges() catch {};
-    global_wm.flush(g) catch {};
+    g.pan_x = 0;
+    g.pan_y = 0;
+    if (g == saved_current) {
+        global_wm.flush(g) catch {};
+    }
 }
 
 fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) void {
@@ -576,16 +581,16 @@ fn l_set_layout(lua: *Lua) i32 {
                     lua.pop(1);
 
                     g.add_constraint(node, con) catch {};
-                } else if (std.mem.eql(u8, con_type, "left_of"))     { applyOther(lua, g, node, .left_of);     }
-                  else if (std.mem.eql(u8, con_type, "right_of"))    { applyOther(lua, g, node, .right_of);    }
-                  else if (std.mem.eql(u8, con_type, "above"))       { applyOther(lua, g, node, .above);       }
-                  else if (std.mem.eql(u8, con_type, "below"))       { applyOther(lua, g, node, .below);       }
-                  else if (std.mem.eql(u8, con_type, "align_left"))  { applyOther(lua, g, node, .align_left);  }
-                  else if (std.mem.eql(u8, con_type, "align_top"))   { applyOther(lua, g, node, .align_top);   }
-                  else if (std.mem.eql(u8, con_type, "align_right")) { applyOther(lua, g, node, .align_right); }
-                  else if (std.mem.eql(u8, con_type, "align_bottom")){ applyOther(lua, g, node, .align_bottom);}
-                  else if (std.mem.eql(u8, con_type, "equal_width")) { applyOther(lua, g, node, .equal_width); }
-                  else if (std.mem.eql(u8, con_type, "equal_height")){ applyOther(lua, g, node, .equal_height);}
+                } else if (std.mem.eql(u8, con_type, "left_of"))     { apply_other(lua, g, node, .left_of);     }
+                  else if (std.mem.eql(u8, con_type, "right_of"))    { apply_other(lua, g, node, .right_of);    }
+                  else if (std.mem.eql(u8, con_type, "above"))       { apply_other(lua, g, node, .above);       }
+                  else if (std.mem.eql(u8, con_type, "below"))       { apply_other(lua, g, node, .below);       }
+                  else if (std.mem.eql(u8, con_type, "align_left"))  { apply_other(lua, g, node, .align_left);  }
+                  else if (std.mem.eql(u8, con_type, "align_top"))   { apply_other(lua, g, node, .align_top);   }
+                  else if (std.mem.eql(u8, con_type, "align_right")) { apply_other(lua, g, node, .align_right); }
+                  else if (std.mem.eql(u8, con_type, "align_bottom")){ apply_other(lua, g, node, .align_bottom);}
+                  else if (std.mem.eql(u8, con_type, "equal_width")) { apply_other(lua, g, node, .equal_width); }
+                  else if (std.mem.eql(u8, con_type, "equal_height")){ apply_other(lua, g, node, .equal_height);}
 
                 lua.pop(1); // constraint table
             }
