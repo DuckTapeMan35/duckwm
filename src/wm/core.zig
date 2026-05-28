@@ -822,14 +822,11 @@ pub const WM = struct {
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => |win| {
+                    if (node.hidden) continue;
                     if (node.floating) {
-                        if (!node.hidden) {
-                            if (self.frames.get(win)) |win_frame| {
-                                std.debug.print("flush: mapping win={} frame={} node_x={} node_y={}\n",
-    .{ win, win_frame, node.x, node.y });
-                                _ = c.XMapWindow(self.display, win);
-                                _ = c.XMapWindow(self.display, win_frame);
-                            }
+                        if (self.frames.get(win)) |win_frame| {
+                            _ = c.XMapWindow(self.display, win);
+                            _ = c.XMapWindow(self.display, win_frame);
                         }
                         continue;
                     }
@@ -859,8 +856,6 @@ pub const WM = struct {
                         _ = c.XMoveResizeWindow(self.display, win_frame, x, y, fw, fh);
                         _ = c.XMoveResizeWindow(self.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
-                        std.debug.print("flush: mapping win={} frame={} node_x={} node_y={}\n",
-    .{ win, win_frame, node.x, node.y });
                         _ = c.XMapWindow(self.display, win);
                         _ = c.XMapWindow(self.display, win_frame);
 
@@ -892,7 +887,6 @@ pub const WM = struct {
                         }
                         continue;
                     }
-                    if (node.hidden) continue;
                     var is_active = (sub == self.current_graph);
                     if (!is_active) {
                         for (self.workspace_stack.items) |stacked| {
@@ -900,6 +894,7 @@ pub const WM = struct {
                         }
                     }
                     if (is_active) continue;
+                    if (node.hidden) continue;
 
                     if (node.preview_window) |pw| {
                         if (self.frames.get(pw)) |win_frame| {

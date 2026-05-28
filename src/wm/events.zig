@@ -197,6 +197,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     node.width  = @intCast(attrs.width);
     node.height = @intCast(attrs.height);
     if (is_transient) node.floating = true;
+    node.hidden = true;
     try wm.frame(req.window, node);
     const prev_focused = wm.focused;
     if (wm.focused == null) wm.focused = node;
@@ -243,6 +244,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
+    node.hidden = false;
     try wm.flush(wm.current_graph);
 
     for (wm.current_graph.nodes.items) |n| {
@@ -270,6 +272,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
         }
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
+        node.hidden = false;
         try wm.flush(wm.current_graph);
         if (wm.node_registry.get(id)) |n| {
             wm.focus(n);
