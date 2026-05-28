@@ -513,7 +513,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     std.debug.print("DestroyNotify: win={} event={}\n", .{ event.window, event.event });
     const win = event.window;
 
-    // If it was a dock/toolbar, remove its strut and recalc
     if (wm.dock_struts.remove(win)) {
         restack_docks(wm);
         try wm.resolve(wm.current_graph);
@@ -522,7 +521,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         return;
     }
 
-    // Ignore frame destroy events
     var is_frame = false;
     var frame_iter = wm.frames.iterator();
     while (frame_iter.next()) |entry| {
@@ -533,7 +531,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     }
     if (is_frame) return;
 
-    // Find the dying node and its ID before any modifications
     var dying: ?*Node = null;
     var dying_id: ?u32 = null;
 
@@ -546,7 +543,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (dying == null) return;
 
-    // Determine next focus BEFORE removing anything.
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
 
@@ -583,7 +579,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Notify Lua before unmapping or destroying anything
     if (dying_id) |id| {
         const is_floating = if (dying) |d| d.floating else false;
         const in_current = if (dying) |d| d.owner_graph == wm.current_graph else false;
@@ -593,26 +588,22 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         }
     }
 
-    // Now remove from registry
     if (dying_id) |id| {
         _ = wm.node_registry.remove(id);
         _ = wm.window_to_node_id.remove(win);
     }
 
-    // Clean up frame
     if (wm.frames.get(win)) |win_frame| {
         _ = c.XUnmapWindow(wm.display, win_frame);
         _ = c.XDestroyWindow(wm.display, win_frame);
         _ = wm.frames.remove(win);
     }
 
-    // Cancel any in-progress resize
     if (wm.edge_resizing) {
         wm.edge_resizing = false;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
     }
 
-    // Remove from graph
     if (dying) |d| {
         if (d.owner_graph) |og| {
             og.remove_node(d);
@@ -620,26 +611,25 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     }
 
     sweep_dead_containers(wm);
-
-    // Update focus
-    if (focused_is_dying) {
-        wm.focused = next_focus;
-        if (next_focus) |n| wm.focus(n);
-    }
-
-    if (wm.focused == null) {
-        focus_mod.clear_active_window(wm);
-        _ = c.XSetInputFocus(wm.display, wm.root, c.RevertToParent, c.CurrentTime);
-    }
-
     _ = wm.overlay_windows.remove(win);
 
     if (wm.current_graph.nodes.items.len > 0) {
         try wm.resolve(wm.current_graph);
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
+        if (focused_is_dying) {
+            wm.focused = next_focus;
+            if (next_focus) |n| wm.focus(n) else {
+                focus_mod.clear_active_window(wm);
+                _ = c.XSetInputFocus(wm.display, wm.root, c.RevertToParent, c.CurrentTime);
+            }
+        }
         wm.update_ewmh();
     } else {
+        if (focused_is_dying) {
+            wm.focused = null;
+            focus_mod.clear_active_window(wm);
+        }
         wm.reset_root_state();
         wm.current_graph.focus_edges.clearRetainingCapacity();
     }
