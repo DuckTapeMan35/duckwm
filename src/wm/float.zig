@@ -185,8 +185,8 @@ pub fn move_floating(wm: *WM, delta_x: i32, delta_y: i32) !void {
     if (!focused.floating or focused.content != .window) return;
     focused.x += delta_x;
     focused.y += delta_y;
-    if (wm.frames.get(focused.content.window)) |frame|
-        _ = c.XMoveWindow(wm.display, frame, focused.x, focused.y);
+    try wm.resolve(wm.current_graph);
+    try wm.flush(wm.current_graph);
 }
 
 pub fn resize_floating(wm: *WM, delta_width: i32, delta_height: i32) !void {
@@ -194,6 +194,6 @@ pub fn resize_floating(wm: *WM, delta_width: i32, delta_height: i32) !void {
     if (!focused.floating or focused.content != .window) return;
     focused.width  = @intCast(@max(10, @as(i32, @intCast(focused.width))  + delta_width));
     focused.height = @intCast(@max(10, @as(i32, @intCast(focused.height)) + delta_height));
-    if (wm.frames.get(focused.content.window)) |frame|
-        _ = c.XMoveResizeWindow(wm.display, frame, focused.x, focused.y, focused.width, focused.height);
+    try wm.resolve(wm.current_graph);
+    try wm.flush(wm.current_graph);
 }

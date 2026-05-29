@@ -375,7 +375,6 @@ pub const Graph = struct {
     }
 
     pub fn add_constraint(self: *Graph, node: *Node, constraint: Constraint) !void {
-        if (node.floating) return;
         try node.constraints.append(self.allocator, constraint);
     }
 
@@ -427,19 +426,35 @@ pub const Graph = struct {
                 if (nd.height > 0) nd.height else screen_height);
         }
 
-        // Default: fill screen (weak, overridden by any real constraint)
+        // Default: fill screen for tiled, stay in place for floating
         for (0..n) |i| {
             const nd = self.nodes.items[i];
-            if (nd.floating) continue;
-            try solver.add_fixed(cs.var_x(i), 0,                           cs.WEAK);
-            try solver.add_fixed(cs.var_y(i), 0,                           cs.WEAK);
-            try solver.add_fixed(cs.var_w(i), @floatFromInt(screen_width),  cs.WEAK);
-            try solver.add_fixed(cs.var_h(i), @floatFromInt(screen_height), cs.WEAK);
+            if (nd.floating) {
+                // anchor floating nodes at their current position/size as weak defaults
+                // so relational constraints have a stable reference point
+                try solver.add_fixed(cs.var_x(i), @floatFromInt(nd.x),                                    cs.WEAK);
+                try solver.add_fixed(cs.var_y(i), @floatFromInt(nd.y),                                    cs.WEAK);
+                try solver.add_fixed(cs.var_w(i), @floatFromInt(if (nd.width  > 0) nd.width  else 100),   cs.MEDIUM);
+                try solver.add_fixed(cs.var_h(i), @floatFromInt(if (nd.height > 0) nd.height else 100),   cs.MEDIUM);
+            } else {
+                try solver.add_fixed(cs.var_x(i), 0,                            cs.WEAK);
+                try solver.add_fixed(cs.var_y(i), 0,                            cs.WEAK);
+                try solver.add_fixed(cs.var_w(i), @floatFromInt(screen_width),  cs.WEAK);
+                try solver.add_fixed(cs.var_h(i), @floatFromInt(screen_height), cs.WEAK);
+            }
         }
 
         for (self.nodes.items, 0..) |nd, i| {
-            if (nd.floating) continue;
             for (nd.constraints.items) |con| {
+                // skip absolute position/size constraints for floating nodes
+                // but allow relational constraints
+                if (nd.floating) {
+                    switch (con) {
+                        .fixed_x, .fixed_y, .fixed_width, .fixed_height,
+                        .grid_cell, .grid_cell_abs, .split, .fixed_ratio => continue,
+                        else => {},
+                    }
+                }
                 switch (con) {
 
                     .fixed_x => |v| {
@@ -637,11 +652,11 @@ pub const Graph = struct {
 
                     .equal_width => |other| {
                         const j = node_idx.get(other) orelse continue;
-                        try solver.add_diff(cs.var_w(i), cs.var_w(j), 0, cs.MEDIUM);
+                        try solver.add_diff(cs.var_w(i), cs.var_w(j), 0, cs.STRONG);
                     },
                     .equal_height => |other| {
                         const j = node_idx.get(other) orelse continue;
-                        try solver.add_diff(cs.var_h(i), cs.var_h(j), 0, cs.MEDIUM);
+                        try solver.add_diff(cs.var_h(i), cs.var_h(j), 0, cs.STRONG);
                     },
                 }
             }
@@ -656,7 +671,23 @@ pub const Graph = struct {
         const sw: f64 = @floatFromInt(screen_width);
         const sh: f64 = @floatFromInt(screen_height);
         for (self.nodes.items, 0..) |nd, i| {
-            if (nd.floating) continue;
+            if (nd.floating) {
+                // only update x/y from solver for floating nodes, not w/h
+                // unless equal_width/equal_height constraints exist
+                const has_size_con = for (nd.constraints.items) |con| {
+                    switch (con) {
+                        .equal_width, .equal_height => break true,
+                        else => {},
+                    }
+                } else false;
+                nd.x = @intFromFloat(@round(solver.vals[cs.var_x(i)]));
+                nd.y = @intFromFloat(@round(solver.vals[cs.var_y(i)]));
+                if (has_size_con) {
+                    nd.width  = @intFromFloat(@round(solver.vals[cs.var_w(i)]));
+                    nd.height = @intFromFloat(@round(solver.vals[cs.var_h(i)]));
+                }
+                continue;
+            }
             const x_f = @max(0.0, @min(sw,     solver.vals[cs.var_x(i)]));
             const y_f = @max(0.0, @min(sh,     solver.vals[cs.var_y(i)]));
             const w_f = @max(1.0, @min(sw - x_f, solver.vals[cs.var_w(i)]));

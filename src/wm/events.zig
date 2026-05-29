@@ -802,9 +802,8 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
             if (node.floating) {
                 node.x = wm.float_win_start_x + delta_x;
                 node.y = wm.float_win_start_y + delta_y;
-                if (wm.frames.get(client)) |frame| {
-                    _ = c.XMoveWindow(wm.display, frame, node.x, node.y);
-                }
+                wm.resolve(wm.current_graph) catch {};
+                wm.flush(wm.current_graph) catch {};
             }
         }
         return;
@@ -814,11 +813,6 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
     if (wm.edge_resizing or wm.corner_resizing) {
         const focused = wm.focused orelse return;
         if (focused.floating) {
-            const client = switch (focused.content) {
-                .window => |win| win,
-                else => return,
-            };
-
             if (wm.corner_resizing) {
                 const delta_x = e.x_root - wm.resize_end_x;
                 const delta_y = e.y_root - wm.resize_end_y;
@@ -861,16 +855,14 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 }
             }
 
-            if (wm.frames.get(client)) |frame| {
-                _ = c.XMoveResizeWindow(wm.display, frame, focused.x, focused.y, focused.width, focused.height);
-
-                var ts: std.os.linux.timespec = undefined;
-                _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
-                const now_ms: i64 = ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
-                if (now_ms - wm.last_resize_flush >= wm.resize_refresh_interval) {
-                    wm.last_resize_flush = now_ms;
-                    _ = c.XResizeWindow(wm.display, client, focused.width, focused.height);
-                }
+            var ts: std.os.linux.timespec = undefined;
+            _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+            const now_ms: i64 = ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+            if (now_ms - wm.last_resize_flush >= wm.resize_refresh_interval) {
+                wm.last_resize_flush = now_ms;
+                wm.resolve(wm.current_graph) catch {};
+                wm.flush(wm.current_graph) catch {};
+                _ = c.XSync(wm.display, 0);
             }
             return;
         } else {

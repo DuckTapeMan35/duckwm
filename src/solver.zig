@@ -184,8 +184,8 @@ fn solve_scc_system(
     // Regularization rows: prefer current value (very weak)
     for (0..n) |i| {
         const row = eqs.len + i;
-        matrix[row * (n + 1) + i]     = 1e-4;
-        matrix[row * (n + 1) + n]     = vals[vars[i]] * 1e-4;
+        matrix[row * (n + 1) + i]     = 1e-6;
+        matrix[row * (n + 1) + n]     = vals[vars[i]] * 1e-6;
     }
 
     // Normal equations: AtA x = Atb  (since system is overdetermined)
@@ -378,6 +378,12 @@ fn solve_scc(s: *Solver) !void {
         const scc: usize = @intCast(ts.scc_id[v]);
         scc_vars[scc][scc_fill[scc]] = @intCast(v);
         scc_fill[scc] += 1;
+    }
+
+    for (0..n_sccs) |scc| {
+        std.debug.print("SCC {}: vars = ", .{scc});
+        for (scc_vars[scc]) |v| std.debug.print("{} ", .{v});
+        std.debug.print("\n", .{});
     }
 
     // Tarjan produces SCCs in reverse topological order already

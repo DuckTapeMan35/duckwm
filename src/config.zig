@@ -382,7 +382,169 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_clear_node_border_side_colors),      .name = "clear_node_border_side_colors" },
     .{ .func = ziglua.wrap(l_set_border_side_colors_focused_only),.name = "set_border_side_colors_focused_only" },
     .{ .func = ziglua.wrap(l_get_node_border_side_colors),        .name = "get_node_border_side_colors" },
+    .{ .func = ziglua.wrap(l_float_left_of),                      .name = "float_left_of"  },
+    .{ .func = ziglua.wrap(l_float_right_of),                     .name = "float_right_of" },
+    .{ .func = ziglua.wrap(l_float_above),                        .name = "float_above"    },
+    .{ .func = ziglua.wrap(l_float_below),                        .name = "float_below"    },
+    .{ .func = ziglua.wrap(l_float_equal_width),                  .name = "float_equal_width"       },
+    .{ .func = ziglua.wrap(l_float_equal_height),                 .name = "float_equal_height"      },
+    .{ .func = ziglua.wrap(l_float_align_left),                   .name = "float_align_left"        },
+    .{ .func = ziglua.wrap(l_float_align_top),                    .name = "float_align_top"         },
+    .{ .func = ziglua.wrap(l_float_align_right),                  .name = "float_align_right"       },
+    .{ .func = ziglua.wrap(l_float_align_bottom),                 .name = "float_align_bottom"      },
+    .{ .func = ziglua.wrap(l_float_clear_constraints),            .name = "float_clear_constraints" },
 };
+
+fn l_float_left_of(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    a.x = b.x - @as(i32, @intCast(a.width));
+    a.y = b.y;
+    global_wm.current_graph.add_constraint(a, .{ .left_of = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_right_of(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    a.x = b.x + @as(i32, @intCast(b.width));
+    a.y = b.y;
+    global_wm.current_graph.add_constraint(a, .{ .right_of = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_above(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    a.x = b.x;
+    a.y = b.y - @as(i32, @intCast(a.height));
+    global_wm.current_graph.add_constraint(a, .{ .above = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_below(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    a.x = b.x;
+    a.y = b.y + @as(i32, @intCast(b.height));
+    global_wm.current_graph.add_constraint(a, .{ .below = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_equal_width(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    global_wm.current_graph.add_constraint(a, .{ .equal_width = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_equal_height(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    global_wm.current_graph.add_constraint(a, .{ .equal_height = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_align_left(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    global_wm.current_graph.add_constraint(a, .{ .align_left = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_align_top(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    global_wm.current_graph.add_constraint(a, .{ .align_top = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_align_right(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    a.constraints.clearRetainingCapacity();
+    global_wm.current_graph.add_constraint(a, .{ .align_right = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_align_bottom(lua: *Lua) i32 {
+    const a_id = @as(u32, @intCast(lua.checkInteger(1)));
+    const b_id = @as(u32, @intCast(lua.checkInteger(2)));
+    const a = global_wm.get_node_by_id(a_id) orelse return luaL_error_str(lua, "invalid node a");
+    const b = global_wm.get_node_by_id(b_id) orelse return luaL_error_str(lua, "invalid node b");
+    if (!a.floating) return luaL_error_str(lua, "node is not floating");
+    a.constraints.clearRetainingCapacity();
+    global_wm.current_graph.add_constraint(a, .{ .align_bottom = b }) catch {};
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
+
+fn l_float_clear_constraints(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    if (!node.floating) return luaL_error_str(lua, "node is not floating");
+    node.constraints.clearRetainingCapacity();
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.rebuild_focus_edges() catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
+    return 0;
+}
 
 fn l_get_node_border_side_colors(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
