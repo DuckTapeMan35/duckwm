@@ -59,49 +59,75 @@ pub fn toggle_floating(wm: *WM) !void {
 
 pub fn raise_floating_windows(wm: *WM) void {
     const bw: i32 = wm.border_width;
+    var moving_node: ?*graph_mod.Node = null;
+
     for (wm.current_graph.nodes.items) |node| {
         if (!node.floating or node.hidden) continue;
-        switch (node.content) {
-            .window => |win| {
-                if (wm.frames.get(win)) |frame| {
-                    const fw: u32 = node.width;
-                    const fh: u32 = node.height;
-                    const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * bw)));
-                    const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * bw)));
-                    _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
-                    _ = c.XMoveResizeWindow(wm.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
-                    _ = c.XRaiseWindow(wm.display, frame);
-
-                    var ce: c.XEvent = std.mem.zeroes(c.XEvent);
-                    ce.xconfigure.type = c.ConfigureNotify;
-                    ce.xconfigure.display = wm.display;
-                    ce.xconfigure.event = win;
-                    ce.xconfigure.window = win;
-                    ce.xconfigure.x = node.x;
-                    ce.xconfigure.y = node.y;
-                    ce.xconfigure.width = @intCast(@max(1, fw));
-                    ce.xconfigure.height = @intCast(@max(1, fh));
-                    ce.xconfigure.border_width = 0;
-                    ce.xconfigure.above = c.None;
-                    ce.xconfigure.override_redirect = 0;
-                    _ = c.XSendEvent(wm.display, win, 0, c.StructureNotifyMask, &ce);
-                }
-            },
-            .workspace => {
-                if (node.preview_window) |pw| {
-                    if (wm.frames.get(pw)) |frame| {
-                        const fw: u32 = node.width;
-                        const fh: u32 = node.height;
-                        const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * bw)));
-                        const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * bw)));
-                        _ = c.XMoveResizeWindow(wm.display, frame, node.x, node.y, @max(1, fw), @max(1, fh));
-                        _ = c.XMoveResizeWindow(wm.display, pw, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
-                        _ = c.XRaiseWindow(wm.display, frame);
+        // defer the moving window to raise last
+        if (wm.float_moving) {
+            switch (node.content) {
+                .window => |w| {
+                    if (wm.frames.get(w)) |frame| {
+                        if (frame == wm.float_move_frame) {
+                            moving_node = node;
+                            continue;
+                        }
                     }
-                }
-            },
-            else => {},
+                },
+                .workspace => {
+                    if (node.preview_window) |pw| {
+                        if (wm.frames.get(pw)) |frame| {
+                            if (frame == wm.float_move_frame) {
+                                moving_node = node;
+                                continue;
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
         }
+        // raise non-moving windows normally
+        raise_one(wm, node, bw);
+    }
+
+    // raise the moving window last so it stays on top
+    if (moving_node) |node| raise_one(wm, node, bw);
+}
+
+fn raise_one(wm: *WM, node: *graph_mod.Node, bw: i32) void {
+    switch (node.content) {
+        .window => |win| {
+            if (wm.frames.get(win)) |frame| {
+                _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask);
+                _ = c.XRaiseWindow(wm.display, frame);
+                _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask | c.EnterWindowMask | c.LeaveWindowMask);
+                var ce: c.XEvent = std.mem.zeroes(c.XEvent);
+                ce.xconfigure.type = c.ConfigureNotify;
+                ce.xconfigure.display = wm.display;
+                ce.xconfigure.event = win;
+                ce.xconfigure.window = win;
+                ce.xconfigure.x = node.x;
+                ce.xconfigure.y = node.y;
+                ce.xconfigure.width = @intCast(@max(1, node.width));
+                ce.xconfigure.height = @intCast(@max(1, node.height));
+                ce.xconfigure.border_width = 0;
+                ce.xconfigure.above = c.None;
+                ce.xconfigure.override_redirect = 0;
+                _ = c.XSendEvent(wm.display, win, 0, c.StructureNotifyMask, &ce);
+                _ = bw;
+            }
+        },
+        .workspace => {
+            if (node.preview_window) |pw| {
+                if (wm.frames.get(pw)) |frame| {
+                    _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask);
+                    _ = c.XRaiseWindow(wm.display, frame);
+                    _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask | c.EnterWindowMask | c.LeaveWindowMask);
+                }
+            }
+        },
+        else => {},
     }
 }
 

@@ -117,6 +117,7 @@ pub const WM = struct {
     float_win_start_y: i32,
     float_move_button: c_uint,
     float_resize_button: c_uint,
+    float_move_saved_ffm: bool,
 
     // fullscreen state fields
     fullscreen_node: ?*Node,
@@ -225,6 +226,7 @@ pub const WM = struct {
             .float_win_start_y = 0,
             .float_move_button = 1, // left mouse button
             .float_resize_button = 3, // right mouse button
+            .float_move_saved_ffm = false,
 
             .fullscreen_node = null,
             .fullscreen_saved_x = 0,
@@ -825,6 +827,12 @@ pub const WM = struct {
                     if (node.hidden) continue;
                     if (node.floating) {
                         if (self.frames.get(win)) |win_frame| {
+                            const fw: u32 = node.width;
+                            const fh: u32 = node.height;
+                            const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
+                            const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
+                            _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, @max(1, fw), @max(1, fh));
+                            _ = c.XMoveResizeWindow(self.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                             _ = c.XMapWindow(self.display, win);
                             _ = c.XMapWindow(self.display, win_frame);
                         }
@@ -880,6 +888,12 @@ pub const WM = struct {
                         if (!node.hidden) {
                             if (node.preview_window) |pw| {
                                 if (self.frames.get(pw)) |win_frame| {
+                                    const fw: u32 = node.width;
+                                    const fh: u32 = node.height;
+                                    const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
+                                    const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
+                                    _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, @max(1, fw), @max(1, fh));
+                                    _ = c.XMoveResizeWindow(self.display, pw, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                                     _ = c.XMapWindow(self.display, pw);
                                     _ = c.XMapWindow(self.display, win_frame);
                                 }
@@ -932,7 +946,21 @@ pub const WM = struct {
                 .empty => {},
             }
         }
-        float_mod.raise_floating_windows(self);
+        // lower all tiled frames
+        for (g.nodes.items) |node| {
+            if (node.floating) continue;
+            switch (node.content) {
+                .window => |win| {
+                    if (self.frames.get(win)) |win_frame| _ = c.XLowerWindow(self.display, win_frame);
+                },
+                .workspace => {
+                    if (node.preview_window) |pw| {
+                        if (self.frames.get(pw)) |pw_frame| _ = c.XLowerWindow(self.display, pw_frame);
+                    }
+                },
+                else => {},
+            }
+        }
         var dead_docks = std.ArrayListUnmanaged(c.Window){ .items = &.{}, .capacity = 0 };
         defer dead_docks.deinit(self.allocator);
         var dock_it = self.dock_struts.keyIterator();

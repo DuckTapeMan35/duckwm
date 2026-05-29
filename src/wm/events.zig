@@ -709,6 +709,9 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.float_move_start_y = ev.y_root;
                     wm.float_win_start_x  = node.x;
                     wm.float_win_start_y  = node.y;
+                    wm.float_move_saved_ffm = wm.focus_follows_mouse;
+                    wm.focus_follows_mouse = false;
+                    _ = c.XRaiseWindow(wm.display, lookup_win);
                 } else {
                     const left_edge   = node.x;
                     const right_edge  = node.x + @as(i32, @intCast(node.width));
@@ -987,8 +990,10 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
     }
     if (wm.float_moving) {
         wm.float_moving = false;
+        wm.focus_follows_mouse = wm.float_move_saved_ffm;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
-        float_mod.raise_floating_windows(wm);
+        _ = c.XRaiseWindow(wm.display, wm.float_move_frame);
+        _ = c.XFlush(wm.display);
     }
     if (wm.corner_resizing) {
         wm.corner_resizing = false;
@@ -1154,6 +1159,7 @@ fn get_strut(display: *c.Display, win: c.Window) ?Strut {
 
 pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     if (ev.mode != c.NotifyNormal) return;
+    if (ev.detail == c.NotifyInferior) return;
 
     const lookup_win = if (ev.window == wm.root) ev.subwindow else ev.window;
     if (lookup_win == 0) return;
@@ -1172,6 +1178,10 @@ pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     const node_id = wm.window_to_node_id.get(client) orelse return;
     const node = wm.node_registry.get(node_id) orelse return;
     if (wm.focused == node) return;
+
+    var discard: c.XEvent = undefined;
+    while (c.XCheckTypedEvent(wm.display, c.EnterNotify, &discard) != 0) {}
+
     wm.focus(node);
     wm.flush(wm.current_graph) catch {};
 }
