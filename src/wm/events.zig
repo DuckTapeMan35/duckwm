@@ -822,10 +822,20 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                     wm.resize_end_x = e.x_root;
                     wm.resize_end_y = e.y_root;
 
+                    const min_size: i32 = 10;
+                    if (@abs(wm.resize_fixed_x - wm.resize_v_edge) < min_size) {
+                        wm.resize_v_edge = if (wm.resize_v_edge > wm.resize_fixed_x)
+                            wm.resize_fixed_x + min_size else wm.resize_fixed_x - min_size;
+                    }
+                    if (@abs(wm.resize_fixed_y - wm.resize_h_edge) < min_size) {
+                        wm.resize_h_edge = if (wm.resize_h_edge > wm.resize_fixed_y)
+                            wm.resize_fixed_y + min_size else wm.resize_fixed_y - min_size;
+                    }
+
                     const new_x = @min(wm.resize_fixed_x, wm.resize_v_edge);
                     const new_y = @min(wm.resize_fixed_y, wm.resize_h_edge);
-                    const new_w: u32 = @intCast(@max(10, @abs(wm.resize_fixed_x - wm.resize_v_edge)));
-                    const new_h: u32 = @intCast(@max(10, @abs(wm.resize_fixed_y - wm.resize_h_edge)));
+                    const new_w: u32 = @intCast(@abs(wm.resize_fixed_x - wm.resize_v_edge));
+                    const new_h: u32 = @intCast(@abs(wm.resize_fixed_y - wm.resize_h_edge));
                     focused.x = new_x;
                     focused.y = new_y;
                     focused.width = new_w;
@@ -837,8 +847,15 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                     if (delta_x != 0) {
                         wm.edge_x += delta_x;
                         wm.resize_end_x = e.x_root;
+
+                        const min_size: i32 = 10;
+                        if (@abs(wm.resize_fixed_x - wm.edge_x) < min_size) {
+                            wm.edge_x = if (wm.edge_x > wm.resize_fixed_x)
+                                wm.resize_fixed_x + min_size else wm.resize_fixed_x - min_size;
+                        }
+
                         const new_x = @min(wm.resize_fixed_x, wm.edge_x);
-                        const new_w: u32 = @intCast(@max(10, @abs(wm.resize_fixed_x - wm.edge_x)));
+                        const new_w: u32 = @intCast(@abs(wm.resize_fixed_x - wm.edge_x));
                         focused.x = new_x;
                         focused.width = new_w;
                     }
@@ -847,14 +864,20 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                     if (delta_y != 0) {
                         wm.edge_y += delta_y;
                         wm.resize_end_y = e.y_root;
+
+                        const min_size: i32 = 10;
+                        if (@abs(wm.resize_fixed_y - wm.edge_y) < min_size) {
+                            wm.edge_y = if (wm.edge_y > wm.resize_fixed_y)
+                                wm.resize_fixed_y + min_size else wm.resize_fixed_y - min_size;
+                        }
+
                         const new_y = @min(wm.resize_fixed_y, wm.edge_y);
-                        const new_h: u32 = @intCast(@max(10, @abs(wm.resize_fixed_y - wm.edge_y)));
+                        const new_h: u32 = @intCast(@abs(wm.resize_fixed_y - wm.edge_y));
                         focused.y = new_y;
                         focused.height = new_h;
                     }
                 }
             }
-
             var ts: std.os.linux.timespec = undefined;
             _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
             const now_ms: i64 = ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
