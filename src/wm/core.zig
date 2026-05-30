@@ -65,6 +65,7 @@ pub const WM = struct {
     dock_struts: std.AutoHashMap(c.Window, Strut),
     overlay_windows: std.AutoHashMap(c.Window, void),
     focus_follows_mouse: bool,
+    saved_focus_follows_mouse: bool,
     click_to_focus: bool,
     check_win: c.Window,
 
@@ -117,7 +118,6 @@ pub const WM = struct {
     float_win_start_y: i32,
     float_move_button: c_uint,
     float_resize_button: c_uint,
-    float_move_saved_ffm: bool,
 
     // fullscreen state fields
     fullscreen_node: ?*Node,
@@ -179,6 +179,7 @@ pub const WM = struct {
             .dock_struts = std.AutoHashMap(c.Window, Strut).init(allocator),
             .overlay_windows = std.AutoHashMap(c.Window, void).init(allocator),
             .focus_follows_mouse = true,
+            .saved_focus_follows_mouse = true,
             .click_to_focus = false,
             .check_win = 0,
 
@@ -226,7 +227,6 @@ pub const WM = struct {
             .float_win_start_y = 0,
             .float_move_button = 1, // left mouse button
             .float_resize_button = 3, // right mouse button
-            .float_move_saved_ffm = false,
 
             .fullscreen_node = null,
             .fullscreen_saved_x = 0,

@@ -709,7 +709,7 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.float_move_start_y = ev.y_root;
                     wm.float_win_start_x  = node.x;
                     wm.float_win_start_y  = node.y;
-                    wm.float_move_saved_ffm = wm.focus_follows_mouse;
+                    wm.saved_focus_follows_mouse = wm.focus_follows_mouse;
                     wm.focus_follows_mouse = false;
                     _ = c.XRaiseWindow(wm.display, lookup_win);
                 } else {
@@ -763,6 +763,8 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
     const dist_bottom = @abs(ev.y_root - bottom_edge);
 
     wm.corner_resizing = true;
+    wm.saved_focus_follows_mouse = wm.focus_follows_mouse;
+    wm.focus_follows_mouse = false;
     wm.resize_v_edge   = if (dist_left < dist_right) left_edge else right_edge;
     wm.resize_h_edge   = if (dist_top  < dist_bottom) top_edge  else bottom_edge;
     wm.resize_end_x    = ev.x_root;
@@ -990,7 +992,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
     }
     if (wm.float_moving) {
         wm.float_moving = false;
-        wm.focus_follows_mouse = wm.float_move_saved_ffm;
+        wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
         _ = c.XRaiseWindow(wm.display, wm.float_move_frame);
         _ = c.XFlush(wm.display);
@@ -1009,6 +1011,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
                         .window, .workspace => {
                             if (wm.get_id_for_node(n)) |node_id| {
                                 wm.call_arranger(wm.current_graph, "resize", node_id, null);
+                                wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
                             }
                         },
                         else => {},
@@ -1032,6 +1035,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
                         .window, .workspace => {
                             if (wm.get_id_for_node(n)) |node_id| {
                                 wm.call_arranger(wm.current_graph, "resize", node_id, null);
+                                wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
                             }
                         },
                         else => {},
