@@ -294,6 +294,26 @@ pub fn on_map_notify(wm: *WM, ev: *c.XMapEvent) void {
 }
 
 pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
+    // Forward XDND messages received by frame windows to the actual client
+    const xdnd_atoms = [_][]const u8{
+        "XdndEnter", "XdndPosition", "XdndLeave",
+        "XdndDrop",  "XdndStatus",   "XdndFinished",
+    };
+    for (xdnd_atoms) |name| {
+        const atom = c.XInternAtom(wm.display, name.ptr, 1);
+        if (atom != 0 and ev.message_type == atom) {
+            // Check if this was sent to a frame
+            if (wm.get_client_from_frame(ev.window)) |client| {
+                var fwd = ev.*;
+                fwd.window = client;
+                _ = c.XSendEvent(wm.display, client, 0, c.NoEventMask,
+                    @ptrCast(&fwd));
+                _ = c.XFlush(wm.display);
+                return;
+            }
+            break;
+        }
+    }
     const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
     const net_wm_state_fullscreen = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
     const net_wm_state_demands_attention = c.XInternAtom(wm.display, "_NET_WM_STATE_DEMANDS_ATTENTION", 0);
