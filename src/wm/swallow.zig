@@ -180,11 +180,8 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     // Fully destroy the child's frame and clean up registries
     switch (child_node.content) {
         .window => |win| {
-            if (wm.frames.get(win)) |frame| {
-                _ = c.XUnmapWindow(wm.display, frame);
-                _ = c.XDestroyWindow(wm.display, frame);
-                _ = wm.frames.remove(win);
-            }
+            _ = c.XUnmapWindow(wm.display, wm.frames.get(win) orelse undefined);
+            wm.destroy_frame(win);
             _ = wm.window_to_node_id.remove(win);
         },
         else => {},

@@ -139,6 +139,9 @@ pub fn set_focus(wm: *WM, node: *Node) void {
         .workspace => node.preview_window orelse return,
         .empty => return,
     };
+    var attrs: c.XWindowAttributes = undefined;
+    if (c.XGetWindowAttributes(wm.display, win, &attrs) == 0) return;
+    if (attrs.map_state != c.IsViewable) return;
     node.urgent = false;
     if (wm.frames.get(win)) |frame| {
         _ = c.XClearWindow(wm.display, frame);

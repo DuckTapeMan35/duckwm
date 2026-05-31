@@ -380,12 +380,6 @@ fn solve_scc(s: *Solver) !void {
         scc_fill[scc] += 1;
     }
 
-    for (0..n_sccs) |scc| {
-        std.debug.print("SCC {}: vars = ", .{scc});
-        for (scc_vars[scc]) |v| std.debug.print("{} ", .{v});
-        std.debug.print("\n", .{});
-    }
-
     // Tarjan produces SCCs in reverse topological order already
     // so we process them 0..n_sccs in order
     for (0..n_sccs) |scc| {

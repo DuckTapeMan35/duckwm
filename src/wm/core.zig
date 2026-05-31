@@ -298,8 +298,8 @@ pub const WM = struct {
             // destroy any preview window
             if (node.preview_window) |pw| {
                 if (self.frames.get(pw)) |win_frame| {
+                    self.destroy_frame(pw);
                     _ = c.XDestroyWindow(self.display, win_frame);
-                    _ = self.frames.remove(pw);
                 }
                 _ = c.XDestroyWindow(self.display, pw);
             }
@@ -558,10 +558,6 @@ pub const WM = struct {
             }
         }
         _ = c.XSync(self.display, 0);
-    }
-
-    fn set_border_color(self: *WM, win_frame: c.Window, color: u32) void {
-        _ = c.XSetWindowBorder(self.display, win_frame, color);
     }
 
     pub fn draw_frame_borders(self: *WM, win_frame: c.Window, node: *Node) void {
@@ -832,10 +828,21 @@ pub const WM = struct {
         return null;
     }
 
+    pub fn raise_fullscreen(self: *WM) void {
+        const fsnode = self.fullscreen_node orelse return;
+        switch (fsnode.content) {
+            .window => |win| {
+                if (self.frames.get(win)) |win_frame| {
+                    _ = c.XRaiseWindow(self.display, win_frame);
+                    _ = c.XFlush(self.display);
+                }
+            },
+            else => {},
+        }
+    }
+
     pub fn flush(self: *WM, g: *Graph) !void {
         if (g != self.visible_graph) {
-            std.debug.print("flush: skipping non-current graph level={} number={}\n", 
-            .{ g.id.level, g.id.number });
             return;
         }
         self.flushing = true;
@@ -846,16 +853,23 @@ pub const WM = struct {
             switch (node.content) {
                 .window => |win| {
                     if (node.hidden) continue;
+                    const is_fullscreen = (self.fullscreen_node == node);
+                    const effective_bw: u32 = if (is_fullscreen) 0 else bw;
                     if (node.floating) {
                         if (self.frames.get(win)) |win_frame| {
                             const fw: u32 = node.width;
                             const fh: u32 = node.height;
-                            const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
-                            const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
+                            const cw: u32 = fw -| 2 * effective_bw;
+                            const ch: u32 = fh -| 2 * effective_bw;
                             _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, @max(1, fw), @max(1, fh));
-                            _ = c.XMoveResizeWindow(self.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
+                            _ = c.XMoveResizeWindow(self.display, win, @intCast(effective_bw), @intCast(effective_bw), @max(1, cw), @max(1, ch));
                             _ = c.XMapWindow(self.display, win);
                             _ = c.XMapWindow(self.display, win_frame);
+                            if (is_fullscreen) {
+                                _ = c.XSetWindowBorder(self.display, win_frame, 0x00000000);
+                            } else {
+                                self.draw_frame_borders(win_frame, node);
+                            }
                         }
                         continue;
                     }
@@ -879,14 +893,20 @@ pub const WM = struct {
                         const y = @max(-32768, @min(32767, raw_y));
                         const fw = @max(1, node.width  -| gap_left -| gap_right);
                         const fh = @max(1, node.height -| gap_top  -| gap_bottom);
-                        const cw = fw -| 2 * bw;
-                        const ch = fh -| 2 * bw;
+                        const cw = fw -| 2 * effective_bw;
+                        const ch = fh -| 2 * effective_bw;
 
                         _ = c.XMoveResizeWindow(self.display, win_frame, x, y, fw, fh);
-                        _ = c.XMoveResizeWindow(self.display, win, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
+                        _ = c.XMoveResizeWindow(self.display, win, @intCast(effective_bw), @intCast(effective_bw), @max(1, cw), @max(1, ch));
                         _ = c.XSetWindowBorderWidth(self.display, win, 0);
                         _ = c.XMapWindow(self.display, win);
                         _ = c.XMapWindow(self.display, win_frame);
+
+                        if (is_fullscreen) {
+                            _ = c.XSetWindowBorder(self.display, win_frame, 0x00000000);
+                        } else {
+                            self.draw_frame_borders(win_frame, node);
+                        }
 
                         var ce: c.XEvent = std.mem.zeroes(c.XEvent);
                         ce.xconfigure.type = c.ConfigureNotify;
@@ -911,8 +931,8 @@ pub const WM = struct {
                                 if (self.frames.get(pw)) |win_frame| {
                                     const fw: u32 = node.width;
                                     const fh: u32 = node.height;
-                                    const cw: u32 = fw -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
-                                    const ch: u32 = fh -| @as(u32, @intCast(@max(0, 2 * @as(i32, @intCast(bw)))));
+                                    const cw: u32 = fw -| 2 * bw;
+                                    const ch: u32 = fh -| 2 * bw;
                                     _ = c.XMoveResizeWindow(self.display, win_frame, node.x, node.y, @max(1, fw), @max(1, fh));
                                     _ = c.XMoveResizeWindow(self.display, pw, @intCast(bw), @intCast(bw), @max(1, cw), @max(1, ch));
                                     _ = c.XMapWindow(self.display, pw);
@@ -967,6 +987,20 @@ pub const WM = struct {
                 .empty => {},
             }
         }
+        var dead_docks = std.ArrayListUnmanaged(c.Window){ .items = &.{}, .capacity = 0 };
+        defer dead_docks.deinit(self.allocator);
+        var dock_it = self.dock_struts.keyIterator();
+        while (dock_it.next()) |win| {
+            var attrs: c.XWindowAttributes = undefined;
+            if (c.XGetWindowAttributes(self.display, win.*, &attrs) == 0) {
+                dead_docks.append(self.allocator, win.*) catch {};
+                continue;
+            }
+            _ = c.XRaiseWindow(self.display, win.*);
+        }
+        for (dead_docks.items) |win| {
+            _ = self.dock_struts.remove(win);
+        }
         // lower all tiled frames
         for (g.nodes.items) |node| {
             if (node.floating) continue;
@@ -982,20 +1016,7 @@ pub const WM = struct {
                 else => {},
             }
         }
-        var dead_docks = std.ArrayListUnmanaged(c.Window){ .items = &.{}, .capacity = 0 };
-        defer dead_docks.deinit(self.allocator);
-        var dock_it = self.dock_struts.keyIterator();
-        while (dock_it.next()) |win| {
-            var attrs: c.XWindowAttributes = undefined;
-            if (c.XGetWindowAttributes(self.display, win.*, &attrs) == 0) {
-                dead_docks.append(self.allocator, win.*) catch {};
-                continue;
-            }
-            _ = c.XRaiseWindow(self.display, win.*);
-        }
-        for (dead_docks.items) |win| {
-            _ = self.dock_struts.remove(win);
-        }
+        self.raise_fullscreen();
         _ = c.XFlush(self.display);
     }
 
@@ -1010,7 +1031,7 @@ pub const WM = struct {
             _ = c.XUnmapWindow(self.display, win);
             _ = c.XReparentWindow(self.display, win, self.root, 0, 0);
             _ = c.XDestroyWindow(self.display, win_frame);
-            _ = self.frames.remove(win);
+            self.destroy_frame(win);
         }
 
         // 2. Map the client directly
@@ -1133,9 +1154,6 @@ pub const WM = struct {
     }
 
     fn show_graph_frames(self: *WM, g: *Graph) void {
-        std.debug.print("show_graph_frames: level={} number={} current_level={} current_number={}\n",
-        .{ g.id.level, g.id.number, 
-           self.current_graph.id.level, self.current_graph.id.number });
         for (g.nodes.items) |node| {
             const win = switch (node.content) {
                 .window => |w| w,
@@ -1173,6 +1191,7 @@ pub const WM = struct {
         } else {
             self.focused = null;
         }
+        self.raise_fullscreen();
         self.update_ewmh();
     }
 
@@ -1207,6 +1226,7 @@ pub const WM = struct {
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
         if (focus_mod.top_left_window(self)) |n| self.focus(n);
+        self.raise_fullscreen();
         self.update_ewmh();
     }
 
@@ -1448,6 +1468,20 @@ pub const WM = struct {
         }
         var status: u32 = 0;
         _ = std.os.linux.waitpid(pid, &status, 0);
+    }
+
+    pub fn destroy_frame(self: *WM, win: c.Window) void {
+        const win_frame = self.frames.get(win) orelse return;
+        // free colormap if it was created for this frame (not the default)
+        var attrs: c.XWindowAttributes = undefined;
+        if (c.XGetWindowAttributes(self.display, win_frame, &attrs) != 0) {
+            const default_cmap = c.XDefaultColormap(self.display, 0);
+            if (attrs.colormap != 0 and attrs.colormap != default_cmap) {
+                _ = c.XFreeColormap(self.display, attrs.colormap);
+            }
+        }
+        _ = c.XDestroyWindow(self.display, win_frame);
+        _ = self.frames.remove(win);
     }
 
     fn kill_graph_windows(self: *WM, g: *graph_mod.Graph) void {

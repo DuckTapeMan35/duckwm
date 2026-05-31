@@ -235,20 +235,29 @@ fn lua_value_to_json(allocator: std.mem.Allocator, lua: *ziglua.Lua, idx: i32, o
                 }
                 try out.append(allocator, ']');
             } else {
-                try out.append(allocator, '{');
-                var first = true;
+                // Check if it has any string keys — if not, treat as empty array
                 lua.pushNil();
-                while (lua.next(if (idx < 0) idx - 1 else idx)) {
-                    if (!first) try out.append(allocator, ',');
-                    first = false;
-                    try out.append(allocator, '"');
-                    const key = lua.toString(-2) catch "?";
-                    try out.appendSlice(allocator, key);
-                    try out.appendSlice(allocator, "\":");
-                    try lua_value_to_json(allocator, lua, -1, out);
-                    lua.pop(1);
+                const has_keys = lua.next(if (idx < 0) idx - 1 else idx);
+                if (has_keys) {
+                    lua.pop(2); // pop key and value
+                    // re-serialize as object
+                    try out.append(allocator, '{');
+                    var first = true;
+                    lua.pushNil();
+                    while (lua.next(if (idx < 0) idx - 1 else idx)) {
+                        if (!first) try out.append(allocator, ',');
+                        first = false;
+                        try out.append(allocator, '"');
+                        const key = lua.toString(-2) catch "?";
+                        try out.appendSlice(allocator, key);
+                        try out.appendSlice(allocator, "\":");
+                        try lua_value_to_json(allocator, lua, -1, out);
+                        lua.pop(1);
+                    }
+                    try out.append(allocator, '}');
+                } else {
+                    try out.appendSlice(allocator, "[]");
                 }
-                try out.append(allocator, '}');
             }
         },
         else => try out.appendSlice(allocator, "null"),

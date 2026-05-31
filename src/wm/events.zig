@@ -138,17 +138,111 @@ fn should_float(display: *c.Display, win: c.Window) bool {
     return false;
 }
 
+fn read_initial_hints(wm: *WM, win: c.Window, node: *Node) void {
+    // _NET_WM_STATE
+    const net_wm_state               = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
+    const net_wm_state_fullscreen    = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
+    const net_wm_state_attention     = c.XInternAtom(wm.display, "_NET_WM_STATE_DEMANDS_ATTENTION", 0);
+    const net_wm_state_above         = c.XInternAtom(wm.display, "_NET_WM_STATE_ABOVE", 0);
+    const net_wm_state_sticky        = c.XInternAtom(wm.display, "_NET_WM_STATE_STICKY", 0);
+
+    var actual_type: c.Atom = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var prop: ?*c_ulong = null;
+
+    if (c.XGetWindowProperty(wm.display, win, net_wm_state,
+        0, 32, 0, 0, &actual_type, &actual_format,
+        &nitems, &bytes_after, @ptrCast(&prop)) == c.Success) {
+        defer if (prop) |p| { _ = c.XFree(@ptrCast(p)); };
+        if (nitems > 0 and actual_format == 32) {
+            const atoms: [*]c_ulong = @ptrCast(prop);
+            for (atoms[0..nitems]) |a| {
+                if (a == net_wm_state_fullscreen) {
+                    node.wants_fullscreen = true;
+                } else if (a == net_wm_state_attention) {
+                    node.urgent = true;
+                } else if (a == net_wm_state_above or a == net_wm_state_sticky) {
+                    node.floating = true;
+                }
+            }
+        }
+    }
+
+    // WM_NORMAL_HINTS
+    var hints: c.XSizeHints = undefined;
+    var supplied: c_long = 0;
+    if (c.XGetWMNormalHints(wm.display, win, &hints, &supplied) != 0) {
+        // Fixed size: min == max
+        const has_min = (hints.flags & c.PMinSize) != 0;
+        const has_max = (hints.flags & c.PMaxSize) != 0;
+        if (has_min and has_max and
+            hints.min_width  == hints.max_width and
+            hints.min_height == hints.max_height and
+            hints.min_width > 0 and hints.min_height > 0)
+        {
+            node.floating = true;
+            node.width  = @intCast(hints.min_width);
+            node.height = @intCast(hints.min_height);
+        }
+
+        // Fixed aspect ratio
+        if ((hints.flags & c.PAspect) != 0 and
+            hints.min_aspect.x == hints.max_aspect.x and
+            hints.min_aspect.y == hints.max_aspect.y and
+            hints.min_aspect.y > 0)
+        {
+            node.floating = true;
+        }
+    }
+
+    // WM_HINTS
+    const wm_hints = c.XGetWMHints(wm.display, win);
+    if (wm_hints) |h| {
+        defer _ = c.XFree(h);
+        if ((h.*.flags & c.XUrgencyHint) != 0) {
+            node.urgent = true;
+        }
+    }
+
+    // WM_PROTOCOLS
+    const wm_take_focus = c.XInternAtom(wm.display, "WM_TAKE_FOCUS", 0);
+    var protocols: [*c]c.Atom = null;
+    var n_protocols: c_int = 0;
+    if (c.XGetWMProtocols(wm.display, win, &protocols, &n_protocols) != 0) {
+        defer _ = c.XFree(@ptrCast(protocols));
+        for (protocols[0..@intCast(n_protocols)]) |proto| {
+            if (proto == wm_take_focus) {
+                // Send WM_TAKE_FOCUS when we focus this window
+                // Store flag on node — checked in focus.zig
+                node.urgent = node.urgent; // placeholder: see note below
+                break;
+            }
+        }
+    }
+}
+
 pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     var attrs: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(wm.display, req.window, &attrs);
     if (attrs.override_redirect != 0) return;
 
     if (wm.window_to_node_id.contains(req.window)) {
-        std.debug.print("MapRequest: win={} already managed, just mapping\n", .{req.window});
-        _ = c.XMapWindow(wm.display, req.window);
-        return;
+        // If it has a frame, just map it
+        if (wm.frames.get(req.window) != null) {
+            _ = c.XMapWindow(wm.display, req.window);
+            return;
+        }
+        // Node exists but frame was lost — clean up and re-manage
+        if (wm.window_to_node_id.get(req.window)) |id| {
+            if (wm.node_registry.get(id)) |node| {
+                if (node.owner_graph) |og| og.remove_node(node);
+            }
+            _ = wm.node_registry.remove(id);
+            _ = wm.window_to_node_id.remove(req.window);
+        }
     }
-    std.debug.print("MapRequest: win={} w={} h={}\n", .{req.window, attrs.width, attrs.height});
 
     const is_transient = get_transient_for(wm, req.window) != null or should_float(wm.display, req.window);
 
@@ -199,6 +293,11 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     node.height = @intCast(attrs.height);
     if (is_transient) node.floating = true;
     node.hidden = true;
+    const was_floating = node.floating;
+    read_initial_hints(wm, req.window, node);
+    if (node.floating and !was_floating) {
+        wm.center_node(node);
+    }
     try wm.frame(req.window, node);
     const prev_focused = wm.focused;
     if (wm.focused == null) wm.focused = node;
@@ -284,6 +383,13 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
             wm.focus(n);
         }
         return;
+    }
+
+    if (node.wants_fullscreen) {
+        node.wants_fullscreen = false;
+        wm.focused = node;
+        try wm.toggle_fullscreen();
+        try wm.flush(wm.current_graph);
     }
 }
 
@@ -435,11 +541,10 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
                 if (get_strut(wm.display, win)) |s| {
                     try wm.dock_struts.put(win, s);
                 }
-                if (wm.frames.get(win)) |frame| {
+                if (wm.frames.get(win) != null) {
                     _ = c.XUnmapWindow(wm.display, win);
                     _ = c.XReparentWindow(wm.display, win, wm.root, 0, 0);
-                    _ = c.XDestroyWindow(wm.display, frame);
-                    _ = wm.frames.remove(win);
+                    wm.destroy_frame(win);
                 }
                 _ = c.XMapWindow(wm.display, win);
                 wm.current_graph.remove_node(node);
@@ -486,9 +591,7 @@ pub fn on_property_notify(wm: *WM, ev: *c.XPropertyEvent) !void {
     }
 }
 
-pub fn on_create_notify(_: *WM, event: *c.XCreateWindowEvent) void {
-    std.debug.print("CreateNotify: window={}, parent={}, x={}, y={}, width={}, height={}\n",
-        .{ event.window, event.parent, event.x, event.y, event.width, event.height });
+pub fn on_create_notify(_: *WM, _: *c.XCreateWindowEvent) void {
 }
 
 fn sweep_dead_containers(wm: *WM) void {
@@ -618,6 +721,10 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (dying == null) return;
 
+    if (wm.fullscreen_node == dying) {
+        wm.fullscreen_node = null;
+    }
+
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
 
@@ -668,8 +775,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (wm.frames.get(win)) |win_frame| {
         _ = c.XUnmapWindow(wm.display, win_frame);
-        _ = c.XDestroyWindow(wm.display, win_frame);
-        _ = wm.frames.remove(win);
+        wm.destroy_frame(win);
     }
 
     if (wm.edge_resizing) {
@@ -708,9 +814,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
     }
 }
 
-pub fn on_reparent_notify(_: *WM, event: *c.XReparentEvent) void {
-    std.debug.print("ReparentNotify: window={}, parent={}, x={}, y={}\n",
-        .{ event.window, event.parent, event.x, event.y });
+pub fn on_reparent_notify(_: *WM, _: *c.XReparentEvent) void {
 }
 
 pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {

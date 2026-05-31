@@ -94,6 +94,7 @@ pub const Node = struct {
     preview_window: ?c.Window,
     urgent: bool,
     hidden: bool,
+    wants_fullscreen: bool,
 
     x: i32,
     y: i32,
@@ -120,6 +121,7 @@ pub const Node = struct {
             .preview_window = null,
             .urgent = false,
             .hidden = false,
+            .wants_fullscreen = false,
 
             .x = 0,
             .y = 0,
@@ -148,8 +150,11 @@ pub const Node = struct {
 
 pub fn get_container(node: *Node) ?*Node {
     for (node.constraints.items) |con| {
-        if (con == .grid_cell) {
-            return con.grid_cell.container;
+        switch (con) {
+            .grid_cell => |g| return g.container,
+            .grid_cell_abs => |g| return g.container,
+            .split => |s| return s.container,
+            else => {},
         }
     }
     return null;
@@ -251,7 +256,6 @@ pub const Graph = struct {
         if (node.on_remove) |strategy| {
             switch (strategy) {
                 .promote => {
-                    std.debug.print("promote: firing\n", .{});
                     var container: ?*Node = null;
                     for (node.constraints.items) |con| {
                         if (con == .grid_cell) {
@@ -259,7 +263,6 @@ pub const Graph = struct {
                             break;
                         }
                     }
-                    std.debug.print("promote: container={}\n", .{container != null});
                     if (container) |cont| {
                         var sibling: ?*Node = null;
                         for (self.nodes.items) |n| {
@@ -272,7 +275,6 @@ pub const Graph = struct {
                             }
                             if (sibling != null) break;
                         }
-                        std.debug.print("promote: sibling={}\n", .{sibling != null});
                         if (sibling) |sib| {
                             var grandparent: ?*Node = null;
                             var gp_col:  u32 = 0;
@@ -289,8 +291,6 @@ pub const Graph = struct {
                                     break;
                                 }
                             }
-                            std.debug.print("promote: grandparent={} gp_col={} gp_row={} gp_cols={} gp_rows={}\n",
-                                .{grandparent != null, gp_col, gp_row, gp_cols, gp_rows});
                             var i: usize = 0;
                             while (i < sib.constraints.items.len) {
                                 if (sib.constraints.items[i] == .grid_cell and
@@ -309,9 +309,7 @@ pub const Graph = struct {
                                     .rows = gp_rows,
                                     .container = gp,
                                 }}) catch {};
-                                std.debug.print("promote: appended grid_cell to sibling\n", .{});
                             } else {
-                                std.debug.print("promote: no grandparent, sibling left unconstrained\n", .{});
                             }
                         }
                     }
