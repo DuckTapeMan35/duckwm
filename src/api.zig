@@ -1313,6 +1313,7 @@ pub const entries = [_]ApiEntry{
             \\
             \\Example pattern inside an arranger factory:
             \\
+            \\```
             \\  local dir = "right"  -- or "down"
             \\
             \\  local function update_indicator()
@@ -1333,7 +1334,7 @@ pub const entries = [_]ApiEntry{
             \\          update_indicator()
             \\      end
             \\  end
-            \\
+            \\```
             \\Use set_border_side_colors_focused_only(true) if you only want the indicator
             \\visible on the focused window and not on unfocused windows.
         ,
