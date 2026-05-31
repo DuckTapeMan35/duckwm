@@ -6,6 +6,7 @@ const ziglua = @import("ziglua");
 const resize_mod = @import("resize.zig");
 const focus_mod = @import("focus.zig");
 const float_mod = @import("float.zig");
+const swallow_mod = @import("swallow.zig");
 
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
@@ -244,22 +245,27 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
-    node.hidden = false;
-    try wm.flush(wm.current_graph);
 
-    for (wm.current_graph.nodes.items) |n| {
-        switch (n.content) {
-            .window => |win| {
-                if (!n.floating) continue;
-                if (wm.frames.get(win)) |frame| {
-                    _ = c.XRaiseWindow(wm.display, frame);
-                }
-            },
-            else => {},
+    swallow_mod.try_swallow(wm, id);
+
+    if (!wm.swallowed.contains(id)) {
+        node.hidden = false;
+        try wm.flush(wm.current_graph);
+
+        for (wm.current_graph.nodes.items) |n| {
+            switch (n.content) {
+                .window => |win| {
+                    if (!n.floating) continue;
+                    if (wm.frames.get(win)) |frame| {
+                        _ = c.XRaiseWindow(wm.display, frame);
+                    }
+                },
+                else => {},
+            }
         }
-    }
 
-    if (wm.focused) |f| wm.focus(f);
+        if (wm.focused) |f| wm.focus(f);
+    }
     _ = c.XSync(wm.display, 0);
     var discard: c.XEvent = undefined;
     while (c.XCheckTypedEvent(wm.display, c.EnterNotify, &discard) != 0) {}
@@ -513,7 +519,6 @@ pub fn on_unmap_notify(wm: *WM, event: *c.XUnmapEvent) !void {
 }
 
 pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
-    std.debug.print("DestroyNotify: win={} event={}\n", .{ event.window, event.event });
     const win = event.window;
 
     if (wm.dock_struts.remove(win)) {
@@ -522,6 +527,10 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
         return;
+    }
+
+    if (wm.window_to_node_id.get(win)) |child_id| {
+        if (swallow_mod.try_unswallow(wm, child_id)) return;
     }
 
     var is_frame = false;
@@ -589,9 +598,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
             const prev_id: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
             wm.call_arranger(wm.current_graph, "unmap", id, prev_id);
         }
-    }
-
-    if (dying_id) |id| {
+        wm.call_rules("unmap", id);
         _ = wm.node_registry.remove(id);
         _ = wm.window_to_node_id.remove(win);
     }

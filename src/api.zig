@@ -240,6 +240,20 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .category = "Window Management",
+        .name     = "register_swallow",
+        .desc     = "Register a WM_CLASS string as a swallowable terminal. When a window whose ancestor process owns a window with this class maps, the terminal is replaced in the layout by the new window and restored when it closes.",
+        .params   = &.{ .{ .name = "class", .typ = "string" } },
+        .ret      = "nil",
+    },
+    .{
+        .category = "Window Management",
+        .name     = "unregister_swallow",
+        .desc     = "Remove a WM_CLASS string from the swallow list.",
+        .params   = &.{ .{ .name = "class", .typ = "string" } },
+        .ret      = "nil",
+    },
 
     // =========================================================
     // Focus
@@ -998,28 +1012,28 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Geometry",
         .name     = "float_align_left",
-        .desc     = "Constrain floating window a so its left edge aligns with b's left edge. Clears existing constraints first. Resolves and flushes immediately.",
+        .desc     = "Constrain floating window a so its left edge aligns with b's left edge. Resolves and flushes immediately.",
         .params   = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret      = "nil",
     },
     .{
         .category = "Geometry",
         .name     = "float_align_top",
-        .desc     = "Constrain floating window a so its top edge aligns with b's top edge. Clears existing constraints first. Resolves and flushes immediately.",
+        .desc     = "Constrain floating window a so its top edge aligns with b's top edge. Resolves and flushes immediately.",
         .params   = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret      = "nil",
     },
     .{
         .category = "Geometry",
         .name     = "float_align_right",
-        .desc     = "Constrain floating window a so its right edge aligns with b's right edge. Clears existing constraints first. Resolves and flushes immediately.",
+        .desc     = "Constrain floating window a so its right edge aligns with b's right edge. Resolves and flushes immediately.",
         .params   = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret      = "nil",
     },
     .{
         .category = "Geometry",
         .name     = "float_align_bottom",
-        .desc     = "Constrain floating window a so its bottom edge aligns with b's bottom edge. Clears existing constraints first. Resolves and flushes immediately.",
+        .desc     = "Constrain floating window a so its bottom edge aligns with b's bottom edge. Resolves and flushes immediately.",
         .params   = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret      = "nil",
     },
@@ -1128,6 +1142,20 @@ pub const entries = [_]ApiEntry{
         .params   = &.{ .{ .name = "enabled", .typ = "boolean" } },
         .ret      = "nil",
     },
+    .{
+        .category = "Appearance",
+        .name     = "clear_node_focused_border_color",
+        .desc     = "Clear the per-node focused border color override, reverting to the default.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "clear_node_unfocused_border_color",
+        .desc     = "Clear the per-node unfocused border color override, reverting to the default.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "nil",
+    },
 
     // =========================================================
     // Rules
@@ -1140,6 +1168,7 @@ pub const entries = [_]ApiEntry{
             \\The function receives (event, id) where event is one of:
             \\  'pre_map' — fires before the arranger places the window (use for float/fullscreen rules)
             \\  'map'     — fires after the arranger places the window
+            \\  'unmap'   — fires when the window is removed from the layout (e.g. closed or floating)
             \\  'prop'    — fires when WM_CLASS or window title changes (for apps that set class late)
             \\Returns a handle that can be passed to remove_rule.
         ,

@@ -8,4 +8,5 @@ pub const c = @cImport({
     @cInclude("sys/inotify.h");
     @cInclude("poll.h");
     @cInclude("time.h");
+    @cInclude("stdio.h");
 });

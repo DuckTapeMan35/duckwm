@@ -15,6 +15,25 @@ const Registration = struct {
     name: [:0]const u8,
 };
 
+fn repaint_node(wm: *WM, node: *graph_mod.Node) void {
+    const win = switch (node.content) {
+        .window    => |w| w,
+        .workspace => node.preview_window orelse return,
+        .empty     => return,
+    };
+    if (wm.frames.get(win)) |frame| {
+        wm.draw_frame_borders(frame, node);
+        _ = c.XFlush(wm.display);
+    }
+}
+
+fn repaint_all_nodes(wm: *WM) void {
+    for (wm.current_graph.nodes.items) |node| {
+        repaint_node(wm, node);
+    }
+    _ = c.XFlush(wm.display);
+}
+
 fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, g: *graph_mod.Graph, depth: u32) void {
     var ind = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
     defer ind.deinit(allocator);
@@ -393,7 +412,29 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_float_align_right),                  .name = "float_align_right"       },
     .{ .func = ziglua.wrap(l_float_align_bottom),                 .name = "float_align_bottom"      },
     .{ .func = ziglua.wrap(l_float_clear_constraints),            .name = "float_clear_constraints" },
+    .{ .func = ziglua.wrap(l_clear_node_focused_border_color),    .name = "clear_node_focused_border_color"   },
+    .{ .func = ziglua.wrap(l_clear_node_unfocused_border_color),  .name = "clear_node_unfocused_border_color" },
+    .{ .func = ziglua.wrap(l_register_swallow),                   .name = "register_swallow"   },
+    .{ .func = ziglua.wrap(l_unregister_swallow),                 .name = "unregister_swallow" },
 };
+
+fn l_register_swallow(lua: *Lua) i32 {
+    const class = lua.checkString(1);
+    const owned = global_wm.allocator.dupe(u8, class) catch
+        return luaL_error_str(lua, "register_swallow: out of memory");
+    global_wm.swallow_classes.put(global_wm.allocator, owned, {}) catch
+        return luaL_error_str(lua, "register_swallow: out of memory");
+    return 0;
+}
+
+fn l_unregister_swallow(lua: *Lua) i32 {
+    const class = lua.checkString(1);
+    const idx = global_wm.swallow_classes.getIndex(class) orelse return 0;
+    const key = global_wm.swallow_classes.keys()[idx];
+    global_wm.swallow_classes.swapRemoveAt(idx);
+    global_wm.allocator.free(key);
+    return 0;
+}
 
 fn l_float_left_of(lua: *Lua) i32 {
     const a_id = @as(u32, @intCast(lua.checkInteger(1)));
@@ -569,15 +610,7 @@ fn l_set_node_border_side_color(lua: *Lua) i32 {
     else if (std.mem.eql(u8, side, "bottom")) node.border_color_bottom = color
     else if (std.mem.eql(u8, side, "left"))   node.border_color_left   = color
     else if (std.mem.eql(u8, side, "right"))  node.border_color_right  = color;
-    const win = switch (node.content) {
-        .window    => |w| w,
-        .workspace => node.preview_window orelse return 0,
-        .empty     => return 0,
-    };
-    if (global_wm.frames.get(win)) |frame| {
-        global_wm.draw_frame_borders(frame, node);
-        _ = c.XFlush(global_wm.display);
-    }
+    repaint_node(global_wm, node);
     return 0;
 }
 
@@ -588,15 +621,7 @@ fn l_clear_node_border_side_colors(lua: *Lua) i32 {
     node.border_color_bottom = null;
     node.border_color_left   = null;
     node.border_color_right  = null;
-    const win = switch (node.content) {
-        .window    => |w| w,
-        .workspace => node.preview_window orelse return 0,
-        .empty     => return 0,
-    };
-    if (global_wm.frames.get(win)) |frame| {
-        global_wm.draw_frame_borders(frame, node);
-        _ = c.XFlush(global_wm.display);
-    }
+    repaint_node(global_wm, node);
     return 0;
 }
 
@@ -1350,12 +1375,6 @@ fn l_set_click_to_focus(lua: *Lua) i32 {
     return 0;
 }
 
-fn l_set_default_urgent_border_color(lua: *Lua) i32 {
-    const color: u32 = @intCast(lua.checkInteger(1));
-    global_wm.default_border_color_urgent = color;
-    return 0;
-}
-
 fn l_get_urgent(lua: *Lua) i32 {
     const id: u32 = @intCast(lua.checkInteger(1));
     const node = global_wm.get_node_by_id(id) orelse {
@@ -1439,6 +1458,8 @@ fn l_set_gaps(lua: *Lua) i32 {
     global_wm.default_gap_outer_v = outer_v;
     apply_gaps_to_graph(&global_wm.graph, inner_h, inner_v, outer_h, outer_v);
     apply_gaps_to_graph(global_wm.current_graph, inner_h, inner_v, outer_h, outer_v);
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
     return 0;
 }
 
@@ -1461,7 +1482,33 @@ fn l_set_gaps_workspace(lua: *Lua) i32 {
     node.content.workspace.gap_inner_v = inner_v;
     node.content.workspace.gap_outer_h = outer_h;
     node.content.workspace.gap_outer_v = outer_v;
+    if (node.content.workspace == global_wm.current_graph) {
+        global_wm.resolve(global_wm.current_graph) catch {};
+        global_wm.flush(global_wm.current_graph) catch {};
+    }
     return 0;
+}
+
+fn l_clear_node_focused_border_color(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    if (global_wm.get_node_by_id(id)) |node| {
+        node.border_color_focused = null;
+        if (global_wm.focused == node) repaint_node(global_wm, node);
+        return 0;
+    }
+    _ = lua.pushString("invalid node id");
+    return lua.raiseError();
+}
+
+fn l_clear_node_unfocused_border_color(lua: *Lua) i32 {
+    const id: u32 = @intCast(lua.checkInteger(1));
+    if (global_wm.get_node_by_id(id)) |node| {
+        node.border_color_unfocused = null;
+        if (global_wm.focused != node) repaint_node(global_wm, node);
+        return 0;
+    }
+    _ = lua.pushString("invalid node id");
+    return lua.raiseError();
 }
 
 fn l_set_resize_modifier(lua: *Lua) i32 {
@@ -2273,6 +2320,7 @@ fn l_set_node_focused_border_color(lua: *Lua) i32 {
     const color: u32 = @intCast(lua.checkInteger(2));
     if (global_wm.get_node_by_id(id)) |node| {
         node.border_color_focused = color;
+        if (global_wm.focused == node) repaint_node(global_wm, node);
         return 0;
     }
     _ = lua.pushString("invalid node id");
@@ -2284,6 +2332,7 @@ fn l_set_node_unfocused_border_color(lua: *Lua) i32 {
     const color: u32 = @intCast(lua.checkInteger(2));
     if (global_wm.get_node_by_id(id)) |node| {
         node.border_color_unfocused = color;
+        if (global_wm.focused != node) repaint_node(global_wm, node);
         return 0;
     }
     _ = lua.pushString("invalid node id");
@@ -2293,18 +2342,29 @@ fn l_set_node_unfocused_border_color(lua: *Lua) i32 {
 fn l_set_default_focused_border_color(lua: *Lua) i32 {
     const color: u32 = @intCast(lua.checkInteger(1));
     global_wm.default_border_color_focused = color;
+    repaint_all_nodes(global_wm);
     return 0;
 }
 
 fn l_set_default_unfocused_border_color(lua: *Lua) i32 {
     const color: u32 = @intCast(lua.checkInteger(1));
     global_wm.default_border_color_unfocused = color;
+    repaint_all_nodes(global_wm);
+    return 0;
+}
+
+fn l_set_default_urgent_border_color(lua: *Lua) i32 {
+    const color: u32 = @intCast(lua.checkInteger(1));
+    global_wm.default_border_color_urgent = color;
+    repaint_all_nodes(global_wm);
     return 0;
 }
 
 fn l_set_border_width(lua: *Lua) i32 {
     const width: i32 = @intCast(lua.checkInteger(1));
     global_wm.border_width = width;
+    global_wm.resolve(global_wm.current_graph) catch {};
+    global_wm.flush(global_wm.current_graph) catch {};
     return 0;
 }
 

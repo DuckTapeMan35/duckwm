@@ -82,6 +82,8 @@ pub const WM = struct {
     workspace_stack: std.ArrayListUnmanaged(*Graph),
     workspace_previews: std.AutoHashMap(c.Window, void),
     next_workspace_number: std.AutoHashMap(u32, u32),
+    swallow_classes: std.StringArrayHashMapUnmanaged(void),
+    swallowed: std.AutoHashMapUnmanaged(u32, u32),
     default_gap_inner_h: u32,
     default_gap_inner_v: u32,
     default_gap_outer_h: u32,
@@ -195,6 +197,8 @@ pub const WM = struct {
             .previous_graph = null,
             .workspace_switch_mode = .none,
             .default_gap_inner_h = 0,
+            .swallow_classes = .{},
+            .swallowed = .{},
             .default_gap_inner_v = 0,
             .default_gap_outer_h = 0,
             .default_gap_outer_v = 0,
@@ -316,6 +320,10 @@ pub const WM = struct {
         if (self.default_arranger_name.len > 0) {
             self.allocator.free(self.default_arranger_name);
         }
+        var sc_it = self.swallow_classes.iterator();
+        while (sc_it.next()) |entry| self.allocator.free(entry.key_ptr.*);
+        self.swallow_classes.deinit(self.allocator);
+        self.swallowed.deinit(self.allocator);
         self.next_workspace_number.deinit();
         self.free_graph(&self.graph);
         self.workspace_stack.deinit(self.allocator);
