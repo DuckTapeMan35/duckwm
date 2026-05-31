@@ -294,26 +294,69 @@ pub fn on_map_notify(wm: *WM, ev: *c.XMapEvent) void {
 }
 
 pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
-    // Forward XDND messages received by frame windows to the actual client
-    const xdnd_atoms = [_][]const u8{
-        "XdndEnter", "XdndPosition", "XdndLeave",
-        "XdndDrop",  "XdndStatus",   "XdndFinished",
-    };
-    for (xdnd_atoms) |name| {
-        const atom = c.XInternAtom(wm.display, name.ptr, 1);
-        if (atom != 0 and ev.message_type == atom) {
-            // Check if this was sent to a frame
-            if (wm.get_client_from_frame(ev.window)) |client| {
-                var fwd = ev.*;
-                fwd.window = client;
-                _ = c.XSendEvent(wm.display, client, 0, c.NoEventMask,
-                    @ptrCast(&fwd));
-                _ = c.XFlush(wm.display);
-                return;
-            }
-            break;
+    // Forward XdndStatus/XdndFinished from client back to drag source
+    const xdnd_status   = c.XInternAtom(wm.display, "XdndStatus",   0);
+    const xdnd_finished = c.XInternAtom(wm.display, "XdndFinished", 0);
+    if (ev.message_type == xdnd_status or ev.message_type == xdnd_finished) {
+        const source: c.Window = @intCast(ev.data.l[0]);
+        if (source != 0) {
+            var fwd = ev.*;
+            fwd.window = source;
+            _ = c.XSendEvent(wm.display, source, 0, c.NoEventMask,
+                @ptrCast(&fwd));
+            _ = c.XFlush(wm.display);
+            return;
         }
     }
+
+    // Handle XDND messages received by frame windows
+    const xdnd_atoms = [_][:0]const u8{
+        "XdndEnter", "XdndPosition", "XdndLeave", "XdndDrop",
+    };
+    for (xdnd_atoms) |name| {
+        const atom = c.XInternAtom(wm.display, name.ptr, 0);
+        if (atom != 0 and ev.message_type == atom) {
+            const client = wm.get_client_from_frame(ev.window) orelse break;
+            const source: c.Window = @intCast(ev.data.l[0]);
+
+            const xdnd_enter       = c.XInternAtom(wm.display, "XdndEnter",       0);
+            const xdnd_position    = c.XInternAtom(wm.display, "XdndPosition",    0);
+            const xdnd_drop        = c.XInternAtom(wm.display, "XdndDrop",        0);
+            const xdnd_leave       = c.XInternAtom(wm.display, "XdndLeave",       0);
+            const xdnd_status_atom = c.XInternAtom(wm.display, "XdndStatus",      0);
+
+            if (atom == xdnd_enter or atom == xdnd_position) {
+                // Forward to client so it knows about the drag
+                var fwd = ev.*;
+                fwd.window = client;
+                _ = c.XSendEvent(wm.display, client, 0, c.NoEventMask, @ptrCast(&fwd));
+
+                // Send XdndStatus back to source on behalf of the frame
+                const xdnd_action_copy = c.XInternAtom(wm.display, "XdndActionCopy", 0);
+                var status: c.XEvent = std.mem.zeroes(c.XEvent);
+                status.xclient.type         = c.ClientMessage;
+                status.xclient.display      = wm.display;
+                status.xclient.window       = source;
+                status.xclient.message_type = xdnd_status_atom;
+                status.xclient.format       = 32;
+                status.xclient.data.l[0]    = @intCast(ev.window); // frame = target
+                status.xclient.data.l[1]    = 1; // accept drop
+                status.xclient.data.l[2]    = 0; // no rect
+                status.xclient.data.l[3]    = 0;
+                status.xclient.data.l[4]    = @intCast(xdnd_action_copy);
+                _ = c.XSendEvent(wm.display, source, 0, c.NoEventMask, &status);
+                _ = c.XFlush(wm.display);
+            } else if (atom == xdnd_drop or atom == xdnd_leave) {
+                // Forward drop/leave to client
+                var fwd = ev.*;
+                fwd.window = client;
+                _ = c.XSendEvent(wm.display, client, 0, c.NoEventMask, @ptrCast(&fwd));
+                _ = c.XFlush(wm.display);
+            }
+            return;
+        }
+    }
+
     const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
     const net_wm_state_fullscreen = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
     const net_wm_state_demands_attention = c.XInternAtom(wm.display, "_NET_WM_STATE_DEMANDS_ATTENTION", 0);

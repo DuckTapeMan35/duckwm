@@ -655,6 +655,18 @@ pub const WM = struct {
             &swa
         );
 
+        // Set XdndAware on both frame and client so drag sources find a valid
+        // drop target regardless of which window they discover under the cursor.
+        const xdnd_aware = c.XInternAtom(self.display, "XdndAware", 0);
+        const xdnd_version: c_ulong = 5;
+        const XA_ATOM: c_ulong = 4;
+        _ = c.XChangeProperty(self.display, win_frame, xdnd_aware,
+            XA_ATOM, 32, c.PropModeReplace,
+            @ptrCast(&xdnd_version), 1);
+        _ = c.XChangeProperty(self.display, win, xdnd_aware,
+            XA_ATOM, 32, c.PropModeReplace,
+            @ptrCast(&xdnd_version), 1);
+
         if (needs_alpha) {
             _ = c.XSetWindowBackgroundPixmap(self.display, win_frame, c.None);
         }
@@ -693,7 +705,8 @@ pub const WM = struct {
         _ = c.XSendEvent(self.display, win, 0, c.StructureNotifyMask, &ce);
 
         try self.frames.put(win, win_frame);
-        _ = c.XSelectInput(self.display, win, c.PropertyChangeMask);
+        _ = c.XSelectInput(self.display, win,
+            c.PropertyChangeMask | c.StructureNotifyMask);
     }
 
     pub fn reset_root_state(self: *WM) void {
