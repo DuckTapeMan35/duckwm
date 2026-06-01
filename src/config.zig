@@ -480,8 +480,54 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_clear_node_unfocused_border_color),  .name = "clear_node_unfocused_border_color" },
     .{ .func = ziglua.wrap(l_register_swallow),                   .name = "register_swallow"   },
     .{ .func = ziglua.wrap(l_unregister_swallow),                 .name = "unregister_swallow" },
-    .{ .func = ziglua.wrap(l_reload_persistent),                    .name = "reload_persistent" },
+    .{ .func = ziglua.wrap(l_reload_persistent),                  .name = "reload_persistent" },
+    .{ .func = ziglua.wrap(l_get_workspace_states),               .name = "get_workspace_states" },
 };
+
+fn l_get_workspace_states(lua: *Lua) i32 {
+    const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
+        pn.owner_graph orelse &global_wm.graph
+    else
+        &global_wm.graph;
+
+    var all: std.ArrayListUnmanaged(*graph_mod.Node) = .{ .items = &.{}, .capacity = 0 };
+    defer all.deinit(global_wm.allocator);
+    for (parent_graph.nodes.items) |node| {
+        if (node.content == .workspace)
+            all.append(global_wm.allocator, node) catch return 0;
+    }
+    std.sort.heap(*graph_mod.Node, all.items, {}, struct {
+        fn lt(_: void, a: *graph_mod.Node, b: *graph_mod.Node) bool {
+            const id_a = global_wm.get_id_for_node(a) orelse return false;
+            const id_b = global_wm.get_id_for_node(b) orelse return false;
+            return id_a < id_b;
+        }
+    }.lt);
+
+    lua.newTable();
+    for (all.items, 0..) |node, i| {
+        const sub = node.content.workspace;
+        const is_current = (sub == global_wm.current_graph);
+        var has_content = false;
+        for (sub.nodes.items) |n| {
+            switch (n.content) {
+                .window, .workspace => { has_content = true; break; },
+                else => {},
+            }
+        }
+        const state: [:0]const u8 = if (is_current) "focused"
+            else if (has_content) "active"
+            else "inactive";
+
+        lua.newTable();
+        lua.pushInteger(@intCast(i + 1));
+        lua.setField(-2, "position");
+        _ = lua.pushString(state);
+        lua.setField(-2, "state");
+        lua.setIndexRaw(-2, @intCast(i + 1));
+    }
+    return 1;
+}
 
 fn l_reload_persistent(lua: *Lua) i32 {
     reload_persistent(lua);

@@ -461,6 +461,13 @@ pub const entries = [_]ApiEntry{
         .params   = &.{},
         .ret      = "integer|nil",
     },
+    .{
+        .category = "Workspaces",
+        .name     = "get_workspace_states",
+        .desc     = "Return a table of all workspaces at the current level, each with a position (1-based index) and state ('focused', 'active', or 'inactive'). All workspaces are included regardless of whether they have content.",
+        .params   = &.{},
+        .ret      = "{ position: integer, state: 'focused'|'active'|'inactive' }[]",
+    },
 
     // =========================================================
     // Layout & Arrangers
