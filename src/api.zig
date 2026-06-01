@@ -68,6 +68,13 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Core",
+        .name     = "reload_persistent",
+        .desc     = "Re-run the config without killing the vm. This should be used only when it is known that the wm isn't in a bad internal state, for things like clearing keybinds set conditionally",
+        .params   = &.{},
+        .ret      = "nil",
+    },
+    .{
+        .category = "Core",
         .name     = "reload_visuals",
         .desc     = "Re-run the config with only visual setters active. Faster than a full reload — use for live theming.",
         .params   = &.{},

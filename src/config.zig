@@ -177,6 +177,50 @@ fn apply_other(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime t
     }) catch {};
 }
 
+fn clear_all_node_colors(g: *graph_mod.Graph) void {
+    for (g.nodes.items) |node| {
+        node.border_color_focused   = null;
+        node.border_color_unfocused = null;
+        node.border_color_top       = null;
+        node.border_color_bottom    = null;
+        node.border_color_left      = null;
+        node.border_color_right     = null;
+        if (node.content == .workspace) {
+            clear_all_node_colors(node.content.workspace);
+        }
+    }
+}
+
+fn reload_persistent(lua: *Lua) void {
+    const user_path = resolve_user_path(global_wm) orelse return;
+    defer global_wm.allocator.free(user_path);
+    const path_z = std.mem.concatWithSentinel(global_wm.allocator, u8, &[_][]const u8{user_path}, 0) catch return;
+    defer global_wm.allocator.free(path_z);
+
+    clear_all_node_colors(global_wm.current_graph);
+
+    // Free lua refs for existing lua keybinds
+    var kb_it = global_wm.keybinds.iterator();
+    while (kb_it.next()) |entry| {
+        switch (entry.value_ptr.*) {
+            .lua => |ref| if (global_wm.lua) |l| l.unref(ziglua.registry_index, ref),
+            else => {},
+        }
+    }
+    global_wm.ungrab_keys();
+    global_wm.keybinds.clearRetainingCapacity();
+
+    // Clear rules to avoid duplicates
+    for (global_wm.rules.items) |ref| {
+        if (global_wm.lua) |l| l.unref(ziglua.registry_index, ref);
+    }
+    global_wm.rules.clearRetainingCapacity();
+
+    lua.doFile(path_z) catch {
+        lua.pop(1);
+    };
+}
+
 fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) void {
     const saved_current = global_wm.current_graph;
     global_wm.current_graph = g;
@@ -270,6 +314,8 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     if (g == saved_current) {
         global_wm.flush(g) catch {};
     }
+
+    reload_persistent(lua);
 }
 
 fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) void {
@@ -434,7 +480,13 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_clear_node_unfocused_border_color),  .name = "clear_node_unfocused_border_color" },
     .{ .func = ziglua.wrap(l_register_swallow),                   .name = "register_swallow"   },
     .{ .func = ziglua.wrap(l_unregister_swallow),                 .name = "unregister_swallow" },
+    .{ .func = ziglua.wrap(l_reload_persistent),                    .name = "reload_persistent" },
 };
+
+fn l_reload_persistent(lua: *Lua) i32 {
+    reload_persistent(lua);
+    return 0;
+}
 
 fn l_register_swallow(lua: *Lua) i32 {
     const class = lua.checkString(1);
@@ -2892,6 +2944,8 @@ fn l_reload_visuals(lua: *Lua) i32 {
     defer global_wm.allocator.free(user_path);
     const path_z = std.mem.concatWithSentinel(global_wm.allocator, u8, &[_][]const u8{user_path}, 0) catch return 0;
     defer global_wm.allocator.free(path_z);
+
+    clear_all_node_colors(global_wm.current_graph);
 
     lua.pushFunction(ziglua.wrap(struct {
         fn noop(_: *Lua) i32 { return 0; }
