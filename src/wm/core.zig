@@ -292,14 +292,19 @@ pub const WM = struct {
             self.allocator.free(g.arranger_name);
         }
         for (g.nodes.items) |node| {
+            if (self.focused == node) {
+                self.focused = null;
+            }
+            if (self.fullscreen_node == node) {
+                self.fullscreen_node = null;
+            }
             if (node.content == .workspace) {
                 self.free_graph(node.content.workspace);
             }
             // destroy any preview window
             if (node.preview_window) |pw| {
-                if (self.frames.get(pw)) |win_frame| {
+                if (self.frames.get(pw) != null) {
                     self.destroy_frame(pw);
-                    _ = c.XDestroyWindow(self.display, win_frame);
                 }
                 _ = c.XDestroyWindow(self.display, pw);
             }
@@ -1155,6 +1160,7 @@ pub const WM = struct {
 
     fn show_graph_frames(self: *WM, g: *Graph) void {
         for (g.nodes.items) |node| {
+            if (node.hidden) continue;
             const win = switch (node.content) {
                 .window => |w| w,
                 .workspace => if (node.preview_window) |pw| pw else continue,

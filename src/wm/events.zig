@@ -323,6 +323,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
                         for (wm.current_graph.nodes.items) |n| {
                             if (n.floating) continue;
                             if (n.content != .window and n.content != .workspace) continue;
+                            if (n.content == .workspace and n.preview_window == null) continue;
                             if (wm.get_id_for_node(n)) |nid| {
                                 if (nid != id) {
                                     prev_id = nid;

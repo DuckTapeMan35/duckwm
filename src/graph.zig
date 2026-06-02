@@ -406,6 +406,7 @@ pub const Graph = struct {
         var node_idx = std.AutoHashMapUnmanaged(*Node, usize){};
         defer node_idx.deinit(self.allocator);
         for (self.nodes.items, 0..) |nd, i| {
+            if (nd.content == .workspace and nd.preview_window == null) continue;
             try node_idx.put(self.allocator, nd, i);
         }
 
@@ -416,6 +417,7 @@ pub const Graph = struct {
         // Seed solver with current node values so underdetermined variables
         // stay at their current position rather than snapping to zero.
         for (self.nodes.items, 0..) |nd, i| {
+            if (!node_idx.contains(nd)) continue;
             solver.vals[cs.var_x(i)] = @floatFromInt(nd.x);
             solver.vals[cs.var_y(i)] = @floatFromInt(nd.y);
             solver.vals[cs.var_w(i)] = @floatFromInt(
@@ -669,6 +671,7 @@ pub const Graph = struct {
         const sw: f64 = @floatFromInt(screen_width);
         const sh: f64 = @floatFromInt(screen_height);
         for (self.nodes.items, 0..) |nd, i| {
+            if (!node_idx.contains(nd)) continue;
             if (nd.floating) {
                 // only update x/y from solver for floating nodes, not w/h
                 // unless equal_width/equal_height constraints exist

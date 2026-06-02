@@ -254,6 +254,7 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
         if (node.floating) continue;
         switch (node.content) {
             .window, .workspace => {
+                if (node.content == .workspace and node.preview_window == null) continue;
                 if (global_wm.get_id_for_node(node)) |id| {
                     ids.append(global_wm.allocator, id) catch {};
                 }
@@ -911,7 +912,6 @@ fn l_get_layout(lua: *Lua) i32 {
 
     lua.checkStack(20) catch {};
 
-    // build parent map from split constraints, skipping floating nodes
     var parent_map = std.AutoHashMapUnmanaged(*graph_mod.Node, *graph_mod.Node){};
     defer parent_map.deinit(global_wm.allocator);
     var parent_idx_map = std.AutoHashMapUnmanaged(*graph_mod.Node, u8){};
@@ -919,6 +919,7 @@ fn l_get_layout(lua: *Lua) i32 {
 
     for (g.nodes.items) |node| {
         if (node.floating) continue;
+        if (node.content == .workspace and node.preview_window == null) continue;
         for (node.constraints.items) |con| {
             if (con == .split) {
                 for (0..con.split.count) |i| {
@@ -929,14 +930,12 @@ fn l_get_layout(lua: *Lua) i32 {
         }
     }
 
-    // result table
     lua.newTable();
-
-    // by_id table
     lua.newTable();
 
     for (g.nodes.items) |node| {
         if (node.floating) continue;
+        if (node.content == .workspace and node.preview_window == null) continue;
         const id = global_wm.get_id_for_node(node) orelse continue;
 
         lua.checkStack(30) catch {};
@@ -973,7 +972,6 @@ fn l_get_layout(lua: *Lua) i32 {
             lua.pushNil(); lua.setField(-2, "parent_idx");
         }
 
-        // constraints
         lua.newTable();
         for (node.constraints.items, 0..) |con, ci| {
             lua.checkStack(20) catch {};
@@ -1037,20 +1035,20 @@ fn l_get_layout(lua: *Lua) i32 {
         }
         lua.setField(-2, "constraints");
 
-        // dup node table and store in by_id[id]
         lua.pushValue(-1);
         lua.setIndexRaw(-3, @intCast(id));
-        lua.pop(1); // pop node table (stored in by_id)
+        lua.pop(1);
     }
 
-    // build nodes array from g.nodes order, pulling from by_id
+    // nodes array
     lua.newTable();
     var ni: usize = 0;
     for (g.nodes.items) |node| {
         if (node.floating) continue;
+        if (node.content == .workspace and node.preview_window == null) continue;
         const id = global_wm.get_id_for_node(node) orelse continue;
         lua.pushInteger(@intCast(id));
-        _ = lua.getTable(-3); // by_id[id]
+        _ = lua.getTable(-3);
         if (lua.typeOf(-1) == .nil) {
             lua.pop(1);
             continue;
@@ -1060,7 +1058,6 @@ fn l_get_layout(lua: *Lua) i32 {
     }
     lua.setField(-3, "nodes");
 
-    // set by_id on result
     lua.setField(-2, "by_id");
 
     // windows array
@@ -1068,6 +1065,7 @@ fn l_get_layout(lua: *Lua) i32 {
     var wi: usize = 0;
     for (g.nodes.items) |node| {
         if (node.floating) continue;
+        if (node.content == .workspace and node.preview_window == null) continue;
         switch (node.content) {
             .window, .workspace => {
                 if (global_wm.get_id_for_node(node)) |id| {
@@ -1081,7 +1079,6 @@ fn l_get_layout(lua: *Lua) i32 {
     }
     lua.setField(-2, "windows");
 
-    // focused
     if (global_wm.focused) |f| {
         if (global_wm.get_id_for_node(f)) |fid| {
             lua.pushInteger(@intCast(fid));
@@ -1093,7 +1090,7 @@ fn l_get_layout(lua: *Lua) i32 {
     }
     lua.setField(-2, "focused");
 
-    // root: non-floating empty node with no parent in parent_map
+    // root
     var root_id: u32 = 0;
     for (g.nodes.items) |node| {
         if (node.floating) continue;
@@ -3276,6 +3273,7 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
         if (node.floating) continue;
         switch (node.content) {
             .window, .workspace => {
+                if (node.content == .workspace and node.preview_window == null) continue;
                 if (wm.get_id_for_node(node)) |id| {
                     ids.append(wm.allocator, id) catch {};
                 }
