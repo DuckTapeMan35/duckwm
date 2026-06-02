@@ -16,6 +16,7 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
             .empty => false,
         };
         if (!a_win) continue;
+        if (a.hidden) continue;
         const ax = a.x;
         const ay = a.y;
         const aw: i32 = @intCast(a.width);
@@ -30,6 +31,7 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
                 .empty => false,
             };
             if (!b_win) continue;
+            if (b.hidden) continue;
             const bx = b.x;
             const by = b.y;
             const bw: i32 = @intCast(b.width);

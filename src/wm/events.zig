@@ -344,7 +344,6 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
     }
 
     try wm.resolve(wm.current_graph);
-    try wm.rebuild_focus_edges();
 
     swallow_mod.try_swallow(wm, id);
 
@@ -366,6 +365,9 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
         if (wm.focused) |f| wm.focus(f);
     }
+
+    try wm.rebuild_focus_edges();
+
     _ = c.XSync(wm.display, 0);
     var discard: c.XEvent = undefined;
     while (c.XCheckTypedEvent(wm.display, c.EnterNotify, &discard) != 0) {}
@@ -377,8 +379,8 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
             wm.center_node(n);
         }
         try wm.resolve(wm.current_graph);
-        try wm.rebuild_focus_edges();
         node.hidden = false;
+        try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
         if (wm.node_registry.get(id)) |n| {
             wm.focus(n);
@@ -735,6 +737,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         if (dying_is_transient) {
             for (wm.current_graph.nodes.items) |node| {
                 if (node == dying) continue;
+                if (node.hidden) continue;
                 if (node.floating) continue;
                 switch (node.content) {
                     .window => { next_focus = node; break; },
@@ -751,9 +754,11 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
                 }
             }
         }
+
         if (next_focus == null) {
             for (wm.current_graph.nodes.items) |node| {
                 if (node == dying) continue;
+                if (node.hidden) continue;
                 switch (node.content) {
                     .window => { next_focus = node; break; },
                     else => continue,

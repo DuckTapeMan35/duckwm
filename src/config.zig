@@ -1440,6 +1440,7 @@ fn l_hide_window(lua: *Lua) i32 {
         },
         else => {},
     }
+    global_wm.rebuild_focus_edges() catch {};
     return 0;
 }
 
@@ -1471,6 +1472,7 @@ fn l_show_window(lua: *Lua) i32 {
         },
         else => {},
     }
+    global_wm.rebuild_focus_edges() catch {};
     return 0;
 }
 
