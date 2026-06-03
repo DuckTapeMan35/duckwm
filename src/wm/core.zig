@@ -1137,7 +1137,7 @@ pub const WM = struct {
     }
 
     pub fn exchange(self: *WM, a: *Node, b: *Node) !void {
-        // 1. Find node IDs
+        // Find node IDs
         var a_id: ?u32 = null;
         var b_id: ?u32 = null;
         var it = self.node_registry.iterator();
@@ -1148,12 +1148,12 @@ pub const WM = struct {
         const id_a = a_id orelse return error.InvalidNode;
         const id_b = b_id orelse return error.InvalidNode;
 
-        // 2. Swap contents
+        // Swap contents
         const content_a = a.content;
         const content_b = b.content;
         if (content_a == .empty and content_b == .empty) return;
 
-        // 3. Update window_to_node_id for window nodes
+        // Update window_to_node_id for window nodes
         switch (content_a) {
             .window => |win| _ = self.window_to_node_id.remove(win),
             else => {},
@@ -1163,7 +1163,7 @@ pub const WM = struct {
             else => {},
         }
 
-        // 4. Swap preview_window and content
+        // Swap preview_window and content
         const pw_a = a.preview_window;
         const pw_b = b.preview_window;
         a.content = content_b;
@@ -1171,7 +1171,14 @@ pub const WM = struct {
         a.preview_window = pw_b;
         b.preview_window = pw_a;
 
-        // 5. Update workspace parent_node pointers
+        const a_focused   = a.border_color_focused;
+        const a_unfocused = a.border_color_unfocused;
+        a.border_color_focused   = b.border_color_focused;
+        a.border_color_unfocused = b.border_color_unfocused;
+        b.border_color_focused   = a_focused;
+        b.border_color_unfocused = a_unfocused;
+
+        // Update workspace parent_node pointers
         switch (a.content) {
             .workspace => |sub| sub.parent_node = a,
             else => {},
@@ -1181,7 +1188,7 @@ pub const WM = struct {
             else => {},
         }
 
-        // 6. Update window_to_node_id for new positions
+        // Update window_to_node_id for new positions
         switch (a.content) {
             .window => |win| try self.window_to_node_id.put(win, id_a),
             else => {},
@@ -1191,7 +1198,7 @@ pub const WM = struct {
             else => {},
         }
 
-        // 7. Update window_to_node_id for swapped preview windows
+        // Update window_to_node_id for swapped preview windows
         if (pw_a) |pw| {
             _ = self.window_to_node_id.remove(pw);
             try self.window_to_node_id.put(pw, id_b);
@@ -1201,11 +1208,11 @@ pub const WM = struct {
             try self.window_to_node_id.put(pw, id_a);
         }
 
-        // 8. Update focused pointer
+        // Update focused pointer
         if (self.focused == a) self.focused = b
         else if (self.focused == b) self.focused = a;
 
-        // 9. Move frames to match new geometry
+        // Move frames to match new geometry
         for ([_]*Node{ a, b }) |node| {
             const win_for_frame = switch (node.content) {
                 .window => |win| win,
