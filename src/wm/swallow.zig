@@ -65,6 +65,35 @@ fn get_net_wm_pid(display: *c.Display, win: c.Window) ?u32 {
     return @intCast(pid);
 }
 
+pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
+    const term_id = wm.window_to_node_id.get(win) orelse return false;
+    const term_node = wm.node_registry.get(term_id) orelse return false;
+
+    // Is this node a parked terminal — i.e. is some child holding it?
+    var holder: ?*graph_mod.Node = null;
+    var it = wm.node_registry.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.*.parked_term == term_node) {
+            holder = entry.value_ptr.*;
+            break;
+        }
+    }
+    const child = holder orelse return false;  // not a parked terminal — let normal path handle it
+
+    // Terminal is gone; the child keeps the slot (it already has the terminal's constraints).
+    child.parked_term = null;
+
+    if (wm.frames.get(win) != null) wm.destroy_frame(win);
+    _ = wm.window_to_node_id.remove(win);
+    _ = wm.node_registry.remove(term_id);
+    if (wm.focused == term_node) wm.focused = null;
+    if (wm.fullscreen_node == term_node) wm.fullscreen_node = null;
+    term_node.deinit(wm.allocator);
+    wm.allocator.destroy(term_node);
+
+    return true;
+}
+
 pub fn try_swallow(wm: *WM, child_id: u32) void {
     if (wm.swallow_classes.count() == 0) return;
 
@@ -96,16 +125,12 @@ pub fn try_swallow(wm: *WM, child_id: u32) void {
         if (!wm.swallow_classes.contains(cls)) continue;
 
         // Found a match — do the swallow
-        do_swallow(wm, term_id, term_node, child_id, child_node);
+        do_swallow(wm, term_id, term_node, child_node);
         return;
     }
 }
 
-fn do_swallow(
-    wm: *WM,
-    term_id: u32, term_node: *graph_mod.Node,
-    child_id: u32, child_node: *graph_mod.Node,
-) void {
+fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *graph_mod.Node) void {
     const g = wm.current_graph;
 
     child_node.constraints.deinit(wm.allocator);
@@ -139,7 +164,7 @@ fn do_swallow(
         else => {},
     }
 
-    wm.swallowed.put(wm.allocator, child_id, term_id) catch {};
+    child_node.parked_term = term_node;
 
     // Notify arranger the terminal unmapped so its internal list is correct
     wm.call_arranger(g, "unmap", term_id, null);
@@ -151,11 +176,9 @@ fn do_swallow(
 }
 
 pub fn try_unswallow(wm: *WM, child_id: u32) bool {
-    const term_id = wm.swallowed.get(child_id) orelse return false;
-    _ = wm.swallowed.remove(child_id);
-
     const child_node = wm.node_registry.get(child_id) orelse return false;
-    const term_node  = wm.node_registry.get(term_id)  orelse return false;
+    const term_node  = child_node.parked_term orelse return false;
+    child_node.parked_term = null;
     const g = wm.current_graph;
 
     // Transfer constraints back: child -> term
@@ -180,7 +203,9 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     // Fully destroy the child's frame and clean up registries
     switch (child_node.content) {
         .window => |win| {
-            _ = c.XUnmapWindow(wm.display, wm.frames.get(win) orelse undefined);
+            if (wm.frames.get(win)) |frame| {
+                _ = c.XUnmapWindow(wm.display, frame);
+            }
             wm.destroy_frame(win);
             _ = wm.window_to_node_id.remove(win);
         },

@@ -347,7 +347,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     swallow_mod.try_swallow(wm, id);
 
-    if (!wm.swallowed.contains(id)) {
+    if (node.parked_term == null) {
         node.hidden = false;
         try wm.flush(wm.current_graph);
 
@@ -697,6 +697,8 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
         try wm.flush(wm.current_graph);
         return;
     }
+
+    if (swallow_mod.try_terminal_died(wm, win)) return;
 
     if (wm.window_to_node_id.get(win)) |child_id| {
         if (swallow_mod.try_unswallow(wm, child_id)) return;

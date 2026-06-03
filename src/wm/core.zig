@@ -21,7 +21,7 @@ fn get_argb_visual(display: *c.Display) ?*c.Visual {
     var template: c.XVisualInfo = undefined;
     template.screen = c.XDefaultScreen(display);
     template.depth = 32;
-    template.@"class" = c.TrueColor;   // ← correct field name
+    template.@"class" = c.TrueColor;
     var nitems: c_int = 0;
     const list = c.XGetVisualInfo(display, c.VisualScreenMask | c.VisualDepthMask | c.VisualClassMask, &template, &nitems);
     defer if (list != null) {_ = c.XFree(@ptrCast(list));};
@@ -83,14 +83,14 @@ pub const WM = struct {
     workspace_previews: std.AutoHashMap(c.Window, void),
     next_workspace_number: std.AutoHashMap(u32, u32),
     swallow_classes: std.StringArrayHashMapUnmanaged(void),
-    swallowed: std.AutoHashMapUnmanaged(u32, u32),
     default_gap_inner_h: u32,
     default_gap_inner_v: u32,
     default_gap_outer_h: u32,
     default_gap_outer_v: u32,
 
-    // flushing state
+    // misc state fields
     flushing: bool,
+    pending_cleanup_graph: ?*Graph,
 
     // resize state fields
     resize_modifier: ?c_uint,
@@ -198,7 +198,6 @@ pub const WM = struct {
             .workspace_switch_mode = .none,
             .default_gap_inner_h = 0,
             .swallow_classes = .{},
-            .swallowed = .{},
             .default_gap_inner_v = 0,
             .default_gap_outer_h = 0,
             .default_gap_outer_v = 0,
@@ -221,6 +220,7 @@ pub const WM = struct {
             .last_flushed_edge_y = -1,
 
             .flushing = false,
+            .pending_cleanup_graph = null,
 
             .float_moving = false,
             .float_move_modifier = null,
@@ -283,8 +283,39 @@ pub const WM = struct {
         _ = c.XChangeProperty(display, c.XDefaultRootWindow(display),
             workarea_atom, XA_CARDINAL, 32, c.PropModeReplace,
             @ptrCast(&vals), 4);
-        
         return wm;
+    }
+
+    fn free_parked_terminal(self: *WM, term: *Node) void {
+        switch (term.content) {
+            .window => |win| {
+                if (self.frames.get(win)) |win_frame| {
+                    _ = c.XReparentWindow(self.display, win, self.root, 0, 0);
+                    _ = c.XSync(self.display, 0);
+                    _ = c.XDestroyWindow(self.display, win_frame);
+                    _ = c.XSync(self.display, 0);
+                    _ = self.frames.remove(win);
+                }
+                // workspace is going away — ask the terminal to close
+                const wm_delete = c.XInternAtom(self.display, "WM_DELETE_WINDOW", 0);
+                const wm_protocols = c.XInternAtom(self.display, "WM_PROTOCOLS", 0);
+                var ev: c.XEvent = std.mem.zeroes(c.XEvent);
+                ev.xclient.type = c.ClientMessage;
+                ev.xclient.window = win;
+                ev.xclient.message_type = wm_protocols;
+                ev.xclient.format = 32;
+                ev.xclient.data.l[0] = @intCast(wm_delete);
+                ev.xclient.data.l[1] = c.CurrentTime;
+                _ = c.XSendEvent(self.display, win, 0, c.NoEventMask, &ev);
+                _ = self.window_to_node_id.remove(win);
+            },
+            else => {},
+        }
+        if (self.get_id_for_node(term)) |tid| _ = self.node_registry.remove(tid);
+        if (self.focused == term) self.focused = null;
+        if (self.fullscreen_node == term) self.fullscreen_node = null;
+        term.deinit(self.allocator);
+        self.allocator.destroy(term);
     }
 
     fn free_graph(self: *WM, g: *Graph) void {
@@ -313,6 +344,26 @@ pub const WM = struct {
         }
         g.nodes.deinit(self.allocator);
         g.focus_edges.deinit(self.allocator);
+        _ = c.XFlush(self.display);
+        _ = c.XSync(self.display, 0);
+    }
+
+    fn on_node_freed(ctx: *anyopaque, node: *Node) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        if (node.parked_term) |term| {
+            node.parked_term = null;
+            self.free_parked_terminal(term);
+        }
+        switch (node.content) {
+            .window    => |win| _ = self.window_to_node_id.remove(win),
+            .workspace => if (node.preview_window) |pw| { _ = self.window_to_node_id.remove(pw); },
+            .empty     => {},
+        }
+        if (self.get_id_for_node(node)) |id| {
+            _ = self.node_registry.remove(id);
+        }
+        if (self.focused == node) self.focused = null;
+        if (self.fullscreen_node == node) self.fullscreen_node = null;
     }
 
     pub fn deinit(self: *WM) void {
@@ -328,7 +379,6 @@ pub const WM = struct {
         var sc_it = self.swallow_classes.iterator();
         while (sc_it.next()) |entry| self.allocator.free(entry.key_ptr.*);
         self.swallow_classes.deinit(self.allocator);
-        self.swallowed.deinit(self.allocator);
         self.next_workspace_number.deinit();
         self.free_graph(&self.graph);
         self.workspace_stack.deinit(self.allocator);
@@ -623,20 +673,30 @@ pub const WM = struct {
         var attrs: c.XWindowAttributes = undefined;
         _ = c.XGetWindowAttributes(self.display, win, &attrs);
 
+        // Only use ARGB visual if the client window is 32-bit AND we can find
+        // a matching visual. Falling back to the default visual avoids BadMatch
+        // errors and colormap leaks when no ARGB visual is available.
         const needs_alpha = (attrs.depth == 32);
-        const visual = if (needs_alpha) get_argb_visual(self.display) else c.XDefaultVisual(self.display, 0);
-        const depth = if (needs_alpha) 32 else c.XDefaultDepth(self.display, 0);
+        const argb_visual = if (needs_alpha) get_argb_visual(self.display) else null;
+        const use_alpha = argb_visual != null;
+        const visual = argb_visual orelse c.XDefaultVisual(self.display, 0);
+        const depth = if (use_alpha) @as(c_int, 32) else c.XDefaultDepth(self.display, 0);
+
+        // Only create a custom colormap when we're actually using the ARGB visual.
+        // A custom colormap created for a visual that doesn't match the frame's
+        // actual visual causes BadMatch on XCreateWindow and leaks the colormap.
+        const colormap = if (use_alpha)
+            c.XCreateColormap(self.display, self.root, visual, c.AllocNone)
+        else
+            c.XDefaultColormap(self.display, 0);
 
         var swa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         swa.backing_store = c.WhenMapped;
         swa.bit_gravity = c.NorthWestGravity;
         swa.win_gravity = c.NorthWestGravity;
         swa.border_pixel = border_color;
-        swa.background_pixel = if (needs_alpha) 0x00000000 else c.None;
-        swa.colormap = if (needs_alpha)
-            c.XCreateColormap(self.display, self.root, visual, c.AllocNone)
-        else
-            c.XDefaultColormap(self.display, 0);
+        swa.background_pixel = if (use_alpha) 0x00000000 else c.None;
+        swa.colormap = colormap;
 
         const mask: c_ulong = c.CWBackingStore | c.CWBitGravity | c.CWWinGravity |
                             c.CWBorderPixel | c.CWBackPixel | c.CWColormap;
@@ -656,6 +716,13 @@ pub const WM = struct {
             &swa
         );
 
+        // Free the colormap immediately if frame creation failed to avoid leaking
+        // it. XIDs are a finite resource and leaking them causes XID exhaustion.
+        if (win_frame == 0) {
+            if (use_alpha) _ = c.XFreeColormap(self.display, colormap);
+            return error.FrameCreationFailed;
+        }
+
         // Set XdndAware on both frame and client so drag sources find a valid
         // drop target regardless of which window they discover under the cursor.
         const xdnd_aware = c.XInternAtom(self.display, "XdndAware", 0);
@@ -668,11 +735,12 @@ pub const WM = struct {
             XA_ATOM, 32, c.PropModeReplace,
             @ptrCast(&xdnd_version), 1);
 
-        if (needs_alpha) {
+        if (use_alpha) {
             _ = c.XSetWindowBackgroundPixmap(self.display, win_frame, c.None);
         }
 
-        // Move offscreen temporarily
+        // Move offscreen temporarily so the window isn't visible until flush
+        // positions it correctly after the arranger runs.
         _ = c.XMoveWindow(self.display, win_frame, -10000, -10000);
 
         if (self.click_to_focus) {
@@ -687,23 +755,35 @@ pub const WM = struct {
             c.EnterWindowMask | c.LeaveWindowMask | c.ExposureMask);
 
         _ = c.XAddToSaveSet(self.display, win);
+        // Check current parent before reparenting
+        var root_ret: c.Window = undefined;
+        var parent_ret: c.Window = undefined;
+        var children: [*c]c.Window = null;
+        var nchildren: c_uint = 0;
+        _ = c.XQueryTree(self.display, win, &root_ret, &parent_ret, &children, &nchildren);
+        if (children != null) _ = c.XFree(children);
         _ = c.XReparentWindow(self.display, win, win_frame, self.border_width, self.border_width);
         _ = c.XSetWindowBorderWidth(self.display, win, 0);
+        _ = c.XSync(self.display, 0);
 
-        // Send synthetic ConfigureNotify
-        var ce: c.XEvent = std.mem.zeroes(c.XEvent);
-        ce.xconfigure.type = c.ConfigureNotify;
-        ce.xconfigure.display = self.display;
-        ce.xconfigure.event = win;
-        ce.xconfigure.window = win;
-        ce.xconfigure.x = attrs.x;
-        ce.xconfigure.y = attrs.y;
-        ce.xconfigure.width = @intCast(node.width);
-        ce.xconfigure.height = @intCast(node.height);
-        ce.xconfigure.border_width = 0;
-        ce.xconfigure.above = c.None;
-        ce.xconfigure.override_redirect = 0;
-        _ = c.XSendEvent(self.display, win, 0, c.StructureNotifyMask, &ce);
+        // Only send ConfigureNotify if the window has been previously configured
+        // Sending it unconditionally can confuse clients tracking this XID from
+        // a previous window that had the same XID
+        if (node.width > 0 and node.height > 0) {
+            var ce: c.XEvent = std.mem.zeroes(c.XEvent);
+            ce.xconfigure.type = c.ConfigureNotify;
+            ce.xconfigure.display = self.display;
+            ce.xconfigure.event = win;
+            ce.xconfigure.window = win;
+            ce.xconfigure.x = attrs.x;
+            ce.xconfigure.y = attrs.y;
+            ce.xconfigure.width = @intCast(node.width);
+            ce.xconfigure.height = @intCast(node.height);
+            ce.xconfigure.border_width = 0;
+            ce.xconfigure.above = c.None;
+            ce.xconfigure.override_redirect = 0;
+            _ = c.XSendEvent(self.display, win, 0, c.StructureNotifyMask, &ce);
+        }
 
         try self.frames.put(win, win_frame);
         _ = c.XSelectInput(self.display, win,
@@ -1196,6 +1276,7 @@ pub const WM = struct {
             self.focus(n);
         } else {
             self.focused = null;
+            focus_mod.clear_active_window(self);
         }
         self.raise_fullscreen();
         self.update_ewmh();
@@ -1231,7 +1312,10 @@ pub const WM = struct {
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
-        if (focus_mod.top_left_window(self)) |n| self.focus(n);
+        if (focus_mod.top_left_window(self)) |n| self.focus(n) else {
+            self.focused = null;
+            focus_mod.clear_active_window(self);
+        }
         self.raise_fullscreen();
         self.update_ewmh();
     }
@@ -1490,13 +1574,22 @@ pub const WM = struct {
         _ = self.frames.remove(win);
     }
 
-    fn kill_graph_windows(self: *WM, g: *graph_mod.Graph) void {
+    pub fn kill_graph_windows(self: *WM, g: *graph_mod.Graph) void {
         const wm_delete = c.XInternAtom(self.display, "WM_DELETE_WINDOW", 0);
         const wm_protocols = c.XInternAtom(self.display, "WM_PROTOCOLS", 0);
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => |win| {
-                    // Send close request FIRST so the client receives it
+                    // Reparent back to root before destroying frame so the client
+                    // isn't left parented to a destroyed window
+                    if (self.frames.get(win)) |win_frame| {
+                        _ = c.XReparentWindow(self.display, win, self.root, 0, 0);
+                        _ = c.XSync(self.display, 0);
+                        _ = c.XDestroyWindow(self.display, win_frame);
+                        _ = c.XSync(self.display, 0);
+                        _ = self.frames.remove(win);
+                    }
+                    // Now send close request
                     var ev: c.XEvent = std.mem.zeroes(c.XEvent);
                     ev.xclient.type = c.ClientMessage;
                     ev.xclient.window = win;
@@ -1505,12 +1598,10 @@ pub const WM = struct {
                     ev.xclient.data.l[0] = @intCast(wm_delete);
                     ev.xclient.data.l[1] = c.CurrentTime;
                     _ = c.XSendEvent(self.display, win, 0, c.NoEventMask, &ev);
-                    // Remove from registry so DestroyNotify is ignored
                     if (self.window_to_node_id.get(win)) |id| {
                         _ = self.node_registry.remove(id);
                         _ = self.window_to_node_id.remove(win);
                     }
-                    // Don't destroy frame — let client die naturally
                 },
                 .workspace => |sub| self.kill_graph_windows(sub),
                 .empty => {},
@@ -1545,8 +1636,10 @@ pub const WM = struct {
                         if (sibling == node) continue;
                         if (sibling.content != .workspace) continue;
                         if (sibling.content.workspace.id.level != killed_level) continue;
-                        if (graph_has_content(sibling.content.workspace)) {
-                            self.notify("Windows left behind", "Other workspaces at this level still have windows open");
+                        if (sibling.preview_window != null) continue;
+                        if (self.graph_has_content(sibling.content.workspace)) {
+                            self.pending_cleanup_graph = og;
+                            self.notify("Windows left behind", "Other workspaces one level down still have windows open");
                             break;
                         }
                     }
@@ -1564,11 +1657,11 @@ pub const WM = struct {
         }
     }
 
-    fn graph_has_content(g: *graph_mod.Graph) bool {
+    pub fn graph_has_content(self: *WM, g: *graph_mod.Graph) bool {
         for (g.nodes.items) |node| {
             switch (node.content) {
                 .window => return true,
-                .workspace => |sub| if (graph_has_content(sub)) return true,
+                .workspace => |sub| if (self.graph_has_content(sub)) return true,
                 .empty => {},
             }
         }
@@ -1576,7 +1669,13 @@ pub const WM = struct {
     }
 
     pub fn notify(self: *WM, summary: []const u8, body: []const u8) void {
-        const argv = [_][]const u8{ "notify-send", "-a", "duckwm", summary, body };
+        const cmd = std.fmt.allocPrint(self.allocator,
+            "action=$(notify-send -a duckwm -t 0 --action 'default=Clean up' --wait '{s}' '{s}'); " ++
+            "[ \"$action\" = default ] && quack cleanup_left_behind",
+            .{ summary, body },
+        ) catch return;
+        defer self.allocator.free(cmd);
+        const argv = [_][]const u8{ "sh", "-c", cmd };
         self.spawn(&argv) catch {};
     }
 
@@ -1695,6 +1794,8 @@ pub const WM = struct {
     pub fn create_workspace_graph(self: *WM, level: u32) !*graph_mod.Graph {
         const sub = try self.allocator.create(graph_mod.Graph);
         sub.* = graph_mod.Graph.init(self.allocator);
+        sub.on_node_free = on_node_freed;
+        sub.on_node_free_ctx = self;
         sub.id = try self.alloc_workspace_id(level);
         sub.gap_inner_h = self.default_gap_inner_h;
         sub.gap_inner_v = self.default_gap_inner_v;
@@ -1709,13 +1810,17 @@ pub const WM = struct {
     pub fn create_workspace_node_with_preview(self: *WM, owner_graph: *graph_mod.Graph) !*Node {
         const level = owner_graph.id.level + 1;
         const sub = try self.create_workspace_graph(level);
-        const pw = c.XCreateSimpleWindow(
-            self.display, self.root,
-            0, 0, 200, 150, 0, 0, 0x1a1a2e
-        );
         var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         wa.override_redirect = 1;
-        _ = c.XChangeWindowAttributes(self.display, pw, c.CWOverrideRedirect, &wa);
+        wa.background_pixel = 0x1a1a2e;
+        wa.border_pixel = 0;
+        const pw = c.XCreateWindow(
+            self.display, self.root,
+            0, 0, 200, 150, 0,
+            c.CopyFromParent, c.InputOutput, c.CopyFromParent,
+            c.CWOverrideRedirect | c.CWBackPixel | c.CWBorderPixel,
+            &wa,
+        );
         const node = try owner_graph.add_node(.{ .workspace = sub });
         sub.parent_node = node;
         node.preview_window = pw;
@@ -1742,13 +1847,17 @@ pub const WM = struct {
         // 2. Workspace sub-graph
         const sub = try self.create_workspace_graph(1);
 
-        const pw = c.XCreateSimpleWindow(
-            self.display, self.root,
-            0, 0, 200, 150, 0, 0, 0x1a1a2e
-        );
         var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
         wa.override_redirect = 1;
-        _ = c.XChangeWindowAttributes(self.display, pw, c.CWOverrideRedirect, &wa);
+        wa.background_pixel = 0x1a1a2e;
+        wa.border_pixel = 0;
+        const pw = c.XCreateWindow(
+            self.display, self.root,
+            0, 0, 200, 150, 0,
+            c.CopyFromParent, c.InputOutput, c.CopyFromParent,
+            c.CWOverrideRedirect | c.CWBackPixel | c.CWBorderPixel,
+            &wa,
+        );
 
         const ws_node = try self.current_graph.add_node(.{ .workspace = sub });
         sub.parent_node = ws_node;
@@ -1775,6 +1884,8 @@ pub const WM = struct {
 
     pub fn run(self: *WM) !void {
         self.current_graph = &self.graph;
+        self.graph.on_node_free = on_node_freed;
+        self.graph.on_node_free_ctx = self;
         events_mod.wm_detected = false;
         _ = c.XSetErrorHandler(events_mod.on_wm_detected);
         events_mod.announce_supported_hints(self);

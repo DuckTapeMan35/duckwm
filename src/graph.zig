@@ -113,6 +113,7 @@ pub const Node = struct {
 
     on_remove: ?ReparentStrategy,
     dead: bool,
+    parked_term: ?*Node,
 
     pub fn init(content: NodeContent, allocator: std.mem.Allocator) !Node {
         return .{
@@ -140,6 +141,7 @@ pub const Node = struct {
 
             .on_remove = null,
             .dead = false,
+            .parked_term = null,
         };
     }
 
@@ -186,6 +188,8 @@ pub const Graph = struct {
     preview_win_bg: ?u32,
     preview_border: ?u32,
     preview_text: ?u32,
+    on_node_free: ?*const fn (*anyopaque, *Node) void,
+    on_node_free_ctx: *anyopaque,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -215,6 +219,8 @@ pub const Graph = struct {
             .preview_win_bg = null,
             .preview_border = null,
             .preview_text   = null,
+            .on_node_free = null,
+            .on_node_free_ctx = undefined,
             .allocator = allocator,
         };
     }
@@ -241,6 +247,7 @@ pub const Graph = struct {
             if (child.content == .workspace) {
                 self.free_subgraph(child.content.workspace);
             }
+            if (self.on_node_free) |cb| cb(self.on_node_free_ctx, child);
             child.deinit(self.allocator);
             self.allocator.destroy(child);
         }
@@ -321,7 +328,32 @@ pub const Graph = struct {
         for (self.nodes.items) |n| {
             var i: usize = 0;
             while (i < n.constraints.items.len) {
-                if (constraint_involves_node(n.constraints.items[i], node)) {
+                const con = n.constraints.items[i];
+                if (constraint_involves_node(con, node)) {
+                    if (con == .split) {
+                        var s = con.split;
+                        var new_count: u8 = 0;
+                        for (0..s.count) |k| {
+                            if (s.children[k] == node) continue;
+                            s.children[new_count] = s.children[k];
+                            s.ratios[new_count] = s.ratios[k];
+                            new_count += 1;
+                        }
+                        if (new_count <= 1) {
+                            _ = n.constraints.swapRemove(i);
+                        } else {
+                            var ratio_sum: f32 = 0;
+                            for (0..new_count) |k| ratio_sum += s.ratios[k];
+                            if (ratio_sum > 0) {
+                                for (0..new_count) |k| s.ratios[k] /= ratio_sum;
+                            }
+                            n.constraints.items[i].split.count = new_count;
+                            n.constraints.items[i].split.children = s.children;
+                            n.constraints.items[i].split.ratios = s.ratios;
+                            i += 1;
+                        }
+                        continue;
+                    }
                     _ = n.constraints.swapRemove(i);
                 } else {
                     i += 1;
@@ -339,6 +371,7 @@ pub const Graph = struct {
         if (node.content == .workspace) {
             self.free_subgraph(node.content.workspace);
         }
+        if (self.on_node_free) |cb| cb(self.on_node_free_ctx, node);
         node.deinit(self.allocator);
         self.allocator.destroy(node);
     }

@@ -468,6 +468,13 @@ pub const entries = [_]ApiEntry{
         .params   = &.{},
         .ret      = "{ position: integer, state: 'focused'|'active'|'inactive' }[]",
     },
+    .{
+        .category = "Workspaces",
+        .name     = "cleanup_left_behind",
+        .desc     = "Cleans up subgraphs with windows that don't have a visible preview window",
+        .params   = &.{},
+        .ret      = "nil",
+    },
 
     // =========================================================
     // Layout & Arrangers

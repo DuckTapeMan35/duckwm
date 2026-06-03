@@ -483,7 +483,23 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_unregister_swallow),                 .name = "unregister_swallow" },
     .{ .func = ziglua.wrap(l_reload_persistent),                  .name = "reload_persistent" },
     .{ .func = ziglua.wrap(l_get_workspace_states),               .name = "get_workspace_states" },
+    .{ .func = ziglua.wrap(l_cleanup_left_behind),                .name = "cleanup_left_behind" },
 };
+
+fn l_cleanup_left_behind(lua: *Lua) i32 {
+    _ = lua;
+    const og = global_wm.pending_cleanup_graph orelse return 0;
+    var i: usize = 0;
+    while (i < og.nodes.items.len) {
+        const node = og.nodes.items[i];
+        if (node.content != .workspace or node.preview_window != null) { i += 1; continue; }
+        if (!global_wm.graph_has_content(node.content.workspace)) { i += 1; continue; }
+        global_wm.kill_graph_windows(node.content.workspace);
+        og.remove_node(node);   // no preview to destroy — remove directly; hook cleans registry
+    }
+    global_wm.pending_cleanup_graph = null;
+    return 0;
+}
 
 fn l_get_workspace_states(lua: *Lua) i32 {
     const parent_graph: *graph_mod.Graph = if (global_wm.current_graph.parent_node) |pn|
