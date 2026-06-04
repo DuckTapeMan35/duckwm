@@ -55,6 +55,8 @@ pub const Keybind = union(enum) {
 
 pub const WorkspaceSwitchMode = enum { none, previous };
 
+const key_lock_masks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
+
 pub const WM = struct {
     // X11 data
     display: *c.Display,
@@ -594,23 +596,35 @@ pub const WM = struct {
 
     pub fn bind_lua(self: *WM, modifiers: c_uint, keysym: c.KeySym, ref: i32) !void {
         try self.keybinds.put(.{ .modifiers = modifiers, .keysym = keysym }, .{ .lua = ref });
-        const keycode = c.XKeysymToKeycode(self.display, keysym);
-        _ = c.XGrabKey(self.display, keycode, modifiers, self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
+        self.grab_key(modifiers, keysym);
     }
 
     pub fn bind(self: *WM, modifiers: c_uint, keysym: c.KeySym, action: *const fn(*WM) anyerror!void) !void {
         try self.keybinds.put(.{ .modifiers = modifiers, .keysym = keysym }, .{ .zig = action });
+        self.grab_key(modifiers, keysym);
+    }
+
+    pub fn grab_key(self: *WM, modifiers: c_uint, keysym: c.KeySym) void {
         const keycode = c.XKeysymToKeycode(self.display, keysym);
-        _ = c.XGrabKey(self.display, keycode, modifiers, self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
+        if (keycode == 0) return;
+        for (key_lock_masks) |lock| {
+            _ = c.XGrabKey(self.display, keycode, modifiers | lock,
+                self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
+        }
+    }
+
+    pub fn ungrab_key(self: *WM, modifiers: c_uint, keysym: c.KeySym) void {
+        const keycode = c.XKeysymToKeycode(self.display, keysym);
+        if (keycode == 0) return;
+        for (key_lock_masks) |lock| {
+            _ = c.XUngrabKey(self.display, keycode, modifiers | lock, self.root);
+        }
     }
 
     pub fn ungrab_keys(self: *WM) void {
         var it = self.keybinds.iterator();
         while (it.next()) |entry| {
-            const keycode = c.XKeysymToKeycode(self.display, entry.key_ptr.*.keysym);
-            if (keycode != 0) {
-                _ = c.XUngrabKey(self.display, keycode, entry.key_ptr.*.modifiers, self.root);
-            }
+            self.ungrab_key(entry.key_ptr.*.modifiers, entry.key_ptr.*.keysym);
         }
         _ = c.XSync(self.display, 0);
     }
@@ -1534,11 +1548,7 @@ pub const WM = struct {
     pub fn regrab_keys(self: *WM) void {
         var it = self.keybinds.iterator();
         while (it.next()) |entry| {
-            const keycode = c.XKeysymToKeycode(self.display, entry.key_ptr.*.keysym);
-            if (keycode != 0) {
-                _ = c.XGrabKey(self.display, keycode, entry.key_ptr.*.modifiers,
-                    self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
-            }
+            self.grab_key(entry.key_ptr.*.modifiers, entry.key_ptr.*.keysym);
         }
         _ = c.XSync(self.display, 0);
     }

@@ -1233,7 +1233,8 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
 
 pub fn on_key_press(wm: *WM, event: *c.XKeyEvent) void {
     const keysym = c.XKeycodeToKeysym(wm.display, @as(u8, @truncate(event.keycode)), 0);
-    if (wm.keybinds.get(.{ .modifiers = event.state, .keysym = keysym })) |kb| {
+    const mods = event.state & ~@as(c_uint, c.LockMask | c.Mod2Mask);
+    if (wm.keybinds.get(.{ .modifiers = mods, .keysym = keysym })) |kb| {
         switch (kb) {
             .zig => |a| {
                 a(wm) catch |err| {
@@ -1412,11 +1413,7 @@ pub fn on_leave_notify(wm: *WM, ev: *c.XCrossingEvent) void {
         // leaving an unmanaged window (panel/dock), regrab keys
         var it = wm.keybinds.iterator();
         while (it.next()) |entry| {
-            const keycode = c.XKeysymToKeycode(wm.display, entry.key_ptr.*.keysym);
-            if (keycode != 0) {
-                _ = c.XGrabKey(wm.display, keycode, entry.key_ptr.*.modifiers,
-                    wm.root, 1, c.GrabModeAsync, c.GrabModeAsync);
-            }
+            wm.grab_key(entry.key_ptr.*.modifiers, entry.key_ptr.*.keysym);
         }
         _ = c.XSync(wm.display, 0);
     }
