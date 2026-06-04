@@ -1,5 +1,6 @@
 pub const c = @cImport({
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/XKBlib.h");
     @cInclude("X11/Xutil.h");
     @cInclude("X11/Xcursor/Xcursor.h");
     @cInclude("X11/Xft/Xft.h");

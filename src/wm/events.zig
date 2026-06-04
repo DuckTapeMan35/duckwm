@@ -402,6 +402,14 @@ pub fn on_map_notify(wm: *WM, ev: *c.XMapEvent) void {
     _ = c.XFlush(wm.display);
 }
 
+pub fn on_mapping_notify(wm: *WM, ev: *c.XMappingEvent) void {
+    _ = c.XRefreshKeyboardMapping(ev);
+    if (ev.request == c.MappingKeyboard or ev.request == c.MappingModifier) {
+        _ = c.XUngrabKey(wm.display, c.AnyKey, c.AnyModifier, wm.root);
+        wm.regrab_keys();
+    }
+}
+
 pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
     // Forward XdndStatus/XdndFinished from client back to drag source
     const xdnd_status   = c.XInternAtom(wm.display, "XdndStatus",   0);
@@ -1232,7 +1240,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
 }
 
 pub fn on_key_press(wm: *WM, event: *c.XKeyEvent) void {
-    const keysym = c.XKeycodeToKeysym(wm.display, @as(u8, @truncate(event.keycode)), 0);
+    const keysym = c.XkbKeycodeToKeysym(wm.display, @as(u8, @truncate(event.keycode)), 0, 0);
     const mods = event.state & ~@as(c_uint, c.LockMask | c.Mod2Mask);
     if (wm.keybinds.get(.{ .modifiers = mods, .keysym = keysym })) |kb| {
         switch (kb) {

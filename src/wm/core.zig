@@ -1993,6 +1993,7 @@ pub const WM = struct {
                     c.UnmapNotify      => try events_mod.on_unmap_notify(self, &e.xunmap),
                     c.MapNotify        => events_mod.on_map_notify(self, &e.xmap),
                     c.Expose           => events_mod.on_expose(self, &e.xexpose),
+                    c.MappingNotify    => events_mod.on_mapping_notify(self, &e.xmapping),
                     else => std.debug.print("Unhandled event type: {}\n", .{e.type}),
                 }
             }
