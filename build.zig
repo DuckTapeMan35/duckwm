@@ -213,11 +213,20 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    translate_c.linkSystemLibrary("xft", .{ .use_pkg_config = .force });
+    translate_c.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .force });
+
     const c_mod = b.addModule("c", .{
         .root_source_file = b.path("src/c.zig"),
         .target = target,
         .optimize = optimize,
     });
+    c_mod.addImport("c_raw", translate_c.createModule());
 
     const ziglua = b.dependency("ziglua", .{
         .target = target,
@@ -270,8 +279,6 @@ pub fn build(b: *std.Build) void {
     config_mod.linkSystemLibrary("Xcursor", .{});
     graph_mod.addImport("c", c_mod);
     graph_mod.addImport("solver", solver_mod);
-    c_mod.linkSystemLibrary("xft", .{ .use_pkg_config = .force });
-    c_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .force });
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
