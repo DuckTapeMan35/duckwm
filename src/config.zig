@@ -2484,6 +2484,10 @@ fn l_set_default_urgent_border_color(lua: *Lua) i32 {
 fn l_set_border_width(lua: *Lua) i32 {
     const width = check_u32(lua, 1) orelse return luaL_error_str(lua, "border width must be non-negative");
     global_wm.border_width = @intCast(width);
+    var it = global_wm.frames.keyIterator();
+    while (it.next()) |win| {
+        global_wm.set_frame_extents(win.*);
+    }
     global_wm.resolve(global_wm.current_graph) catch {};
     global_wm.flush(global_wm.current_graph) catch {};
     return 0;

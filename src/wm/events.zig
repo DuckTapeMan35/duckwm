@@ -374,6 +374,9 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
 
     _ = c.XSelectInput(wm.display, req.window, c.PropertyChangeMask);
 
+    wm.update_ewmh();
+    wm.update_net_wm_desktop(req.window);
+
     if (is_transient) {
         if (wm.node_registry.get(id)) |n| {
             wm.center_node(n);
@@ -472,6 +475,14 @@ pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
             }
             return;
         }
+    }
+
+    const net_active_window = c.XInternAtom(wm.display, "_NET_ACTIVE_WINDOW", 0);
+    if (ev.message_type == net_active_window) {
+        const node_id = wm.window_to_node_id.get(ev.window) orelse return;
+        const node = wm.node_registry.get(node_id) orelse return;
+        wm.activate_window(node) catch {};
+        return;
     }
 
     const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
@@ -1459,6 +1470,7 @@ pub fn announce_supported_hints(wm: *WM) void {
         c.XInternAtom(wm.display, "_NET_CLIENT_LIST", 0),
         c.XInternAtom(wm.display, "_NET_WM_DESKTOP", 0),
         c.XInternAtom(wm.display, "WM_HINTS", 0),
+        c.XInternAtom(wm.display, "_NET_FRAME_EXTENTS", 0),
         net_supporting_wm_check,
         net_wm_name,
     };

@@ -678,6 +678,15 @@ pub const WM = struct {
             iw - ibw, 0, @intCast(bw), h);
     }
 
+    pub fn set_frame_extents(self: *WM, win: c.Window) void {
+        const atom = c.XInternAtom(self.display, "_NET_FRAME_EXTENTS", 0);
+        const XA_CARDINAL = c.XInternAtom(self.display, "CARDINAL", 0);
+        const bw: c_ulong = @intCast(@max(0, self.border_width));
+        const vals = [4]c_ulong{ bw, bw, bw, bw }; // left, right, top, bottom
+        _ = c.XChangeProperty(self.display, win, atom, XA_CARDINAL, 32,
+            c.PropModeReplace, @ptrCast(&vals), 4);
+    }
+
     pub fn frame(self: *WM, win: c.Window, node: *Node) !void {
         const border_color = if (self.focused == node)
             node.border_color_focused orelse self.default_border_color_focused
@@ -799,6 +808,7 @@ pub const WM = struct {
             _ = c.XSendEvent(self.display, win, 0, c.StructureNotifyMask, &ce);
         }
 
+        self.set_frame_extents(win);
         try self.frames.put(win, win_frame);
         _ = c.XSelectInput(self.display, win,
             c.PropertyChangeMask | c.StructureNotifyMask);
@@ -1271,6 +1281,45 @@ pub const WM = struct {
                 _ = c.XMapWindow(self.display, win_frame);
             }
         }
+    }
+
+    pub fn activate_window(self: *WM, node: *Node) !void {
+        const target = node.owner_graph orelse return;
+
+        if (target != self.current_graph) {
+            // get onto a shared ancestor of the target
+            var target_anc = std.AutoHashMapUnmanaged(*Graph, void){};
+            defer target_anc.deinit(self.allocator);
+            {
+                var g: *Graph = target;
+                while (true) {
+                    try target_anc.put(self.allocator, g, {});
+                    const pn = g.parent_node orelse break;
+                    g = pn.owner_graph orelse break;
+                }
+            }
+            var guard: usize = 0;
+            while (!target_anc.contains(self.current_graph) and guard < 64) : (guard += 1) {
+                const before = self.current_graph;
+                try self.leave_workspace();
+                if (self.current_graph == before) break; // level-1 stall (common ancestor is root)
+            }
+
+            // walk down the parent_node chain into target
+            var chain: std.ArrayListUnmanaged(*Node) = .{ .items = &.{}, .capacity = 0 };
+            defer chain.deinit(self.allocator);
+            var g: *Graph = target;
+            while (g != self.current_graph) {
+                const pn = g.parent_node orelse break;
+                try chain.append(self.allocator, pn);
+                g = pn.owner_graph orelse break;
+            }
+            var i = chain.items.len;
+            while (i > 0) { i -= 1; try self.enter_workspace(chain.items[i]); }
+        }
+
+        self.focus(node);
+        try self.flush(self.current_graph);
     }
 
     pub fn enter_workspace(self: *WM, node: *Node) !void {
