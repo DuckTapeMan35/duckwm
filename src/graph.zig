@@ -188,6 +188,8 @@ pub const Graph = struct {
     preview_win_bg: ?u32,
     preview_border: ?u32,
     preview_text: ?u32,
+    preview_font_buf: [256]u8,
+    preview_font_len: ?usize,
     on_node_free: ?*const fn (*anyopaque, *Node) void,
     on_node_free_ctx: *anyopaque,
     allocator: std.mem.Allocator,
@@ -219,6 +221,8 @@ pub const Graph = struct {
             .preview_win_bg = null,
             .preview_border = null,
             .preview_text   = null,
+            .preview_font_buf = undefined,
+            .preview_font_len = null,
             .on_node_free = null,
             .on_node_free_ctx = undefined,
             .allocator = allocator,
@@ -403,6 +407,17 @@ pub const Graph = struct {
                 break :blk false;
             },
         };
+    }
+
+    pub fn set_preview_font(self: *Graph, name: []const u8) void {
+        if (name.len == 0) {
+            self.preview_font_len = null; // empty clears the override
+            return;
+        }
+        const len = @min(name.len, self.preview_font_buf.len - 1);
+        @memcpy(self.preview_font_buf[0..len], name[0..len]);
+        self.preview_font_buf[len] = 0;
+        self.preview_font_len = len;
     }
 
     pub fn add_constraint(self: *Graph, node: *Node, constraint: Constraint) !void {

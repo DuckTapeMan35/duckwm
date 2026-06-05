@@ -475,6 +475,15 @@ pub const entries = [_]ApiEntry{
         .params   = &.{},
         .ret      = "nil",
     },
+    .{
+        .category = "Workspaces",
+        .name     = "set_autoclean",
+        .desc     = "When enabled, killing a workspace that leaves windows behind in hidden (no-preview) sibling workspaces sweeps them immediately and silently, instead of showing the cleanup notification prompt.",
+        .params   = &.{
+            .{ .name = "enabled", .typ = "boolean" },
+        },
+        .ret = "nil",
+    },
 
     // =========================================================
     // Layout & Arrangers
@@ -1133,6 +1142,34 @@ pub const entries = [_]ApiEntry{
             .{ .name = "win_bg", .typ = "integer" },
             .{ .name = "border", .typ = "integer" },
             .{ .name = "text",   .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "set_preview_font",
+        .desc     = "Set the Xft font name used for labels in workspace preview thumbnails (e.g. \"monospace:pixelsize=10\"). Falls back to a built-in font if the name can't be opened.",
+        .params   = &.{
+            .{ .name = "font", .typ = "string" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "set_preview_font_workspace",
+        .desc     = "Override the preview label font for a specific workspace node (e.g. \"monospace:pixelsize=10\"). Pass an empty string to clear the override and fall back to the global preview font.",
+        .params   = &.{
+            .{ .name = "id",   .typ = "integer" },
+            .{ .name = "font", .typ = "string" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name     = "set_preview_max_icon_size",
+        .desc     = "Cap the maximum pixel size of window icons drawn in preview thumbnails. Icons otherwise scale with the thumbnail size. Pass 0 to remove the cap.",
+        .params   = &.{
+            .{ .name = "size", .typ = "integer" },
         },
         .ret = "nil",
     },

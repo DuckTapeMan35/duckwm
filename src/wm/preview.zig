@@ -13,6 +13,25 @@ pub const PreviewColors = struct {
 
 pub var preview_colors: PreviewColors = .{};
 
+pub var preview_max_icon_size: ?u32 = null;
+
+const default_preview_font = "sans:pixelsize=9";
+var preview_font_buf: [256]u8 = undefined;
+var preview_font_len: usize = 0;
+
+pub fn set_preview_font(name: []const u8) void {
+    const len = @min(name.len, preview_font_buf.len - 1);
+    @memcpy(preview_font_buf[0..len], name[0..len]);
+    preview_font_buf[len] = 0;
+    preview_font_len = len;
+}
+
+fn preview_font_name(sub: *Graph) [*c]const u8 {
+    if (sub.preview_font_len != null) return @ptrCast(&sub.preview_font_buf);
+    if (preview_font_len == 0) return default_preview_font;
+    return @ptrCast(&preview_font_buf);
+}
+
 fn get_wm_class(display: *c.Display, win: c.Window, buf: []u8) []const u8 {
     var hint: c.XClassHint = undefined;
     if (c.XGetClassHint(display, win, &hint) == 0) return "";
@@ -84,7 +103,7 @@ pub fn draw_preview(display: *c.Display, pw: c.Window, sub: *Graph, preview_w: u
     _ = c.XftColorAllocValue(display, visual, colormap, &render_color, &xft_color);
     defer c.XftColorFree(display, visual, colormap, &xft_color);
 
-    const font = c.XftFontOpenName(display, screen, "sans:pixelsize=9") orelse
+    const font = c.XftFontOpenName(display, screen, preview_font_name(sub)) orelse
                  c.XftFontOpenName(display, screen, "fixed:pixelsize=9");
     defer if (font != null) c.XftFontClose(display, font);
 
@@ -116,7 +135,8 @@ pub fn draw_preview(display: *c.Display, pw: c.Window, sub: *Graph, preview_w: u
         if (rw > 8 and rh > 8) {
             const cx = ix + @as(i32, @intCast(rw / 2));
             const cy = iy + @as(i32, @intCast(rh / 2));
-            const icon_size = @max(8, @min(rw, rh) * 2 / 3);
+            var icon_size = @max(8, @min(rw, rh) * 2 / 3);
+            if (preview_max_icon_size) |cap| icon_size = @min(icon_size, cap);
 
             const drew_icon = switch (node.content) {
                 .window => |win| draw_net_wm_icon(display, win, pw, gc, cx, cy, icon_size),

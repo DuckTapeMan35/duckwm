@@ -484,20 +484,22 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_reload_persistent),                  .name = "reload_persistent" },
     .{ .func = ziglua.wrap(l_get_workspace_states),               .name = "get_workspace_states" },
     .{ .func = ziglua.wrap(l_cleanup_left_behind),                .name = "cleanup_left_behind" },
+    .{ .func = ziglua.wrap(l_set_preview_font),                   .name = "set_preview_font" },
+    .{ .func = ziglua.wrap(l_set_preview_font_workspace),         .name = "set_preview_font_workspace" },
+    .{ .func = ziglua.wrap(l_set_preview_max_icon_size),          .name = "set_preview_max_icon_size" },
+    .{ .func = ziglua.wrap(l_set_autoclean),                      .name = "set_autoclean" },
 };
 
 fn l_cleanup_left_behind(lua: *Lua) i32 {
     _ = lua;
     const og = global_wm.pending_cleanup_graph orelse return 0;
-    var i: usize = 0;
-    while (i < og.nodes.items.len) {
-        const node = og.nodes.items[i];
-        if (node.content != .workspace or node.preview_window != null) { i += 1; continue; }
-        if (!global_wm.graph_has_content(node.content.workspace)) { i += 1; continue; }
-        global_wm.kill_graph_windows(node.content.workspace);
-        og.remove_node(node);   // no preview to destroy — remove directly; hook cleans registry
-    }
+    global_wm.cleanup_left_behind(og);
     global_wm.pending_cleanup_graph = null;
+    return 0;
+}
+
+fn l_set_autoclean(lua: *Lua) i32 {
+    global_wm.set_autoclean(lua.toBoolean(1));
     return 0;
 }
 
@@ -1275,6 +1277,42 @@ fn l_get_node_level(lua: *Lua) i32 {
     };
     lua.pushInteger(@intCast(g.id.level));
     return 1;
+}
+
+fn l_set_preview_max_icon_size(lua: *Lua) i32 {
+    const size = lua.toInteger(1) catch return luaL_error_str(lua, "expected integer size");
+    global_wm.set_preview_max_icon_size(@intCast(@max(0, size)));
+    for (global_wm.current_graph.nodes.items) |node| {
+        if (node.content == .workspace and !node.hidden) {
+            global_wm.repaint_preview(node);
+        }
+    }
+    _ = c.XFlush(global_wm.display);
+    return 0;
+}
+
+fn l_set_preview_font(lua: *Lua) i32 {
+    const name = lua.toString(1) catch return luaL_error_str(lua, "expected font name string");
+    global_wm.set_preview_font(name);
+    for (global_wm.current_graph.nodes.items) |node| {
+        if (node.content == .workspace and !node.hidden) {
+            global_wm.repaint_preview(node);
+        }
+    }
+    _ = c.XFlush(global_wm.display);
+    return 0;
+}
+
+fn l_set_preview_font_workspace(lua: *Lua) i32 {
+    const id   = check_node_id(lua, 1) orelse return 0;
+    const name = lua.toString(2) catch return luaL_error_str(lua, "expected font name string");
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    if (node.content != .workspace) return 0;
+    const sub = node.content.workspace;
+    sub.set_preview_font(name);
+    global_wm.repaint_preview(node);
+    _ = c.XFlush(global_wm.display);
+    return 0;
 }
 
 fn l_set_preview_colors(lua: *Lua) i32 {
@@ -3029,6 +3067,9 @@ fn l_reload_visuals(lua: *Lua) i32 {
             or std.mem.eql(u8, reg.name, "set_gaps_workspace")
             or std.mem.eql(u8, reg.name, "set_preview_colors")
             or std.mem.eql(u8, reg.name, "set_preview_colors_workspace")
+            or std.mem.eql(u8, reg.name, "set_preview_font")
+            or std.mem.eql(u8, reg.name, "set_preview_font_workspace")
+            or std.mem.eql(u8, reg.name, "set_preview_max_icon_size")
             or std.mem.eql(u8, reg.name, "set_node_focused_border_color")
             or std.mem.eql(u8, reg.name, "set_node_unfocused_border_color")
             or std.mem.eql(u8, reg.name, "set_node_border_side_color")

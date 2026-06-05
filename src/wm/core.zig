@@ -93,6 +93,7 @@ pub const WM = struct {
     // misc state fields
     flushing: bool,
     pending_cleanup_graph: ?*Graph,
+    autoclean: bool,
 
     // resize state fields
     resize_modifier: ?c_uint,
@@ -223,6 +224,7 @@ pub const WM = struct {
 
             .flushing = false,
             .pending_cleanup_graph = null,
+            .autoclean = true,
 
             .float_moving = false,
             .float_move_modifier = null,
@@ -463,12 +465,19 @@ pub const WM = struct {
         );
     }
 
-    pub fn set_preview_colors(self: *WM, bg: u32, win_bg: u32, border: u32, text: u32) void {
-        _ = self;
+    pub fn set_preview_max_icon_size(_: *WM, size: u32) void {
+        preview_mod.preview_max_icon_size = if (size == 0) null else size;
+    }
+
+    pub fn set_preview_colors(_: *WM, bg: u32, win_bg: u32, border: u32, text: u32) void {
         preview_mod.preview_colors.bg     = bg;
         preview_mod.preview_colors.win_bg = win_bg;
         preview_mod.preview_colors.border = border;
         preview_mod.preview_colors.text   = text;
+    }
+
+    pub fn set_preview_font(_: *WM, name: []const u8) void {
+        preview_mod.set_preview_font(name);
     }
 
     pub fn alloc_workspace_id(self: *WM, level: u32) !graph_mod.GraphId {
@@ -1676,6 +1685,21 @@ pub const WM = struct {
         _ = c.XFlush(self.display);
     }
 
+    pub fn cleanup_left_behind(self: *WM, og: *Graph) void {
+        var i: usize = 0;
+        while (i < og.nodes.items.len) {
+            const node = og.nodes.items[i];
+            if (node.content != .workspace or node.preview_window != null) { i += 1; continue; }
+            if (!self.graph_has_content(node.content.workspace)) { i += 1; continue; }
+            self.kill_graph_windows(node.content.workspace);
+            og.remove_node(node);
+        }
+    }
+
+    pub fn set_autoclean(self: *WM, enabled: bool) void {
+        self.autoclean = enabled;
+    }
+
     pub fn kill_client(self: *WM) !void {
         const node = self.focused orelse return;
         switch (node.content) {
@@ -1695,7 +1719,8 @@ pub const WM = struct {
                 if (node.content.workspace == self.current_graph) {
                     try self.leave_workspace();
                 }
-                // Check for siblings with content at the same level
+                // Detect hidden (no-preview) sibling workspaces that still hold windows.
+                var cleanup_graph: ?*Graph = null;
                 if (node.owner_graph) |og| {
                     const killed_level = node.content.workspace.id.level;
                     for (og.nodes.items) |sibling| {
@@ -1704,19 +1729,26 @@ pub const WM = struct {
                         if (sibling.content.workspace.id.level != killed_level) continue;
                         if (sibling.preview_window != null) continue;
                         if (self.graph_has_content(sibling.content.workspace)) {
-                            self.pending_cleanup_graph = og;
-                            self.notify("Windows left behind", "Other workspaces one level down still have windows open");
+                            cleanup_graph = og;
                             break;
                         }
                     }
                 }
-                // Clean up children first — removes from registry so their
-                // DestroyNotify events are ignored
+
+                // Kill the targeted workspace itself.
                 self.kill_graph_windows(node.content.workspace);
-                // Destroy preview — triggers normal on_destroy_notify path
-                // which calls arranger unmap, remove_node (frees sub-graph), resolve/flush
                 if (node.preview_window) |pw| {
                     _ = c.XDestroyWindow(self.display, pw);
+                }
+
+                // sweep silently when autoclean is on, else prompt.
+                if (cleanup_graph) |og| {
+                    if (self.autoclean) {
+                        self.cleanup_left_behind(og);
+                    } else {
+                        self.pending_cleanup_graph = og;
+                        self.notify("Windows left behind", "Hidden workspaces still have windows open");
+                    }
                 }
             },
             else => {},
