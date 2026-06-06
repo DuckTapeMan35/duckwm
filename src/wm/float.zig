@@ -100,7 +100,7 @@ fn raise_one(wm: *WM, node: *graph_mod.Node, bw: i32) void {
         .window => |win| {
             if (wm.frames.get(win)) |frame| {
                 _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask);
-                _ = c.XRaiseWindow(wm.display, frame);
+                wm.raise_below_docks(frame);
                 _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask | c.EnterWindowMask | c.LeaveWindowMask);
                 var ce: c.XEvent = std.mem.zeroes(c.XEvent);
                 ce.xconfigure.type = c.ConfigureNotify;
@@ -122,7 +122,7 @@ fn raise_one(wm: *WM, node: *graph_mod.Node, bw: i32) void {
             if (node.preview_window) |pw| {
                 if (wm.frames.get(pw)) |frame| {
                     _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask);
-                    _ = c.XRaiseWindow(wm.display, frame);
+                    wm.raise_below_docks(frame);
                     _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask | c.EnterWindowMask | c.LeaveWindowMask);
                 }
             }
@@ -134,17 +134,16 @@ fn raise_one(wm: *WM, node: *graph_mod.Node, bw: i32) void {
 pub fn toggle_fullscreen(wm: *WM) !void {
     const focused = wm.focused orelse return;
     if (focused.content != .window) return;
-
-    if (wm.fullscreen_node == focused) {
+    const g = focused.owner_graph orelse wm.current_graph;
+    if (g.fullscreen_node == focused) {
         // Restore
-        focused.x      = wm.fullscreen_saved_x;
-        focused.y      = wm.fullscreen_saved_y;
-        focused.width  = wm.fullscreen_saved_w;
-        focused.height = wm.fullscreen_saved_h;
+        focused.x      = g.fullscreen_saved_x;
+        focused.y      = g.fullscreen_saved_y;
+        focused.width  = g.fullscreen_saved_w;
+        focused.height = g.fullscreen_saved_h;
         focused.floating = false;
         focused.constraints.clearRetainingCapacity();
-        wm.fullscreen_node = null;
-
+        g.fullscreen_node = null;
         var node_id: ?u32 = null;
         var prev_id: ?u32 = null;
         var it = wm.node_registry.iterator();
@@ -153,7 +152,6 @@ pub fn toggle_fullscreen(wm: *WM) !void {
                 node_id = entry.key_ptr.*;
             }
         }
-        // Find a tiled window to use as prev_id
         for (wm.current_graph.nodes.items) |n| {
             if (n.floating) continue;
             if (n == focused) continue;
@@ -166,18 +164,17 @@ pub fn toggle_fullscreen(wm: *WM) !void {
         if (node_id) |nid| wm.call_arranger(wm.current_graph, "map", nid, prev_id);
     } else {
         // Go fullscreen
-        wm.fullscreen_saved_x = focused.x;
-        wm.fullscreen_saved_y = focused.y;
-        wm.fullscreen_saved_w = focused.width;
-        wm.fullscreen_saved_h = focused.height;
+        g.fullscreen_saved_x = focused.x;
+        g.fullscreen_saved_y = focused.y;
+        g.fullscreen_saved_w = focused.width;
+        g.fullscreen_saved_h = focused.height;
         focused.floating = true;
         focused.constraints.clearRetainingCapacity();
         focused.x = 0;
         focused.y = 0;
         focused.width  = wm.screen_width;
         focused.height = wm.screen_height;
-        wm.fullscreen_node = focused;
-
+        g.fullscreen_node = focused;
         var node_id: ?u32 = null;
         var it = wm.node_registry.iterator();
         while (it.next()) |entry| {
@@ -185,14 +182,12 @@ pub fn toggle_fullscreen(wm: *WM) !void {
         }
         if (node_id) |nid| wm.call_arranger(wm.current_graph, "unmap", nid, null);
     }
-
-    // Update _NET_WM_STATE_FULLSCREEN
     if (focused.content == .window) {
         const win = focused.content.window;
         const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
         const net_wm_state_fullscreen = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
         const xa_atom = c.XInternAtom(wm.display, "ATOM", 0);
-        if (wm.fullscreen_node == focused) {
+        if (g.fullscreen_node == focused) {
             _ = c.XChangeProperty(wm.display, win, net_wm_state, xa_atom, 32,
                 c.PropModeReplace, @ptrCast(&net_wm_state_fullscreen), 1);
         } else {
@@ -200,7 +195,6 @@ pub fn toggle_fullscreen(wm: *WM) !void {
                 c.PropModeReplace, @ptrCast(&net_wm_state_fullscreen), 0);
         }
     }
-
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);

@@ -124,13 +124,6 @@ pub const WM = struct {
     float_move_button: c_uint,
     float_resize_button: c_uint,
 
-    // fullscreen state fields
-    fullscreen_node: ?*Node,
-    fullscreen_saved_x: i32,
-    fullscreen_saved_y: i32,
-    fullscreen_saved_w: u32,
-    fullscreen_saved_h: u32,
-
     // pan state fields
     pan_dragging: bool,
     pan_drag_start_x: i32,
@@ -236,12 +229,6 @@ pub const WM = struct {
             .float_move_button = 1, // left mouse button
             .float_resize_button = 3, // right mouse button
 
-            .fullscreen_node = null,
-            .fullscreen_saved_x = 0,
-            .fullscreen_saved_y = 0,
-            .fullscreen_saved_w = 0,
-            .fullscreen_saved_h = 0,
-
             .pan_dragging = false,
             .pan_drag_start_x = 0,
             .pan_drag_start_y = 0,
@@ -317,7 +304,7 @@ pub const WM = struct {
         }
         if (self.get_id_for_node(term)) |tid| _ = self.node_registry.remove(tid);
         if (self.focused == term) self.focused = null;
-        if (self.fullscreen_node == term) self.fullscreen_node = null;
+        if (term.owner_graph) |og| { if (og.fullscreen_node == term) og.fullscreen_node = null; }
         term.deinit(self.allocator);
         self.allocator.destroy(term);
     }
@@ -330,8 +317,8 @@ pub const WM = struct {
             if (self.focused == node) {
                 self.focused = null;
             }
-            if (self.fullscreen_node == node) {
-                self.fullscreen_node = null;
+            if (g.fullscreen_node == node) {
+                g.fullscreen_node = null;
             }
             if (node.content == .workspace) {
                 self.free_graph(node.content.workspace);
@@ -367,7 +354,7 @@ pub const WM = struct {
             _ = self.node_registry.remove(id);
         }
         if (self.focused == node) self.focused = null;
-        if (self.fullscreen_node == node) self.fullscreen_node = null;
+        if (node.owner_graph) |og| { if (og.fullscreen_node == node) og.fullscreen_node = null; }
     }
 
     pub fn deinit(self: *WM) void {
@@ -641,6 +628,9 @@ pub const WM = struct {
     pub fn draw_frame_borders(self: *WM, win_frame: c.Window, node: *Node) void {
         const bw = self.border_width;
         if (bw <= 0) return;
+        if (node.owner_graph) |og| {
+            if (og.fullscreen_node == node) return;
+        }
 
         var root_ret: c.Window = undefined;
         var x: c_int = 0; var y: c_int = 0;
@@ -947,7 +937,7 @@ pub const WM = struct {
     }
 
     pub fn raise_fullscreen(self: *WM) void {
-        const fsnode = self.fullscreen_node orelse return;
+        const fsnode = self.visible_graph.fullscreen_node orelse return;
         switch (fsnode.content) {
             .window => |win| {
                 if (self.frames.get(win)) |win_frame| {
@@ -956,6 +946,25 @@ pub const WM = struct {
                 }
             },
             else => {},
+        }
+    }
+
+    pub fn raise_below_docks(self: *WM, win_frame: c.Window) void {
+        // Raise the dock cluster first; the float is never lifted above it.
+        var lowest_dock: ?c.Window = null;
+        var it = self.dock_struts.keyIterator();
+        while (it.next()) |win| {
+            _ = c.XRaiseWindow(self.display, win.*);
+            if (lowest_dock == null) lowest_dock = win.*; // first raised ends up lowest in the cluster
+        }
+        if (lowest_dock) |d| {
+            // Tuck the float directly beneath the lowest dock: top of the clients, under every bar.
+            var changes: c.XWindowChanges = std.mem.zeroes(c.XWindowChanges);
+            changes.sibling = d;
+            changes.stack_mode = c.Below;
+            _ = c.XConfigureWindow(self.display, win_frame, c.CWSibling | c.CWStackMode, &changes);
+        } else {
+            _ = c.XRaiseWindow(self.display, win_frame); // no docks — nothing to stay under
         }
     }
 
@@ -971,7 +980,7 @@ pub const WM = struct {
             switch (node.content) {
                 .window => |win| {
                     if (node.hidden) continue;
-                    const is_fullscreen = (self.fullscreen_node == node);
+                    const is_fullscreen = (self.focused == node) and (self.visible_graph.fullscreen_node == node);
                     const effective_bw: u32 = if (is_fullscreen) 0 else bw;
                     if (node.floating) {
                         if (self.frames.get(win)) |win_frame| {
@@ -1436,6 +1445,7 @@ pub const WM = struct {
 
         if (self.focused == node) {
             self.focused = null;
+            if (src_graph.fullscreen_node == node) src_graph.fullscreen_node = null;
             focus_mod.clear_active_window(self);
             _ = c.XSetInputFocus(self.display, self.root, c.RevertToParent, c.CurrentTime);
         }

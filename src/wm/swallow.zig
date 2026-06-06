@@ -87,7 +87,7 @@ pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
     _ = wm.window_to_node_id.remove(win);
     _ = wm.node_registry.remove(term_id);
     if (wm.focused == term_node) wm.focused = null;
-    if (wm.fullscreen_node == term_node) wm.fullscreen_node = null;
+    if (child.owner_graph) |og| { if (og.fullscreen_node == term_node) og.fullscreen_node = null; }
     term_node.deinit(wm.allocator);
     wm.allocator.destroy(term_node);
 
@@ -165,6 +165,7 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
     }
 
     child_node.parked_term = term_node;
+    if (g.fullscreen_node == term_node) g.fullscreen_node = null;
 
     // Notify arranger the terminal unmapped so its internal list is correct
     wm.call_arranger(g, "unmap", term_id, null);
@@ -231,6 +232,7 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     }
 
     if (wm.focused == child_node) wm.focused = null;
+    if (g.fullscreen_node == child_node) g.fullscreen_node = null;
 
     wm.resolve(g) catch {};
     wm.rebuild_focus_edges() catch {};

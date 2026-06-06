@@ -356,7 +356,7 @@ pub fn on_map_request(wm: *WM, req: *c.XMapRequestEvent) !void {
                 .window => |win| {
                     if (!n.floating) continue;
                     if (wm.frames.get(win)) |frame| {
-                        _ = c.XRaiseWindow(wm.display, frame);
+                        wm.raise_below_docks(frame);
                     }
                 },
                 else => {},
@@ -499,7 +499,7 @@ pub fn on_client_message(wm: *WM, ev: *c.XClientMessageEvent) !void {
         if (is_fullscreen) {
             const node_id = wm.window_to_node_id.get(ev.window) orelse return;
             const node = wm.node_registry.get(node_id) orelse return;
-            const currently_fullscreen = (wm.fullscreen_node == node);
+            const currently_fullscreen = if (node.owner_graph) |og| (og.fullscreen_node == node) else false;
             const should_fullscreen = switch (action) {
                 0 => false,
                 1 => true,
@@ -745,10 +745,6 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (dying == null) return;
 
-    if (wm.fullscreen_node == dying) {
-        wm.fullscreen_node = null;
-    }
-
     var next_focus: ?*Node = null;
     const focused_is_dying = (wm.focused == dying);
 
@@ -812,6 +808,7 @@ pub fn on_destroy_notify(wm: *WM, event: *c.XDestroyWindowEvent) !void {
 
     if (dying) |d| {
         if (d.owner_graph) |og| {
+            if (og.fullscreen_node == d) og.fullscreen_node = null;
             og.remove_node(d);
         }
     }
@@ -912,7 +909,7 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.float_win_start_y  = node.y;
                     wm.saved_focus_follows_mouse = wm.focus_follows_mouse;
                     wm.focus_follows_mouse = false;
-                    _ = c.XRaiseWindow(wm.display, lookup_win);
+                    wm.raise_below_docks(lookup_win);
                 } else {
                     const left_edge   = node.x;
                     const right_edge  = node.x + @as(i32, @intCast(node.width));
@@ -1195,8 +1192,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
         wm.float_moving = false;
         wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
-        _ = c.XRaiseWindow(wm.display, wm.float_move_frame);
-        _ = c.XFlush(wm.display);
+        wm.raise_below_docks(wm.float_move_frame);
     }
     if (wm.corner_resizing) {
         wm.corner_resizing = false;

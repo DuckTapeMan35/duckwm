@@ -2419,7 +2419,7 @@ fn l_set_fullscreen(lua: *Lua) i32 {
     const val = lua.toBoolean(2);
     const node = global_wm.get_node_by_id(id) orelse return 0;
     if (node.content != .window) return 0;
-    const already = (global_wm.fullscreen_node == node);
+    const already = if (node.owner_graph) |og| (og.fullscreen_node == node) else false;
     if (val == already) return 0;
     global_wm.focused = node;
     global_wm.toggle_fullscreen() catch {};
