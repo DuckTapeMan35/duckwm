@@ -625,19 +625,25 @@ pub const WM = struct {
         _ = c.XSync(self.display, 0);
     }
 
+    // Wrapper for callers that don't already know the frame size (expose, focus, …).
     pub fn draw_frame_borders(self: *WM, win_frame: c.Window, node: *Node) void {
-        const bw = self.border_width;
-        if (bw <= 0) return;
-        if (node.owner_graph) |og| {
-            if (og.fullscreen_node == node) return;
-        }
-
         var root_ret: c.Window = undefined;
         var x: c_int = 0; var y: c_int = 0;
         var w: c_uint = 0; var h: c_uint = 0;
         var bw_ret: c_uint = 0; var depth: c_uint = 0;
-        _ = c.XGetGeometry(self.display, win_frame, &root_ret,
-            &x, &y, &w, &h, &bw_ret, &depth);
+        if (c.XGetGeometry(self.display, win_frame, &root_ret,
+            &x, &y, &w, &h, &bw_ret, &depth) == 0) return;
+        self.draw_frame_borders_sized(win_frame, node, @intCast(w), @intCast(h));
+    }
+
+    // Fast path: caller passes the frame size it already has, no server round-trip.
+    pub fn draw_frame_borders_sized(self: *WM, win_frame: c.Window, node: *Node, w: u32, h: u32) void {
+        const bw = self.border_width;
+        if (bw <= 0) return;
+        // Fullscreen windows render borderless no matter which path requests a redraw.
+        if (node.owner_graph) |og| {
+            if (og.fullscreen_node == node) return;
+        }
 
         const gc = c.XCreateGC(self.display, win_frame, 0, null);
         defer _ = c.XFreeGC(self.display, gc);
@@ -656,25 +662,24 @@ pub const WM = struct {
         const left_color   = if (show_sides) node.border_color_left   orelse base_color else base_color;
         const right_color  = if (show_sides) node.border_color_right  orelse base_color else base_color;
 
-        const ibw: c_int = @intCast(bw);
-        const iw: c_int  = @intCast(w);
-        const ih: c_int  = @intCast(h);
+        const bwu: c_uint = @intCast(bw);
+        const cw:  c_uint = @intCast(w);
+        const ch:  c_uint = @intCast(h);
+        const ibw: c_int  = @intCast(bw);
+        const iw:  c_int  = @intCast(w);
+        const ih:  c_int  = @intCast(h);
 
         _ = c.XSetForeground(self.display, gc, top_color);
-        _ = c.XFillRectangle(self.display, win_frame, gc,
-            0, 0, w, @intCast(bw));
+        _ = c.XFillRectangle(self.display, win_frame, gc, 0, 0, cw, bwu);
 
         _ = c.XSetForeground(self.display, gc, bottom_color);
-        _ = c.XFillRectangle(self.display, win_frame, gc,
-            0, ih - ibw, w, @intCast(bw));
+        _ = c.XFillRectangle(self.display, win_frame, gc, 0, ih - ibw, cw, bwu);
 
         _ = c.XSetForeground(self.display, gc, left_color);
-        _ = c.XFillRectangle(self.display, win_frame, gc,
-            0, 0, @intCast(bw), h);
+        _ = c.XFillRectangle(self.display, win_frame, gc, 0, 0, bwu, ch);
 
         _ = c.XSetForeground(self.display, gc, right_color);
-        _ = c.XFillRectangle(self.display, win_frame, gc,
-            iw - ibw, 0, @intCast(bw), h);
+        _ = c.XFillRectangle(self.display, win_frame, gc, iw - ibw, 0, bwu, ch);
     }
 
     pub fn set_frame_extents(self: *WM, win: c.Window) void {
@@ -995,7 +1000,7 @@ pub const WM = struct {
                             if (is_fullscreen) {
                                 _ = c.XSetWindowBorder(self.display, win_frame, 0x00000000);
                             } else {
-                                self.draw_frame_borders(win_frame, node);
+                                self.draw_frame_borders_sized(win_frame, node, @max(1, fw), @max(1, fh));
                             }
                         }
                         continue;
@@ -1032,7 +1037,7 @@ pub const WM = struct {
                         if (is_fullscreen) {
                             _ = c.XSetWindowBorder(self.display, win_frame, 0x00000000);
                         } else {
-                            self.draw_frame_borders(win_frame, node);
+                            self.draw_frame_borders_sized(win_frame, node, fw, fh);
                         }
 
                         var ce: c.XEvent = std.mem.zeroes(c.XEvent);
@@ -1342,24 +1347,29 @@ pub const WM = struct {
 
     pub fn enter_workspace(self: *WM, node: *Node) !void {
         if (node.content != .workspace) return error.NotWorkspace;
-        const sub = node.content.workspace;
+        const new = node.content.workspace;
 
-        if (sub == self.current_graph) return;
+        if (new == self.current_graph) return;
+        const old = self.current_graph;
 
-        // hide current graph
-        hide_graph_frames(self, self.current_graph);
         // push parent
-        try self.workspace_stack.append(self.allocator, self.current_graph);
+        try self.workspace_stack.append(self.allocator, old);
+
         // switch
-        self.current_graph = sub;
+        self.current_graph = new;
         self.visible_graph = self.current_graph;
-        // show new graph
-        show_graph_frames(self, sub);
-        // re-layout and refresh
-        try self.resolve(sub);
-        try self.rebuild_focus_edges();
-        try self.flush(sub);
+
+        // re-layout and paint the new graph into place first
+        try self.resolve(new);
+        try self.flush(new);
+
+        // hide the old one
+        hide_graph_frames(self, old);
+
+        _ = c.XFlush(self.display);
+
         // focus something
+        try self.rebuild_focus_edges();
         if (focus_mod.top_left_window(self)) |n| {
             self.focus(n);
         } else {
@@ -1385,21 +1395,24 @@ pub const WM = struct {
     pub fn leave_workspace(self: *WM) !void {
         if (self.workspace_stack.items.len == 0) return;
         const target_idx = self.find_leave_target() orelse return;
+        const old = self.current_graph;
 
-        hide_graph_frames(self, self.current_graph);
         self.focused = null;
         focus_mod.clear_active_window(self);
 
         while (self.workspace_stack.items.len > target_idx + 1) {
             _ = self.workspace_stack.pop();
         }
+
         self.current_graph = self.workspace_stack.pop().?;
         self.visible_graph = self.current_graph;
 
-        show_graph_frames(self, self.current_graph);
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
+        // hide old workspace
+        hide_graph_frames(self, old);
+        _ = c.XFlush(self.display);
         if (focus_mod.top_left_window(self)) |n| self.focus(n) else {
             self.focused = null;
             focus_mod.clear_active_window(self);

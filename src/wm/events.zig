@@ -1380,6 +1380,7 @@ pub fn on_enter_notify(wm: *WM, ev: *c.XCrossingEvent) void {
     const node_id = wm.window_to_node_id.get(client) orelse return;
     const node = wm.node_registry.get(node_id) orelse return;
     if (wm.focused == node) return;
+    if (wm.current_graph != node.owner_graph) return;
 
     var discard: c.XEvent = undefined;
     while (c.XCheckTypedEvent(wm.display, c.EnterNotify, &discard) != 0) {}
