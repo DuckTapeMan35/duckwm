@@ -93,7 +93,7 @@ fn read_fd(fd: i32, buf: []u8) isize {
 }
 
 fn write_fd(fd: i32, buf: []const u8) void {
-    _ = std.os.linux.write(fd, buf.ptr, buf.len);
+    _ = std.os.linux.sendto(fd, buf.ptr, buf.len, std.os.linux.MSG.NOSIGNAL, null, 0);
 }
 
 fn handle_client(wm: *WM, fd: i32) bool {
