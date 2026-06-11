@@ -3048,8 +3048,6 @@ fn l_reload_visuals(lua: *Lua) i32 {
     const path_z = std.mem.concatWithSentinel(global_wm.allocator, u8, &[_][]const u8{user_path}, 0) catch return 0;
     defer global_wm.allocator.free(path_z);
 
-    clear_all_node_colors(global_wm.current_graph);
-
     lua.pushFunction(ziglua.wrap(struct {
         fn noop(_: *Lua) i32 { return 0; }
     }.noop));
