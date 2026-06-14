@@ -114,6 +114,7 @@ pub const Node = struct {
     on_remove: ?ReparentStrategy,
     dead: bool,
     parked_term: ?*Node,
+    focus_serial: u64,
 
     pub fn init(content: NodeContent, allocator: std.mem.Allocator) !Node {
         return .{
@@ -142,6 +143,7 @@ pub const Node = struct {
             .on_remove = null,
             .dead = false,
             .parked_term = null,
+            .focus_serial = 0,
         };
     }
 
