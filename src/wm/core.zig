@@ -85,6 +85,7 @@ pub const WM = struct {
     workspace_previews: std.AutoHashMap(c.Window, void),
     next_workspace_number: std.AutoHashMap(u32, u32),
     swallow_classes: std.StringArrayHashMapUnmanaged(void),
+    scratch_graph: *Graph,
     focus_clock: u64,
     default_gap_inner_h: u32,
     default_gap_inner_v: u32,
@@ -195,6 +196,7 @@ pub const WM = struct {
             .workspace_switch_mode = .none,
             .default_gap_inner_h = 0,
             .swallow_classes = .{},
+            .scratch_graph = undefined,
             .focus_clock = 0,
             .default_gap_inner_v = 0,
             .default_gap_outer_h = 0,
@@ -935,6 +937,55 @@ pub const WM = struct {
     pub fn accept_ipc_clients(self: *WM) void { ipc_mod.accept_clients(self); }
     pub fn handle_ipc_clients(self: *WM) void { ipc_mod.handle_clients(self); }
 
+    fn scratchpad_window(node: *graph_mod.Node) ?c.Window {
+        return switch (node.content) {
+            .window => |w| w,
+            .workspace => node.preview_window,
+            .empty => null,
+        };
+    }
+
+    pub fn show_scratchpad(self: *WM, node_id: u32) !void {
+        const node = self.node_registry.get(node_id) orelse return;
+        if (scratchpad_window(node) == null) return;
+
+        node.floating = true;
+        try self.send_to_workspace(node_id, self.current_graph);
+
+        if (scratchpad_window(node)) |w| {
+            if (self.frames.get(w)) |f| _ = c.XMapWindow(self.display, f);
+        }
+        try self.rebuild_focus_edges();
+        try self.flush(self.current_graph);
+        if (node.content == .workspace) self.repaint_preview(node);
+        self.focus(node);
+        _ = c.XFlush(self.display);
+    }
+
+    pub fn hide_scratchpad(self: *WM, node_id: u32) !void {
+        const node = self.node_registry.get(node_id) orelse return;
+        if (scratchpad_window(node) == null) return;
+
+        try self.send_to_workspace(node_id, self.scratch_graph);
+        node.floating = true;
+
+        if (scratchpad_window(node)) |w| {
+            if (self.frames.get(w)) |f| _ = c.XUnmapWindow(self.display, f);
+        }
+        if (focus_mod.top_left_window(self)) |n| self.focus(n);
+        _ = c.XFlush(self.display);
+    }
+
+    pub fn toggle_scratchpad(self: *WM, node_id: u32) !void {
+        const node = self.node_registry.get(node_id) orelse return;
+        if (scratchpad_window(node) == null) return;
+
+        if (node.owner_graph == self.scratch_graph)
+            try self.show_scratchpad(node_id)
+        else
+            try self.hide_scratchpad(node_id);
+    }
+
     pub fn get_id_for_node(self: *WM, node: *Node) ?u32 {
         var it = self.node_registry.iterator();
         while (it.next()) |entry| {
@@ -1072,6 +1123,7 @@ pub const WM = struct {
                                     _ = c.XMapWindow(self.display, pw);
                                     _ = c.XMapWindow(self.display, win_frame);
                                 }
+                                self.repaint_preview(node);
                             }
                         }
                         continue;
@@ -1311,6 +1363,12 @@ pub const WM = struct {
     pub fn activate_window(self: *WM, node: *Node) !void {
         const target = node.owner_graph orelse return;
 
+        // dont yank the user to the "virtual" workspace scratchpads use
+        if (target == self.scratch_graph) {
+            if (self.get_id_for_node(node)) |id| try self.show_scratchpad(id);
+            return;
+        }
+
         if (target != self.current_graph) {
             // get onto a shared ancestor of the target
             var target_anc = std.AutoHashMapUnmanaged(*Graph, void){};
@@ -1412,6 +1470,9 @@ pub const WM = struct {
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
         try self.flush(self.current_graph);
+        if (old.parent_node) |pn| {
+            self.repaint_preview(pn);
+        }
         // hide old workspace
         hide_graph_frames(self, old);
         _ = c.XFlush(self.display);
@@ -1487,7 +1548,10 @@ pub const WM = struct {
                 }
             }
         }
-        self.call_arranger(target_graph, "map", node_id, target_prev_id);
+
+        if (!node.floating) {
+            self.call_arranger(target_graph, "map", node_id, target_prev_id);
+        }
 
         // Hide frame if target is not visible
         if (target_graph != saved_graph) {
@@ -2024,6 +2088,7 @@ pub const WM = struct {
         }
         _ = c.XSetErrorHandler(events_mod.on_x_error);
         try self.create_initial_workspace();
+        self.scratch_graph = try self.create_workspace_graph(1);
         self.visible_graph = self.current_graph;
 
         if (self.post_load_error) |msg| {

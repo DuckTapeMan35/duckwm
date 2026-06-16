@@ -261,6 +261,27 @@ pub const entries = [_]ApiEntry{
         .params   = &.{ .{ .name = "class", .typ = "string" } },
         .ret      = "nil",
     },
+    .{
+        .category = "Window Management",
+        .name     = "scratchpad_toggle",
+        .desc     = "Toggle a scratchpad window: stash it in the off-screen parking lot if it's showing, or summon it onto the current workspace (floating) if it's stashed.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "nil",
+    },
+    .{
+        .category = "Window Management",
+        .name     = "scratchpad_show",
+        .desc     = "Summon a stashed scratchpad window onto the current workspace as a floating window and focus it.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "nil",
+    },
+    .{
+        .category = "Window Management",
+        .name     = "scratchpad_hide",
+        .desc     = "Stash a window into the off-screen parking lot; the tiled survivors re-flow as if it were closed.",
+        .params   = &.{ .{ .name = "id", .typ = "integer" } },
+        .ret      = "nil",
+    },
 
     // =========================================================
     // Focus

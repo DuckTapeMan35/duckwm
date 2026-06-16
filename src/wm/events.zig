@@ -909,6 +909,7 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.float_win_start_y  = node.y;
                     wm.saved_focus_follows_mouse = wm.focus_follows_mouse;
                     wm.focus_follows_mouse = false;
+                    wm.focused = node;
                     wm.raise_below_docks(lookup_win);
                 } else {
                     const left_edge   = node.x;
@@ -931,6 +932,9 @@ pub fn on_button_press(wm: *WM, ev: *c.XButtonEvent) !void {
                     wm.resize_end_y    = ev.y_root;
                     wm.resize_fixed_x  = if (dist_left < dist_right) right_edge else left_edge;
                     wm.resize_fixed_y  = if (dist_top  < dist_bottom) bottom_edge else top_edge;
+                    wm.saved_focus_follows_mouse = wm.focus_follows_mouse;
+                    wm.focus_follows_mouse = false;
+                    wm.focused = node;
                 }
                 _ = c.XGrabPointer(wm.display, lookup_win, 1,
                     c.PointerMotionMask | c.ButtonReleaseMask,
@@ -1088,6 +1092,7 @@ pub fn on_motion_notify(wm: *WM, ev: *c.XMotionEvent) void {
                 wm.last_resize_flush = now_ms;
                 wm.resolve(wm.current_graph) catch {};
                 wm.flush(wm.current_graph) catch {};
+                wm.repaint_preview(focused);
                 _ = c.XSync(wm.display, 0);
             }
             return;
@@ -1190,7 +1195,6 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
     }
     if (wm.float_moving) {
         wm.float_moving = false;
-        wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
         _ = c.XUngrabPointer(wm.display, c.CurrentTime);
         wm.raise_below_docks(wm.float_move_frame);
     }
@@ -1244,6 +1248,7 @@ pub fn on_button_release(wm: *WM, _: *c.XButtonEvent) void {
     wm.last_flushed_edge_x = -1;
     wm.last_flushed_edge_y = -1;
     wm.flush(wm.current_graph) catch {};
+    wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
 }
 
 pub fn on_key_press(wm: *WM, event: *c.XKeyEvent) void {

@@ -488,7 +488,28 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_preview_font_workspace),         .name = "set_preview_font_workspace" },
     .{ .func = ziglua.wrap(l_set_preview_max_icon_size),          .name = "set_preview_max_icon_size" },
     .{ .func = ziglua.wrap(l_set_autoclean),                      .name = "set_autoclean" },
+    .{ .func = ziglua.wrap(l_scratchpad_toggle),                  .name = "scratchpad_toggle" },
+    .{ .func = ziglua.wrap(l_scratchpad_show),                    .name = "scratchpad_show" },
+    .{ .func = ziglua.wrap(l_scratchpad_hide),                    .name = "scratchpad_hide" },
 };
+
+fn l_scratchpad_toggle(lua: *Lua) i32 {
+    const id = check_node_id(lua, 1) orelse return 0;
+    global_wm.toggle_scratchpad(id) catch {};
+    return 0;
+}
+
+fn l_scratchpad_show(lua: *Lua) i32 {
+    const id = check_node_id(lua, 1) orelse return 0;
+    global_wm.show_scratchpad(id) catch {};
+    return 0;
+}
+
+fn l_scratchpad_hide(lua: *Lua) i32 {
+    const id = check_node_id(lua, 1) orelse return 0;
+    global_wm.hide_scratchpad(id) catch {};
+    return 0;
+}
 
 fn l_cleanup_left_behind(lua: *Lua) i32 {
     _ = lua;
