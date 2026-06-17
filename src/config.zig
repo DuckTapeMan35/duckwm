@@ -225,6 +225,7 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     const saved_current = global_wm.current_graph;
     global_wm.current_graph = g;
     defer global_wm.current_graph = saved_current;
+    reload_persistent(lua); // clear things from old scope that arrangers might have been relying on
     _ = lua.getIndexRaw(ziglua.registry_index, factory_ref);
     lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
         std.debug.print("arranger factory error: {}\n", .{err});
@@ -315,8 +316,6 @@ fn apply_arranger_to_graph(lua: *Lua, g: *graph_mod.Graph, factory_ref: i32) voi
     if (g == saved_current) {
         global_wm.flush(g) catch {};
     }
-
-    reload_persistent(lua);
 }
 
 fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) void {
@@ -1732,11 +1731,11 @@ fn l_bind(lua: *Lua) i32 {
     const ref = lua.ref(ziglua.registry_index);
     const keysym = c.XStringToKeysym(key.ptr);
     if (keysym == c.NoSymbol) {
-        _ = lua.pushString("wm.bind: unknown keysym");
+        _ = lua.pushString("bind: unknown keysym");
         return lua.raiseError();
     }
     global_wm.bind_lua(mod, keysym, ref) catch {
-        _ = lua.pushString("wm.bind: failed to bind key");
+        _ = lua.pushString("bind: failed to bind key");
         return lua.raiseError();
     };
     return 0;
@@ -1753,20 +1752,20 @@ fn l_spawn(lua: *Lua) i32 {
     lua.checkType(1, .table);
     const len = lua.lenRaw(1);
     var args = global_wm.allocator.alloc([]const u8, len) catch {
-        _ = lua.pushString("wm.spawn: out of memory");
+        _ = lua.pushString("spawn: out of memory");
         return lua.raiseError();
     };
     defer global_wm.allocator.free(args);
     for (0..len) |i| {
         _ = lua.getIndexRaw(1, @intCast(i + 1));
         args[i] = lua.toString(-1) catch {
-            _ = lua.pushString("wm.spawn: expected string in argv table");
+            _ = lua.pushString("spawn: expected string in argv table");
             return lua.raiseError();
         };
         lua.pop(1);
     }
     global_wm.spawn(args) catch {
-        _ = lua.pushString("wm.spawn: failed to spawn process");
+        _ = lua.pushString("spawn: failed to spawn process");
         return lua.raiseError();
     };
     return 0;
@@ -2599,7 +2598,7 @@ fn l_get_workspace(lua: *Lua) i32 {
     for (global_wm.current_graph.nodes.items) |node| {
         if (node.content == .workspace) {
             workspaces.append(global_wm.allocator, node) catch
-                return luaL_error_str(lua, "wm.get_workspace: out of memory");
+                return luaL_error_str(lua, "get_workspace: out of memory");
         }
     }
 
@@ -2796,20 +2795,20 @@ fn l_exec_once(lua: *Lua) i32 {
     lua.checkType(1, .table);
     const len = lua.lenRaw(1);
     var args = global_wm.allocator.alloc([]const u8, len) catch {
-        _ = lua.pushString("wm.exec_once: out of memory");
+        _ = lua.pushString("exec_once: out of memory");
         return lua.raiseError();
     };
     defer global_wm.allocator.free(args);
     for (0..len) |i| {
         _ = lua.getIndexRaw(1, @intCast(i + 1));
         args[i] = lua.toString(-1) catch {
-            _ = lua.pushString("wm.exec_once: expected string in argv table");
+            _ = lua.pushString("exec_once: expected string in argv table");
             return lua.raiseError();
         };
         lua.pop(1);
     }
     global_wm.spawn(args) catch {
-        _ = lua.pushString("wm.exec_once: failed to spawn process");
+        _ = lua.pushString("exec_once: failed to spawn process");
         return lua.raiseError();
     };
     return 0;
