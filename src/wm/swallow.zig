@@ -95,56 +95,57 @@ pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
 }
 
 pub fn try_swallow(wm: *WM, child_id: u32) void {
-    if (wm.swallow_classes.count() == 0) return;
+    if (wm.swallow_pairs.items.len == 0) return;
 
     const child_node = wm.node_registry.get(child_id) orelse return;
     const child_win = switch (child_node.content) {
         .window => |w| w,
         else => return,
     };
+
+    var child_buf: [256]u8 = undefined;
+    const child_cls = get_wm_class(wm.display, child_win, &child_buf) orelse return;
+
+    // Bail early if this class never swallows anything
+    var any = false;
+    for (wm.swallow_pairs.items) |p| {
+        if (std.mem.eql(u8, p.child, child_cls)) { any = true; break; }
+    }
+    if (!any) return;
+
     const child_pid = get_net_wm_pid(wm.display, child_win) orelse return;
 
-    var class_buf: [256]u8 = undefined;
-
-    // Don't swallow a terminal into another terminal
-    if (get_wm_class(wm.display, child_win, &class_buf)) |ccls| {
-        if (wm.swallow_classes.contains(ccls)) return;
-    }
-
-    // Pick the most-recently-focused ancestor terminal. node_registry iterates in
-    // hashmap order (arbitrary, focus-independent), so a plain first-match always
-    // lands on the same slot no matter which terminal is used
-    var best: ?*graph_mod.Node = null;
-    var best_id: u32 = 0;
+    var term_buf: [256]u8 = undefined;
     var it = wm.node_registry.iterator();
     while (it.next()) |entry| {
+        const term_id = entry.key_ptr.*;
+        if (term_id == child_id) continue;
         const term_node = entry.value_ptr.*;
-        if (!swallow_match(wm, term_node, child_node, child_pid, &class_buf)) continue;
-        if (best == null or term_node.focus_serial > best.?.focus_serial) {
-            best = term_node;
-            best_id = entry.key_ptr.*;
-        }
-    }
-    if (best) |b| do_swallow(wm, best_id, b, child_node);
-}
+        if (term_node.owner_graph != wm.current_graph) continue;
+        const term_win = switch (term_node.content) {
+            .window => |w| w,
+            else => continue,
+        };
 
-fn swallow_match(
-    wm: *WM,
-    term_node: *graph_mod.Node,
-    child_node: *graph_mod.Node,
-    child_pid: u32,
-    class_buf: []u8,
-) bool {
-    if (term_node == child_node) return false;
-    if (term_node.owner_graph != wm.current_graph) return false;
-    const term_win = switch (term_node.content) {
-        .window => |w| w,
-        else => return false,
-    };
-    const term_pid = get_net_wm_pid(wm.display, term_win) orelse return false;
-    if (!is_ancestor(term_pid, child_pid)) return false;
-    const cls = get_wm_class(wm.display, term_win, class_buf) orelse return false;
-    return wm.swallow_classes.contains(cls);
+        const term_cls = get_wm_class(wm.display, term_win, &term_buf) orelse continue;
+
+        var matched = false;
+        for (wm.swallow_pairs.items) |p| {
+            if (std.mem.eql(u8, p.terminal, term_cls) and
+                std.mem.eql(u8, p.child, child_cls))
+            {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) continue;
+
+        const term_pid = get_net_wm_pid(wm.display, term_win) orelse continue;
+        if (!is_ancestor(term_pid, child_pid)) continue;
+
+        do_swallow(wm, term_id, term_node, child_node);
+        return;
+    }
 }
 
 fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *graph_mod.Node) void {

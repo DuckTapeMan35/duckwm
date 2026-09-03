@@ -250,16 +250,22 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Window Management",
         .name     = "register_swallow",
-        .desc     = "Register a WM_CLASS string as a swallowable terminal. When a window whose ancestor process owns a window with this class maps, the terminal is replaced in the layout by the new window and restored when it closes.",
-        .params   = &.{ .{ .name = "class", .typ = "string" } },
-        .ret      = "nil",
+        .desc     = "Register a terminal/application WM_CLASS pair for swallowing. When a window whose class matches `child` maps and one of its ancestor processes owns a window whose class matches `terminal` in the current workspace, the terminal is replaced in the layout by the new window and restored when it closes.",
+        .params   = &.{
+            .{ .name = "terminal", .typ = "string" },
+            .{ .name = "child",    .typ = "string" },
+        },
+        .ret = "nil",
     },
     .{
         .category = "Window Management",
         .name     = "unregister_swallow",
-        .desc     = "Remove a WM_CLASS string from the swallow list.",
-        .params   = &.{ .{ .name = "class", .typ = "string" } },
-        .ret      = "nil",
+        .desc     = "Remove a previously registered terminal/application swallow pair.",
+        .params   = &.{
+            .{ .name = "terminal", .typ = "string" },
+            .{ .name = "child",    .typ = "string" },
+        },
+        .ret = "nil",
     },
     .{
         .category = "Window Management",

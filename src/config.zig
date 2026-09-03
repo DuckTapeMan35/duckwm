@@ -574,20 +574,37 @@ fn l_reload_persistent(lua: *Lua) i32 {
 }
 
 fn l_register_swallow(lua: *Lua) i32 {
-    const class = lua.checkString(1);
-    const owned = global_wm.allocator.dupe(u8, class) catch
+    const term  = lua.checkString(1);
+    const child = lua.checkString(2);
+    const term_owned  = global_wm.allocator.dupe(u8, term) catch
         return luaL_error_str(lua, "register_swallow: out of memory");
-    global_wm.swallow_classes.put(global_wm.allocator, owned, {}) catch
+    const child_owned = global_wm.allocator.dupe(u8, child) catch {
+        global_wm.allocator.free(term_owned);
         return luaL_error_str(lua, "register_swallow: out of memory");
+    };
+    global_wm.swallow_pairs.append(global_wm.allocator, .{
+        .terminal = term_owned,
+        .child    = child_owned,
+    }) catch {
+        global_wm.allocator.free(term_owned);
+        global_wm.allocator.free(child_owned);
+        return luaL_error_str(lua, "register_swallow: out of memory");
+    };
     return 0;
 }
 
 fn l_unregister_swallow(lua: *Lua) i32 {
-    const class = lua.checkString(1);
-    const idx = global_wm.swallow_classes.getIndex(class) orelse return 0;
-    const key = global_wm.swallow_classes.keys()[idx];
-    global_wm.swallow_classes.swapRemoveAt(idx);
-    global_wm.allocator.free(key);
+    const term  = lua.checkString(1);
+    const child = lua.checkString(2);
+    var i: usize = 0;
+    while (i < global_wm.swallow_pairs.items.len) {
+        const p = global_wm.swallow_pairs.items[i];
+        if (std.mem.eql(u8, p.terminal, term) and std.mem.eql(u8, p.child, child)) {
+            global_wm.allocator.free(p.terminal);
+            global_wm.allocator.free(p.child);
+            _ = global_wm.swallow_pairs.swapRemove(i);
+        } else i += 1;
+    }
     return 0;
 }
 
