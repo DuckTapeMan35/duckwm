@@ -69,7 +69,7 @@ pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
     const term_id = wm.window_to_node_id.get(win) orelse return false;
     const term_node = wm.node_registry.get(term_id) orelse return false;
 
-    // Is this node a parked terminal — i.e. is some child holding it?
+    // Is this node a parked terminal, i.e. is some child holding it?
     var holder: ?*graph_mod.Node = null;
     var it = wm.node_registry.iterator();
     while (it.next()) |entry| {
@@ -78,7 +78,8 @@ pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
             break;
         }
     }
-    const child = holder orelse return false;  // not a parked terminal — let normal path handle it
+    const child = holder orelse return false;  // not a parked terminal
+    if (child.owner_graph != wm.current_graph) return false;
 
     // Terminal is gone; the child keeps the slot (it already has the terminal's constraints).
     child.parked_term = null;
@@ -197,8 +198,9 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
 pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     const child_node = wm.node_registry.get(child_id) orelse return false;
     const term_node  = child_node.parked_term orelse return false;
+    const g = child_node.owner_graph orelse return false;
+    if (g != wm.current_graph) return false;
     child_node.parked_term = null;
-    const g = wm.current_graph;
 
     // Transfer constraints back: child -> term
     term_node.constraints.deinit(wm.allocator);
