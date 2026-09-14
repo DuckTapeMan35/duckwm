@@ -34,3 +34,8 @@ duckwm-git/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Nix
+result
+result-*
+.direnv/
