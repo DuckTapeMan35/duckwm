@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @import("c").c;
 const WM = @import("core.zig").WM;
+const types = @import("types");
 const graph_mod = @import("graph");
 const ziglua = @import("ziglua");
 const Node = graph_mod.Node;
@@ -19,7 +19,10 @@ pub fn toggle_floating(wm: *WM) !void {
     var node_id: ?u32 = null;
     var it = wm.node_registry.iterator();
     while (it.next()) |entry| {
-        if (entry.value_ptr.* == focused) { node_id = entry.key_ptr.*; break; }
+        if (entry.value_ptr.* == focused) {
+            node_id = entry.key_ptr.*;
+            break;
+        }
     }
     const id = node_id orelse return;
 
@@ -43,7 +46,10 @@ pub fn toggle_floating(wm: *WM) !void {
         var node_id_for_arranger: ?u32 = null;
         var it2 = wm.node_registry.iterator();
         while (it2.next()) |entry| {
-            if (entry.value_ptr.* == focused) { node_id_for_arranger = entry.key_ptr.*; break; }
+            if (entry.value_ptr.* == focused) {
+                node_id_for_arranger = entry.key_ptr.*;
+                break;
+            }
         }
         if (node_id_for_arranger) |nid| wm.call_arranger(wm.current_graph, "unmap", nid, null);
 
@@ -58,100 +64,36 @@ pub fn toggle_floating(wm: *WM) !void {
 }
 
 pub fn raise_floating_windows(wm: *WM) void {
-    const bw: i32 = wm.border_width;
-    var moving_node: ?*graph_mod.Node = null;
-
+    var moving: ?types.WindowHandle = null;
     for (wm.current_graph.nodes.items) |node| {
         if (!node.floating or node.hidden) continue;
-        // defer the moving window to raise last
-        if (wm.float_moving) {
-            switch (node.content) {
-                .window => |w| {
-                    if (wm.frames.get(w)) |frame| {
-                        if (frame == wm.float_move_frame) {
-                            moving_node = node;
-                            continue;
-                        }
-                    }
-                },
-                .workspace => {
-                    if (node.preview_window) |pw| {
-                        if (wm.frames.get(pw)) |frame| {
-                            if (frame == wm.float_move_frame) {
-                                moving_node = node;
-                                continue;
-                            }
-                        }
-                    }
-                },
-                else => {},
-            }
+        const h = WM.node_window(node) orelse continue;
+        // The window being dragged goes last, so it ends up on top.
+        if (wm.float_moving and h == wm.float_move_window) {
+            moving = h;
+            continue;
         }
-        // raise non-moving windows normally
-        raise_one(wm, node, bw);
+        wm.backend.raise_window(h);
     }
-
-    // raise the moving window last so it stays on top
-    if (moving_node) |node| raise_one(wm, node, bw);
-}
-
-fn raise_one(wm: *WM, node: *graph_mod.Node, bw: i32) void {
-    switch (node.content) {
-        .window => |win| {
-            if (wm.frames.get(win)) |frame| {
-                _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask);
-                wm.raise_below_docks(frame);
-                _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask | c.EnterWindowMask | c.LeaveWindowMask);
-                var ce: c.XEvent = std.mem.zeroes(c.XEvent);
-                ce.xconfigure.type = c.ConfigureNotify;
-                ce.xconfigure.display = wm.display;
-                ce.xconfigure.event = win;
-                ce.xconfigure.window = win;
-                ce.xconfigure.x = node.x;
-                ce.xconfigure.y = node.y;
-                ce.xconfigure.width = @intCast(@max(1, node.width));
-                ce.xconfigure.height = @intCast(@max(1, node.height));
-                ce.xconfigure.border_width = 0;
-                ce.xconfigure.above = c.None;
-                ce.xconfigure.override_redirect = 0;
-                _ = c.XSendEvent(wm.display, win, 0, c.StructureNotifyMask, &ce);
-                _ = bw;
-            }
-        },
-        .workspace => {
-            if (node.preview_window) |pw| {
-                if (wm.frames.get(pw)) |frame| {
-                    _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask);
-                    wm.raise_below_docks(frame);
-                    _ = c.XSelectInput(wm.display, frame, c.SubstructureNotifyMask | c.ExposureMask | c.ButtonPressMask | c.ButtonReleaseMask | c.EnterWindowMask | c.LeaveWindowMask);
-                }
-            }
-        },
-        else => {},
-    }
+    if (moving) |h| wm.backend.raise_window(h);
 }
 
 pub fn toggle_fullscreen(wm: *WM) !void {
     const focused = wm.focused orelse return;
     if (focused.content != .window) return;
+    const win = focused.content.window;
     const g = focused.owner_graph orelse wm.current_graph;
+    const node_id = wm.get_id_for_node(focused);
     if (g.fullscreen_node == focused) {
         // Restore
-        focused.x      = g.fullscreen_saved_x;
-        focused.y      = g.fullscreen_saved_y;
-        focused.width  = g.fullscreen_saved_w;
+        focused.x = g.fullscreen_saved_x;
+        focused.y = g.fullscreen_saved_y;
+        focused.width = g.fullscreen_saved_w;
         focused.height = g.fullscreen_saved_h;
         focused.floating = false;
         focused.constraints.clearRetainingCapacity();
         g.fullscreen_node = null;
-        var node_id: ?u32 = null;
         var prev_id: ?u32 = null;
-        var it = wm.node_registry.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.* == focused) {
-                node_id = entry.key_ptr.*;
-            }
-        }
         for (wm.current_graph.nodes.items) |n| {
             if (n.floating) continue;
             if (n == focused) continue;
@@ -172,29 +114,12 @@ pub fn toggle_fullscreen(wm: *WM) !void {
         focused.constraints.clearRetainingCapacity();
         focused.x = 0;
         focused.y = 0;
-        focused.width  = wm.screen_width;
+        focused.width = wm.screen_width;
         focused.height = wm.screen_height;
         g.fullscreen_node = focused;
-        var node_id: ?u32 = null;
-        var it = wm.node_registry.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.* == focused) { node_id = entry.key_ptr.*; break; }
-        }
         if (node_id) |nid| wm.call_arranger(wm.current_graph, "unmap", nid, null);
     }
-    if (focused.content == .window) {
-        const win = focused.content.window;
-        const net_wm_state = c.XInternAtom(wm.display, "_NET_WM_STATE", 0);
-        const net_wm_state_fullscreen = c.XInternAtom(wm.display, "_NET_WM_STATE_FULLSCREEN", 0);
-        const xa_atom = c.XInternAtom(wm.display, "ATOM", 0);
-        if (g.fullscreen_node == focused) {
-            _ = c.XChangeProperty(wm.display, win, net_wm_state, xa_atom, 32,
-                c.PropModeReplace, @ptrCast(&net_wm_state_fullscreen), 1);
-        } else {
-            _ = c.XChangeProperty(wm.display, win, net_wm_state, xa_atom, 32,
-                c.PropModeReplace, @ptrCast(&net_wm_state_fullscreen), 0);
-        }
-    }
+    wm.backend.publish_window_fullscreen(win, g.fullscreen_node == focused);
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
@@ -212,7 +137,7 @@ pub fn move_floating(wm: *WM, delta_x: i32, delta_y: i32) !void {
 pub fn resize_floating(wm: *WM, delta_width: i32, delta_height: i32) !void {
     const focused = wm.focused orelse return;
     if (!focused.floating or focused.content != .window) return;
-    focused.width  = @intCast(@max(10, @as(i32, @intCast(focused.width))  + delta_width));
+    focused.width = @intCast(@max(10, @as(i32, @intCast(focused.width)) + delta_width));
     focused.height = @intCast(@max(10, @as(i32, @intCast(focused.height)) + delta_height));
     try wm.resolve(wm.current_graph);
     try wm.flush(wm.current_graph);

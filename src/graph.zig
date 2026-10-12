@@ -1,9 +1,9 @@
 const std = @import("std");
-const c = @import("c").c;
-const cs = @import("solver");
+const sol = @import("solver");
+const types = @import("types");
 
 const NodeContent = union(enum) {
-    window: c.Window,
+    window: types.WindowHandle,
     empty,
     workspace: *Graph,
 };
@@ -19,22 +19,22 @@ pub const GraphId = struct {
 };
 
 pub const Constraint = union(enum) {
-    left_of:  *Node,
+    left_of: *Node,
     right_of: *Node,
-    above:    *Node,
-    below:    *Node,
+    above: *Node,
+    below: *Node,
 
-    align_left:   *Node,
-    align_top:    *Node,
-    align_right:  *Node,
+    align_left: *Node,
+    align_top: *Node,
+    align_right: *Node,
     align_bottom: *Node,
 
-    equal_width:  *Node,
+    equal_width: *Node,
     equal_height: *Node,
 
     fixed_ratio: f32,
 
-    fixed_width:  u32,
+    fixed_width: u32,
     fixed_height: u32,
     fixed_x: i32,
     fixed_y: i32,
@@ -74,7 +74,7 @@ const ReparentStrategy = union(enum) {
     leave_empty,
     remove,
     promote,
-    custom: *const fn(*Node) void,
+    custom: *const fn (*Node) void,
     custom_l: i32,
 };
 
@@ -91,7 +91,7 @@ const FocusEdge = struct {
 pub const Node = struct {
     content: NodeContent,
     owner_graph: ?*Graph,
-    preview_window: ?c.Window,
+    preview_window: ?types.WindowHandle = null,
     urgent: bool,
     hidden: bool,
     wants_fullscreen: bool,
@@ -115,6 +115,8 @@ pub const Node = struct {
     dead: bool,
     parked_term: ?*Node,
     focus_serial: u64,
+
+    info: types.WindowInfo,
 
     pub fn init(content: NodeContent, allocator: std.mem.Allocator) !Node {
         return .{
@@ -144,6 +146,8 @@ pub const Node = struct {
             .dead = false,
             .parked_term = null,
             .focus_serial = 0,
+
+            .info = .{},
         };
     }
 
@@ -221,7 +225,7 @@ pub const Graph = struct {
             .fullscreen_saved_y = 0,
             .fullscreen_saved_w = 0,
             .fullscreen_saved_h = 0,
-            .virtual_width  = 0,
+            .virtual_width = 0,
             .virtual_height = 0,
             .lock_horizontal_resize = false,
             .lock_vertical_resize = false,
@@ -229,10 +233,10 @@ pub const Graph = struct {
             .arranger_ref = 0,
             .arranger_index = 0,
             .arranger_name = "",
-            .preview_bg     = null,
+            .preview_bg = null,
             .preview_win_bg = null,
             .preview_border = null,
-            .preview_text   = null,
+            .preview_text = null,
             .preview_font_buf = undefined,
             .preview_font_len = null,
             .on_node_free = null,
@@ -300,15 +304,15 @@ pub const Graph = struct {
                         }
                         if (sibling) |sib| {
                             var grandparent: ?*Node = null;
-                            var gp_col:  u32 = 0;
-                            var gp_row:  u32 = 0;
+                            var gp_col: u32 = 0;
+                            var gp_row: u32 = 0;
                             var gp_cols: u32 = 1;
                             var gp_rows: u32 = 1;
                             for (cont.constraints.items) |con| {
                                 if (con == .grid_cell) {
                                     grandparent = con.grid_cell.container;
-                                    gp_col  = con.grid_cell.col;
-                                    gp_row  = con.grid_cell.row;
+                                    gp_col = con.grid_cell.col;
+                                    gp_row = con.grid_cell.row;
                                     gp_cols = con.grid_cell.cols;
                                     gp_rows = con.grid_cell.rows;
                                     break;
@@ -331,9 +335,8 @@ pub const Graph = struct {
                                     .cols = gp_cols,
                                     .rows = gp_rows,
                                     .container = gp,
-                                }}) catch {};
-                            } else {
-                            }
+                                } }) catch {};
+                            } else {}
                         }
                     }
                 },
@@ -394,24 +397,24 @@ pub const Graph = struct {
 
     pub fn constraint_involves_node(con: Constraint, node: *Node) bool {
         return switch (con) {
-            .left_of      => |other| other == node,
-            .right_of     => |other| other == node,
-            .above        => |other| other == node,
-            .below        => |other| other == node,
-            .align_left   => |other| other == node,
-            .align_top    => |other| other == node,
-            .align_right  => |other| other == node,
+            .left_of => |other| other == node,
+            .right_of => |other| other == node,
+            .above => |other| other == node,
+            .below => |other| other == node,
+            .align_left => |other| other == node,
+            .align_top => |other| other == node,
+            .align_right => |other| other == node,
             .align_bottom => |other| other == node,
-            .equal_width  => |other| other == node,
+            .equal_width => |other| other == node,
             .equal_height => |other| other == node,
-            .fixed_ratio  => false,
-            .grid_cell    => |g| g.container == node,
-            .grid_cell_abs=> |g| g.container == node,
-            .fixed_width  => false,
+            .fixed_ratio => false,
+            .grid_cell => |g| g.container == node,
+            .grid_cell_abs => |g| g.container == node,
+            .fixed_width => false,
             .fixed_height => false,
-            .fixed_x      => false,
-            .fixed_y      => false,
-            .split        => |s| blk: {
+            .fixed_x => false,
+            .fixed_y => false,
+            .split => |s| blk: {
                 if (s.container == node) break :blk true;
                 for (0..s.count) |i| {
                     if (s.children[i] == node) break :blk true;
@@ -471,19 +474,17 @@ pub const Graph = struct {
         }
 
         const n_vars = n * 4;
-        var solver = try cs.Solver.init(self.allocator, n_vars);
+        var solver = try sol.Solver.init(self.allocator, n_vars);
         defer solver.deinit();
 
         // Seed solver with current node values so underdetermined variables
         // stay at their current position rather than snapping to zero.
         for (self.nodes.items, 0..) |nd, i| {
             if (!node_idx.contains(nd)) continue;
-            solver.vals[cs.var_x(i)] = @floatFromInt(nd.x);
-            solver.vals[cs.var_y(i)] = @floatFromInt(nd.y);
-            solver.vals[cs.var_w(i)] = @floatFromInt(
-                if (nd.width  > 0) nd.width  else screen_width);
-            solver.vals[cs.var_h(i)] = @floatFromInt(
-                if (nd.height > 0) nd.height else screen_height);
+            solver.vals[sol.var_x(i)] = @floatFromInt(nd.x);
+            solver.vals[sol.var_y(i)] = @floatFromInt(nd.y);
+            solver.vals[sol.var_w(i)] = @floatFromInt(if (nd.width > 0) nd.width else screen_width);
+            solver.vals[sol.var_h(i)] = @floatFromInt(if (nd.height > 0) nd.height else screen_height);
         }
 
         // Default: fill screen for tiled, stay in place for floating
@@ -492,15 +493,15 @@ pub const Graph = struct {
             if (nd.floating) {
                 // anchor floating nodes at their current position/size as weak defaults
                 // so relational constraints have a stable reference point
-                try solver.add_fixed(cs.var_x(i), @floatFromInt(nd.x),                                    cs.WEAK);
-                try solver.add_fixed(cs.var_y(i), @floatFromInt(nd.y),                                    cs.WEAK);
-                try solver.add_fixed(cs.var_w(i), @floatFromInt(if (nd.width  > 0) nd.width  else 100),   cs.MEDIUM);
-                try solver.add_fixed(cs.var_h(i), @floatFromInt(if (nd.height > 0) nd.height else 100),   cs.MEDIUM);
+                try solver.add_fixed(sol.var_x(i), @floatFromInt(nd.x), sol.WEAK);
+                try solver.add_fixed(sol.var_y(i), @floatFromInt(nd.y), sol.WEAK);
+                try solver.add_fixed(sol.var_w(i), @floatFromInt(if (nd.width > 0) nd.width else 100), sol.MEDIUM);
+                try solver.add_fixed(sol.var_h(i), @floatFromInt(if (nd.height > 0) nd.height else 100), sol.MEDIUM);
             } else {
-                try solver.add_fixed(cs.var_x(i), 0,                            cs.WEAK);
-                try solver.add_fixed(cs.var_y(i), 0,                            cs.WEAK);
-                try solver.add_fixed(cs.var_w(i), @floatFromInt(screen_width),  cs.WEAK);
-                try solver.add_fixed(cs.var_h(i), @floatFromInt(screen_height), cs.WEAK);
+                try solver.add_fixed(sol.var_x(i), 0, sol.WEAK);
+                try solver.add_fixed(sol.var_y(i), 0, sol.WEAK);
+                try solver.add_fixed(sol.var_w(i), @floatFromInt(screen_width), sol.WEAK);
+                try solver.add_fixed(sol.var_h(i), @floatFromInt(screen_height), sol.WEAK);
             }
         }
 
@@ -510,32 +511,40 @@ pub const Graph = struct {
                 // but allow relational constraints
                 if (nd.floating) {
                     switch (con) {
-                        .fixed_x, .fixed_y, .fixed_width, .fixed_height,
-                        .grid_cell, .grid_cell_abs, .split, .fixed_ratio => continue,
+                        .fixed_x,
+                        .fixed_y,
+                        .fixed_width,
+                        .fixed_height,
+                        .grid_cell,
+                        .grid_cell_abs,
+                        .split,
+                        .fixed_ratio,
+                        => continue,
                         else => {},
                     }
                 }
                 switch (con) {
-
                     .fixed_x => |v| {
-                        try solver.add_fixed(cs.var_x(i), @floatFromInt(v), cs.REQUIRED);
+                        try solver.add_fixed(sol.var_x(i), @floatFromInt(v), sol.REQUIRED);
                     },
                     .fixed_y => |v| {
-                        try solver.add_fixed(cs.var_y(i), @floatFromInt(v), cs.REQUIRED);
+                        try solver.add_fixed(sol.var_y(i), @floatFromInt(v), sol.REQUIRED);
                     },
                     .fixed_width => |v| {
-                        try solver.add_fixed(cs.var_w(i), @floatFromInt(v), cs.REQUIRED);
+                        try solver.add_fixed(sol.var_w(i), @floatFromInt(v), sol.REQUIRED);
                     },
                     .fixed_height => |v| {
-                        try solver.add_fixed(cs.var_h(i), @floatFromInt(v), cs.REQUIRED);
+                        try solver.add_fixed(sol.var_h(i), @floatFromInt(v), sol.REQUIRED);
                     },
 
                     // w = ratio * h  =>  w - ratio*h = 0
                     .fixed_ratio => |r| {
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_w(i)), @intCast(cs.var_h(i)), 0,0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -@as(f64, r),                            0,0,0,0,0,0 },
-                            .n = 2, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{ @intCast(sol.var_w(i)), @intCast(sol.var_h(i)), 0, 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -@as(f64, r), 0, 0, 0, 0, 0, 0 },
+                            .n = 2,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
 
@@ -550,27 +559,35 @@ pub const Graph = struct {
                         // x_i = x_cont + col * (w_cont / cols)
                         // => x_i - x_cont - (col/cols)*w_cont = 0
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, -(col * cw), 0,0,0,0,0 },
-                            .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                            .vars = [8]u32{ @intCast(sol.var_x(i)), @intCast(sol.var_x(j)), @intCast(sol.var_w(j)), 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -(col * cw), 0, 0, 0, 0, 0 },
+                            .n = 3,
+                            .rhs = 0,
+                            .weight = sol.REQUIRED,
                         });
                         // y_i = y_cont + row * (h_cont / rows)
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, -(row * ch), 0,0,0,0,0 },
-                            .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                            .vars = [8]u32{ @intCast(sol.var_y(i)), @intCast(sol.var_y(j)), @intCast(sol.var_h(j)), 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -(row * ch), 0, 0, 0, 0, 0 },
+                            .n = 3,
+                            .rhs = 0,
+                            .weight = sol.REQUIRED,
                         });
                         // w_i = w_cont / cols
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_w(i)), @intCast(cs.var_w(j)), 0,0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -cw, 0,0,0,0,0,0 },
-                            .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                            .vars = [8]u32{ @intCast(sol.var_w(i)), @intCast(sol.var_w(j)), 0, 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -cw, 0, 0, 0, 0, 0, 0 },
+                            .n = 2,
+                            .rhs = 0,
+                            .weight = sol.REQUIRED,
                         });
                         // h_i = h_cont / rows
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_h(i)), @intCast(cs.var_h(j)), 0,0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -ch, 0,0,0,0,0,0 },
-                            .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                            .vars = [8]u32{ @intCast(sol.var_h(i)), @intCast(sol.var_h(j)), 0, 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -ch, 0, 0, 0, 0, 0, 0 },
+                            .n = 2,
+                            .rhs = 0,
+                            .weight = sol.REQUIRED,
                         });
                     },
 
@@ -578,18 +595,22 @@ pub const Graph = struct {
                         const j = node_idx.get(g.container) orelse continue;
                         // x_i = x_cont + g.x
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_x(j)), 0,0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, 0,0,0,0,0,0 },
-                            .n = 2, .rhs = @floatFromInt(g.x), .weight = cs.REQUIRED,
+                            .vars = [8]u32{ @intCast(sol.var_x(i)), @intCast(sol.var_x(j)), 0, 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, 0, 0, 0, 0, 0, 0 },
+                            .n = 2,
+                            .rhs = @floatFromInt(g.x),
+                            .weight = sol.REQUIRED,
                         });
                         // y_i = y_cont + g.y
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_y(j)), 0,0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, 0,0,0,0,0,0 },
-                            .n = 2, .rhs = @floatFromInt(g.y), .weight = cs.REQUIRED,
+                            .vars = [8]u32{ @intCast(sol.var_y(i)), @intCast(sol.var_y(j)), 0, 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, 0, 0, 0, 0, 0, 0 },
+                            .n = 2,
+                            .rhs = @floatFromInt(g.y),
+                            .weight = sol.REQUIRED,
                         });
-                        try solver.add_fixed(cs.var_w(i), @floatFromInt(g.w), cs.REQUIRED);
-                        try solver.add_fixed(cs.var_h(i), @floatFromInt(g.h), cs.REQUIRED);
+                        try solver.add_fixed(sol.var_w(i), @floatFromInt(g.w), sol.REQUIRED);
+                        try solver.add_fixed(sol.var_h(i), @floatFromInt(g.h), sol.REQUIRED);
                     },
 
                     .split => |s| {
@@ -607,37 +628,45 @@ pub const Graph = struct {
                             if (s.axis == .horizontal) {
                                 // x_child = x_cont + offset * w_cont
                                 try solver.add(.{
-                                    .vars   = [8]u32{ @intCast(cs.var_x(ck)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0,0 },
-                                    .coeffs = [8]f64{ 1.0, -1.0, -offset, 0,0,0,0,0 },
-                                    .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                                    .vars = [8]u32{ @intCast(sol.var_x(ck)), @intCast(sol.var_x(j)), @intCast(sol.var_w(j)), 0, 0, 0, 0, 0 },
+                                    .coeffs = [8]f64{ 1.0, -1.0, -offset, 0, 0, 0, 0, 0 },
+                                    .n = 3,
+                                    .rhs = 0,
+                                    .weight = sol.REQUIRED,
                                 });
                                 // w_child = r * w_cont
                                 try solver.add(.{
-                                    .vars   = [8]u32{ @intCast(cs.var_w(ck)), @intCast(cs.var_w(j)), 0,0,0,0,0,0 },
-                                    .coeffs = [8]f64{ 1.0, -r, 0,0,0,0,0,0 },
-                                    .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                                    .vars = [8]u32{ @intCast(sol.var_w(ck)), @intCast(sol.var_w(j)), 0, 0, 0, 0, 0, 0 },
+                                    .coeffs = [8]f64{ 1.0, -r, 0, 0, 0, 0, 0, 0 },
+                                    .n = 2,
+                                    .rhs = 0,
+                                    .weight = sol.REQUIRED,
                                 });
                                 // y_child = y_cont
-                                try solver.add_diff(cs.var_y(ck), cs.var_y(j), 0, cs.REQUIRED);
+                                try solver.add_diff(sol.var_y(ck), sol.var_y(j), 0, sol.REQUIRED);
                                 // h_child = h_cont
-                                try solver.add_diff(cs.var_h(ck), cs.var_h(j), 0, cs.REQUIRED);
+                                try solver.add_diff(sol.var_h(ck), sol.var_h(j), 0, sol.REQUIRED);
                             } else {
                                 // y_child = y_cont + offset * h_cont
                                 try solver.add(.{
-                                    .vars   = [8]u32{ @intCast(cs.var_y(ck)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0,0 },
-                                    .coeffs = [8]f64{ 1.0, -1.0, -offset, 0,0,0,0,0 },
-                                    .n = 3, .rhs = 0, .weight = cs.REQUIRED,
+                                    .vars = [8]u32{ @intCast(sol.var_y(ck)), @intCast(sol.var_y(j)), @intCast(sol.var_h(j)), 0, 0, 0, 0, 0 },
+                                    .coeffs = [8]f64{ 1.0, -1.0, -offset, 0, 0, 0, 0, 0 },
+                                    .n = 3,
+                                    .rhs = 0,
+                                    .weight = sol.REQUIRED,
                                 });
                                 // h_child = r * h_cont
                                 try solver.add(.{
-                                    .vars   = [8]u32{ @intCast(cs.var_h(ck)), @intCast(cs.var_h(j)), 0,0,0,0,0,0 },
-                                    .coeffs = [8]f64{ 1.0, -r, 0,0,0,0,0,0 },
-                                    .n = 2, .rhs = 0, .weight = cs.REQUIRED,
+                                    .vars = [8]u32{ @intCast(sol.var_h(ck)), @intCast(sol.var_h(j)), 0, 0, 0, 0, 0, 0 },
+                                    .coeffs = [8]f64{ 1.0, -r, 0, 0, 0, 0, 0, 0 },
+                                    .n = 2,
+                                    .rhs = 0,
+                                    .weight = sol.REQUIRED,
                                 });
                                 // x_child = x_cont
-                                try solver.add_diff(cs.var_x(ck), cs.var_x(j), 0, cs.REQUIRED);
+                                try solver.add_diff(sol.var_x(ck), sol.var_x(j), 0, sol.REQUIRED);
                                 // w_child = w_cont
-                                try solver.add_diff(cs.var_w(ck), cs.var_w(j), 0, cs.REQUIRED);
+                                try solver.add_diff(sol.var_w(ck), sol.var_w(j), 0, sol.REQUIRED);
                             }
                             offset += r;
                         }
@@ -650,73 +679,112 @@ pub const Graph = struct {
                         const j = node_idx.get(other) orelse continue;
                         // x_other = x_i + w_i  =>  x_other - x_i - w_i = 0
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_x(j)), @intCast(cs.var_x(i)), @intCast(cs.var_w(i)), 0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
-                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{ @intCast(sol.var_x(j)), @intCast(sol.var_x(i)), @intCast(sol.var_w(i)), 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0, 0, 0, 0, 0 },
+                            .n = 3,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
                     .right_of => |other| {
                         const j = node_idx.get(other) orelse continue;
                         // x_i = x_other + w_other  =>  x_i - x_other - w_other = 0
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
-                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{ @intCast(sol.var_x(i)), @intCast(sol.var_x(j)), @intCast(sol.var_w(j)), 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0, 0, 0, 0, 0 },
+                            .n = 3,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
                     .above => |other| {
                         const j = node_idx.get(other) orelse continue;
                         // y_other = y_i + h_i  =>  y_other - y_i - h_i = 0
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_y(j)), @intCast(cs.var_y(i)), @intCast(cs.var_h(i)), 0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
-                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{ @intCast(sol.var_y(j)), @intCast(sol.var_y(i)), @intCast(sol.var_h(i)), 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0, 0, 0, 0, 0 },
+                            .n = 3,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
                     .below => |other| {
                         const j = node_idx.get(other) orelse continue;
                         // y_i = y_other + h_other  =>  y_i - y_other - h_other = 0
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0,0,0,0,0 },
-                            .n = 3, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{ @intCast(sol.var_y(i)), @intCast(sol.var_y(j)), @intCast(sol.var_h(j)), 0, 0, 0, 0, 0 },
+                            .coeffs = [8]f64{ 1.0, -1.0, -1.0, 0, 0, 0, 0, 0 },
+                            .n = 3,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
 
                     .align_left => |other| {
                         const j = node_idx.get(other) orelse continue;
-                        try solver.add_diff(cs.var_x(i), cs.var_x(j), 0, cs.STRONG);
+                        try solver.add_diff(sol.var_x(i), sol.var_x(j), 0, sol.STRONG);
                     },
                     .align_top => |other| {
                         const j = node_idx.get(other) orelse continue;
-                        try solver.add_diff(cs.var_y(i), cs.var_y(j), 0, cs.STRONG);
+                        try solver.add_diff(sol.var_y(i), sol.var_y(j), 0, sol.STRONG);
                     },
                     .align_right => |other| {
                         const j = node_idx.get(other) orelse continue;
                         // x_i + w_i = x_other + w_other
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_x(i)), @intCast(cs.var_w(i)), @intCast(cs.var_x(j)), @intCast(cs.var_w(j)), 0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, 1.0, -1.0, -1.0, 0,0,0,0 },
-                            .n = 4, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{
+                                @intCast(sol.var_x(i)),
+                                @intCast(sol.var_w(i)),
+                                @intCast(sol.var_x(j)),
+                                @intCast(sol.var_w(j)),
+                                0,
+                                0,
+                                0,
+                                0,
+                            },
+                            .coeffs = [8]f64{
+                                1.0,
+                                1.0,
+                                -1.0,
+                                -1.0,
+                                0,
+                                0,
+                                0,
+                                0,
+                            },
+                            .n = 4,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
                     .align_bottom => |other| {
                         const j = node_idx.get(other) orelse continue;
                         // y_i + h_i = y_other + h_other
                         try solver.add(.{
-                            .vars   = [8]u32{ @intCast(cs.var_y(i)), @intCast(cs.var_h(i)), @intCast(cs.var_y(j)), @intCast(cs.var_h(j)), 0,0,0,0 },
-                            .coeffs = [8]f64{ 1.0, 1.0, -1.0, -1.0, 0,0,0,0 },
-                            .n = 4, .rhs = 0, .weight = cs.STRONG,
+                            .vars = [8]u32{
+                                @intCast(sol.var_y(i)),
+                                @intCast(sol.var_h(i)),
+                                @intCast(sol.var_y(j)),
+                                @intCast(sol.var_h(j)),
+                                0,
+                                0,
+                                0,
+                                0,
+                            },
+                            .coeffs = [8]f64{ 1.0, 1.0, -1.0, -1.0, 0, 0, 0, 0 },
+                            .n = 4,
+                            .rhs = 0,
+                            .weight = sol.STRONG,
                         });
                     },
 
                     .equal_width => |other| {
                         const j = node_idx.get(other) orelse continue;
-                        try solver.add_diff(cs.var_w(i), cs.var_w(j), 0, cs.STRONG);
+                        try solver.add_diff(sol.var_w(i), sol.var_w(j), 0, sol.STRONG);
                     },
                     .equal_height => |other| {
                         const j = node_idx.get(other) orelse continue;
-                        try solver.add_diff(cs.var_h(i), cs.var_h(j), 0, cs.STRONG);
+                        try solver.add_diff(sol.var_h(i), sol.var_h(j), 0, sol.STRONG);
                     },
                 }
             }
@@ -741,27 +809,27 @@ pub const Graph = struct {
                         else => {},
                     }
                 } else false;
-                nd.x = @intFromFloat(@round(solver.vals[cs.var_x(i)]));
-                nd.y = @intFromFloat(@round(solver.vals[cs.var_y(i)]));
+                nd.x = @intFromFloat(@round(solver.vals[sol.var_x(i)]));
+                nd.y = @intFromFloat(@round(solver.vals[sol.var_y(i)]));
                 if (has_size_con) {
-                    nd.width  = @intFromFloat(@round(solver.vals[cs.var_w(i)]));
-                    nd.height = @intFromFloat(@round(solver.vals[cs.var_h(i)]));
+                    nd.width = @intFromFloat(@round(solver.vals[sol.var_w(i)]));
+                    nd.height = @intFromFloat(@round(solver.vals[sol.var_h(i)]));
                 }
                 continue;
             }
-            const x_f = @max(0.0, @min(sw,     solver.vals[cs.var_x(i)]));
-            const y_f = @max(0.0, @min(sh,     solver.vals[cs.var_y(i)]));
-            const w_f = @max(1.0, @min(sw - x_f, solver.vals[cs.var_w(i)]));
-            const h_f = @max(1.0, @min(sh - y_f, solver.vals[cs.var_h(i)]));
+            const x_f = @max(0.0, @min(sw, solver.vals[sol.var_x(i)]));
+            const y_f = @max(0.0, @min(sh, solver.vals[sol.var_y(i)]));
+            const w_f = @max(1.0, @min(sw - x_f, solver.vals[sol.var_w(i)]));
+            const h_f = @max(1.0, @min(sh - y_f, solver.vals[sol.var_h(i)]));
             const xi: i32 = @intFromFloat(@round(x_f));
             const yi: i32 = @intFromFloat(@round(y_f));
             const wi: u32 = @intCast(@max(1, @as(i32, @intFromFloat(@round(w_f)))));
             const hi: u32 = @intCast(@max(1, @as(i32, @intFromFloat(@round(h_f)))));
             const sw_i: i32 = @intCast(screen_width);
             const sh_i: i32 = @intCast(screen_height);
-            nd.x      = xi;
-            nd.y      = yi;
-            nd.width  = @intCast(@max(1, @min(sw_i - xi, @as(i32, @intCast(wi)))));
+            nd.x = xi;
+            nd.y = yi;
+            nd.width = @intCast(@max(1, @min(sw_i - xi, @as(i32, @intCast(wi)))));
             nd.height = @intCast(@max(1, @min(sh_i - yi, @as(i32, @intCast(hi)))));
         }
     }

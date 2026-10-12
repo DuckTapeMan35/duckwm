@@ -1,12 +1,13 @@
 const std = @import("std");
 const ziglua = @import("ziglua");
-const Lua = ziglua.Lua;
 const wm_mod = @import("wm");
-const WM = wm_mod.WM;
 const graph_mod = @import("graph");
-const Constraint = graph_mod.Constraint;
-const c = @import("c").c;
+const types = @import("types");
+const c = @import("libc");
 const api = @import("api");
+const Lua = ziglua.Lua;
+const WM = wm_mod.WM;
+const Constraint = graph_mod.Constraint;
 
 var global_wm: *WM = undefined;
 
@@ -14,6 +15,18 @@ const Registration = struct {
     func: ziglua.CFn,
     name: [:0]const u8,
 };
+
+fn check_mods(lua: *Lua, idx: i32) types.Mods {
+    const m = lua.checkInteger(idx);
+    if (m < 0 or m > std.math.maxInt(types.Mods)) return luaL_error_str(lua, "invalid modifier mask");
+    return @intCast(m);
+}
+
+fn check_button(lua: *Lua, idx: i32) types.Button {
+    const b = lua.checkInteger(idx);
+    if (b < 1 or b > 255) return luaL_error_str(lua, "invalid button");
+    return @intCast(b);
+}
 
 fn check_node_id(lua: *Lua, stack_pos: i32) ?u32 {
     const n = lua.toInteger(stack_pos) catch return null;
@@ -34,22 +47,13 @@ fn check_color(lua: *Lua, stack_pos: i32) ?u32 {
 }
 
 fn repaint_node(wm: *WM, node: *graph_mod.Node) void {
-    const win = switch (node.content) {
-        .window    => |w| w,
-        .workspace => node.preview_window orelse return,
-        .empty     => return,
-    };
-    if (wm.frames.get(win)) |frame| {
-        wm.draw_frame_borders(frame, node);
-        _ = c.XFlush(wm.display);
-    }
+    wm.paint_borders(node, null);
 }
 
 fn repaint_all_nodes(wm: *WM) void {
     for (wm.current_graph.nodes.items) |node| {
         repaint_node(wm, node);
     }
-    _ = c.XFlush(wm.display);
 }
 
 fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, g: *graph_mod.Graph, depth: u32) void {
@@ -63,14 +67,15 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
 
     for (g.nodes.items) |node| {
         const type_str: []const u8 = switch (node.content) {
-            .window    => "window",
-            .empty     => "empty",
+            .window => "window",
+            .empty => "empty",
             .workspace => "workspace",
         };
         const id = global_wm.get_id_for_node(node) orelse 0;
         buf.print(allocator, "{s}  [{d}] {s} x={} y={} w={} h={} floating={}\n", .{
-            ind.items, id, type_str,
-            node.x, node.y, node.width, node.height, node.floating,
+            ind.items,   id,            type_str,
+            node.x,      node.y,        node.width,
+            node.height, node.floating,
         }) catch {};
     }
 
@@ -80,33 +85,31 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
         const from_id = global_wm.get_id_for_node(node) orelse 0;
         for (node.constraints.items) |con| {
             switch (con) {
-                .left_of, .right_of, .above, .below,
-                .align_left, .align_top, .align_right, .align_bottom,
-                .equal_width, .equal_height => {
+                .left_of, .right_of, .above, .below, .align_left, .align_top, .align_right, .align_bottom, .equal_width, .equal_height => {
                     const other: *graph_mod.Node = switch (con) {
-                        .left_of      => |o| o,
-                        .right_of     => |o| o,
-                        .above        => |o| o,
-                        .below        => |o| o,
-                        .align_left   => |o| o,
-                        .align_top    => |o| o,
-                        .align_right  => |o| o,
+                        .left_of => |o| o,
+                        .right_of => |o| o,
+                        .above => |o| o,
+                        .below => |o| o,
+                        .align_left => |o| o,
+                        .align_top => |o| o,
+                        .align_right => |o| o,
                         .align_bottom => |o| o,
-                        .equal_width  => |o| o,
+                        .equal_width => |o| o,
                         .equal_height => |o| o,
                         else => unreachable,
                     };
                     const to_id = global_wm.get_id_for_node(other) orelse 0;
                     const name: []const u8 = switch (con) {
-                        .left_of      => "left_of",
-                        .right_of     => "right_of",
-                        .above        => "above",
-                        .below        => "below",
-                        .align_left   => "align_left",
-                        .align_top    => "align_top",
-                        .align_right  => "align_right",
+                        .left_of => "left_of",
+                        .right_of => "right_of",
+                        .above => "above",
+                        .below => "below",
+                        .align_left => "align_left",
+                        .align_top => "align_top",
+                        .align_right => "align_right",
                         .align_bottom => "align_bottom",
-                        .equal_width  => "equal_width",
+                        .equal_width => "equal_width",
                         .equal_height => "equal_height",
                         else => unreachable,
                     };
@@ -129,20 +132,19 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
                 .split => |s| {
                     const cont_id = global_wm.get_id_for_node(s.container) orelse 0;
                     buf.print(allocator, "{s}  [{d}] --split({s},count={}", .{
-                        ind.items, from_id,
-                        if (s.axis == .horizontal) "h" else "v",
-                        s.count,
+                        ind.items,                               from_id,
+                        if (s.axis == .horizontal) "h" else "v", s.count,
                     }) catch {};
                     for (0..s.count) |i| {
                         buf.print(allocator, ",r={d:.3}", .{s.ratios[i]}) catch {};
                     }
                     buf.print(allocator, ")--> [{d}]\n", .{cont_id}) catch {};
                 },
-                .fixed_width  => |w| buf.print(allocator, "{s}  [{d}] fixed_width={}\n",      .{ ind.items, from_id, w }) catch {},
-                .fixed_height => |h| buf.print(allocator, "{s}  [{d}] fixed_height={}\n",     .{ ind.items, from_id, h }) catch {},
-                .fixed_x      => |x| buf.print(allocator, "{s}  [{d}] fixed_x={}\n",          .{ ind.items, from_id, x }) catch {},
-                .fixed_y      => |y| buf.print(allocator, "{s}  [{d}] fixed_y={}\n",          .{ ind.items, from_id, y }) catch {},
-                .fixed_ratio  => |r| buf.print(allocator, "{s}  [{d}] fixed_ratio={d:.3}\n",  .{ ind.items, from_id, r }) catch {},
+                .fixed_width => |w| buf.print(allocator, "{s}  [{d}] fixed_width={}\n", .{ ind.items, from_id, w }) catch {},
+                .fixed_height => |h| buf.print(allocator, "{s}  [{d}] fixed_height={}\n", .{ ind.items, from_id, h }) catch {},
+                .fixed_x => |x| buf.print(allocator, "{s}  [{d}] fixed_x={}\n", .{ ind.items, from_id, x }) catch {},
+                .fixed_y => |y| buf.print(allocator, "{s}  [{d}] fixed_y={}\n", .{ ind.items, from_id, y }) catch {},
+                .fixed_ratio => |r| buf.print(allocator, "{s}  [{d}] fixed_ratio={d:.3}\n", .{ ind.items, from_id, r }) catch {},
             }
         }
     }
@@ -156,35 +158,34 @@ fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
     }
 }
 
-
 fn apply_other(lua: *Lua, g: *graph_mod.Graph, node: *graph_mod.Node, comptime tag: std.meta.Tag(graph_mod.Constraint)) void {
     _ = lua.getField(-1, "other");
     const other_id: u32 = @intCast(lua.toInteger(-1) catch 0);
     lua.pop(1);
     const other = global_wm.get_node_by_id(other_id) orelse return;
     g.add_constraint(node, switch (tag) {
-        .left_of     => .{ .left_of     = other },
-        .right_of    => .{ .right_of    = other },
-        .above       => .{ .above       = other },
-        .below       => .{ .below       = other },
-        .align_left  => .{ .align_left  = other },
-        .align_top   => .{ .align_top   = other },
+        .left_of => .{ .left_of = other },
+        .right_of => .{ .right_of = other },
+        .above => .{ .above = other },
+        .below => .{ .below = other },
+        .align_left => .{ .align_left = other },
+        .align_top => .{ .align_top = other },
         .align_right => .{ .align_right = other },
-        .align_bottom=> .{ .align_bottom= other },
+        .align_bottom => .{ .align_bottom = other },
         .equal_width => .{ .equal_width = other },
-        .equal_height=> .{ .equal_height= other },
+        .equal_height => .{ .equal_height = other },
         else => return,
     }) catch {};
 }
 
 fn clear_all_node_colors(g: *graph_mod.Graph) void {
     for (g.nodes.items) |node| {
-        node.border_color_focused   = null;
+        node.border_color_focused = null;
         node.border_color_unfocused = null;
-        node.border_color_top       = null;
-        node.border_color_bottom    = null;
-        node.border_color_left      = null;
-        node.border_color_right     = null;
+        node.border_color_top = null;
+        node.border_color_bottom = null;
+        node.border_color_left = null;
+        node.border_color_right = null;
         if (node.content == .workspace) {
             clear_all_node_colors(node.content.workspace);
         }
@@ -215,6 +216,7 @@ fn reload_persistent(lua: *Lua) void {
         if (global_wm.lua) |l| l.unref(ziglua.registry_index, ref);
     }
     global_wm.rules.clearRetainingCapacity();
+    global_wm.clear_rgb_frame_classes();
 
     lua.doFile(path_z) catch {
         lua.pop(1);
@@ -331,165 +333,167 @@ fn apply_gaps_to_graph(g: *graph_mod.Graph, ih: u32, iv: u32, oh: u32, ov: u32) 
 }
 
 const registrations = [_]Registration{
-    .{ .func = ziglua.wrap(l_set_preview_colors_workspace),       .name = "set_preview_colors_workspace" },
-    .{ .func = ziglua.wrap(l_bind),                               .name = "bind" },
-    .{ .func = ziglua.wrap(l_spawn),                              .name = "spawn" },
-    .{ .func = ziglua.wrap(l_setenv),                             .name = "setenv" },
-    .{ .func = ziglua.wrap(l_exec_once),                          .name = "exec_once" },
-    .{ .func = ziglua.wrap(l_set_arranger),                       .name = "set_arranger" },
-    .{ .func = ziglua.wrap(l_set_default_arranger),               .name = "set_default_arranger" },
-    .{ .func = ziglua.wrap(l_register_arranger),                  .name = "register_arranger" },
-    .{ .func = ziglua.wrap(l_focus_left),                         .name = "focus_left" },
-    .{ .func = ziglua.wrap(l_focus_right),                        .name = "focus_right" },
-    .{ .func = ziglua.wrap(l_focus_up),                           .name = "focus_up" },
-    .{ .func = ziglua.wrap(l_focus_down),                         .name = "focus_down" },
-    .{ .func = ziglua.wrap(l_focus),                              .name = "focus" },
-    .{ .func = ziglua.wrap(l_exchange_left),                      .name = "exchange_left" },
-    .{ .func = ziglua.wrap(l_exchange_right),                     .name = "exchange_right" },
-    .{ .func = ziglua.wrap(l_exchange_up),                        .name = "exchange_up" },
-    .{ .func = ziglua.wrap(l_exchange_down),                      .name = "exchange_down" },
-    .{ .func = ziglua.wrap(l_get_focused),                        .name = "get_focused" },
-    .{ .func = ziglua.wrap(l_remove_node),                        .name = "remove_node" },
-    .{ .func = ziglua.wrap(l_kill_client),                        .name = "kill_client" },
-    .{ .func = ziglua.wrap(l_get_node_info),                      .name = "get_node_info" },
-    .{ .func = ziglua.wrap(l_resize_edge),                        .name = "resize_edge" },
-    .{ .func = ziglua.wrap(l_resize_corner),                      .name = "resize_corner" },
-    .{ .func = ziglua.wrap(l_resize_focused_edge),                .name = "resize_focused_edge" },
-    .{ .func = ziglua.wrap(l_resize_focused_corner),              .name = "resize_focused_corner" },
-    .{ .func = ziglua.wrap(l_create_root_node),                   .name = "create_root_node" },
-    .{ .func = ziglua.wrap(l_left_of),                            .name = "left_of" },
-    .{ .func = ziglua.wrap(l_right_of),                           .name = "right_of" },
-    .{ .func = ziglua.wrap(l_above),                              .name = "above" },
-    .{ .func = ziglua.wrap(l_below),                              .name = "below" },
-    .{ .func = ziglua.wrap(l_align_left),                         .name = "align_left" },
-    .{ .func = ziglua.wrap(l_align_top),                          .name = "align_top" },
-    .{ .func = ziglua.wrap(l_align_right),                        .name = "align_right" },
-    .{ .func = ziglua.wrap(l_align_bottom),                       .name = "align_bottom" },
-    .{ .func = ziglua.wrap(l_equal_width),                        .name = "equal_width" },
-    .{ .func = ziglua.wrap(l_equal_height),                       .name = "equal_height" },
-    .{ .func = ziglua.wrap(l_fixed_ratio),                        .name = "fixed_ratio" },
-    .{ .func = ziglua.wrap(l_fixed_width),                        .name = "fixed_width" },
-    .{ .func = ziglua.wrap(l_fixed_height),                       .name = "fixed_height" },
-    .{ .func = ziglua.wrap(l_fixed_x),                            .name = "fixed_x" },
-    .{ .func = ziglua.wrap(l_fixed_y),                            .name = "fixed_y" },
-    .{ .func = ziglua.wrap(l_grid_cell),                          .name = "grid_cell" },
-    .{ .func = ziglua.wrap(l_grid_cell_abs),                      .name = "grid_cell_abs" },
-    .{ .func = ziglua.wrap(l_split),                              .name = "split" },
-    .{ .func = ziglua.wrap(l_get_all_windows),                    .name = "get_all_windows" },
-    .{ .func = ziglua.wrap(l_screen_width),                       .name = "screen_width" },
-    .{ .func = ziglua.wrap(l_screen_height),                      .name = "screen_height" },
-    .{ .func = ziglua.wrap(l_clear_constraints),                  .name = "clear_constraints" },
-    .{ .func = ziglua.wrap(l_set_node_empty),                     .name = "set_node_empty" },
-    .{ .func = ziglua.wrap(l_set_node_window),                    .name = "set_node_window" },
-    .{ .func = ziglua.wrap(l_get_node_type),                      .name = "get_node_type" },
-    .{ .func = ziglua.wrap(l_move_window_to_node),                .name = "move_window_to_node" },
-    .{ .func = ziglua.wrap(l_set_resize_modifier),                .name = "set_resize_modifier" },
-    .{ .func = ziglua.wrap(l_set_float_modifier),                 .name = "set_float_modifier" },
-    .{ .func = ziglua.wrap(l_toggle_floating),                    .name = "toggle_floating" },
-    .{ .func = ziglua.wrap(l_set_node_focused_border_color),      .name = "set_node_focused_border_color" },
-    .{ .func = ziglua.wrap(l_set_node_unfocused_border_color),    .name = "set_node_unfocused_border_color" },
-    .{ .func = ziglua.wrap(l_set_default_focused_border_color),   .name = "set_default_focused_border_color" },
+    .{ .func = ziglua.wrap(l_set_preview_colors_workspace), .name = "set_preview_colors_workspace" },
+    .{ .func = ziglua.wrap(l_bind), .name = "bind" },
+    .{ .func = ziglua.wrap(l_spawn), .name = "spawn" },
+    .{ .func = ziglua.wrap(l_setenv), .name = "setenv" },
+    .{ .func = ziglua.wrap(l_exec_once), .name = "exec_once" },
+    .{ .func = ziglua.wrap(l_set_arranger), .name = "set_arranger" },
+    .{ .func = ziglua.wrap(l_set_default_arranger), .name = "set_default_arranger" },
+    .{ .func = ziglua.wrap(l_register_arranger), .name = "register_arranger" },
+    .{ .func = ziglua.wrap(l_focus_left), .name = "focus_left" },
+    .{ .func = ziglua.wrap(l_focus_right), .name = "focus_right" },
+    .{ .func = ziglua.wrap(l_focus_up), .name = "focus_up" },
+    .{ .func = ziglua.wrap(l_focus_down), .name = "focus_down" },
+    .{ .func = ziglua.wrap(l_focus), .name = "focus" },
+    .{ .func = ziglua.wrap(l_exchange_left), .name = "exchange_left" },
+    .{ .func = ziglua.wrap(l_exchange_right), .name = "exchange_right" },
+    .{ .func = ziglua.wrap(l_exchange_up), .name = "exchange_up" },
+    .{ .func = ziglua.wrap(l_exchange_down), .name = "exchange_down" },
+    .{ .func = ziglua.wrap(l_get_focused), .name = "get_focused" },
+    .{ .func = ziglua.wrap(l_remove_node), .name = "remove_node" },
+    .{ .func = ziglua.wrap(l_kill_client), .name = "kill_client" },
+    .{ .func = ziglua.wrap(l_get_node_info), .name = "get_node_info" },
+    .{ .func = ziglua.wrap(l_resize_edge), .name = "resize_edge" },
+    .{ .func = ziglua.wrap(l_resize_corner), .name = "resize_corner" },
+    .{ .func = ziglua.wrap(l_resize_focused_edge), .name = "resize_focused_edge" },
+    .{ .func = ziglua.wrap(l_resize_focused_corner), .name = "resize_focused_corner" },
+    .{ .func = ziglua.wrap(l_create_root_node), .name = "create_root_node" },
+    .{ .func = ziglua.wrap(l_left_of), .name = "left_of" },
+    .{ .func = ziglua.wrap(l_right_of), .name = "right_of" },
+    .{ .func = ziglua.wrap(l_above), .name = "above" },
+    .{ .func = ziglua.wrap(l_below), .name = "below" },
+    .{ .func = ziglua.wrap(l_align_left), .name = "align_left" },
+    .{ .func = ziglua.wrap(l_align_top), .name = "align_top" },
+    .{ .func = ziglua.wrap(l_align_right), .name = "align_right" },
+    .{ .func = ziglua.wrap(l_align_bottom), .name = "align_bottom" },
+    .{ .func = ziglua.wrap(l_equal_width), .name = "equal_width" },
+    .{ .func = ziglua.wrap(l_equal_height), .name = "equal_height" },
+    .{ .func = ziglua.wrap(l_fixed_ratio), .name = "fixed_ratio" },
+    .{ .func = ziglua.wrap(l_fixed_width), .name = "fixed_width" },
+    .{ .func = ziglua.wrap(l_fixed_height), .name = "fixed_height" },
+    .{ .func = ziglua.wrap(l_fixed_x), .name = "fixed_x" },
+    .{ .func = ziglua.wrap(l_fixed_y), .name = "fixed_y" },
+    .{ .func = ziglua.wrap(l_grid_cell), .name = "grid_cell" },
+    .{ .func = ziglua.wrap(l_grid_cell_abs), .name = "grid_cell_abs" },
+    .{ .func = ziglua.wrap(l_split), .name = "split" },
+    .{ .func = ziglua.wrap(l_get_all_windows), .name = "get_all_windows" },
+    .{ .func = ziglua.wrap(l_screen_width), .name = "screen_width" },
+    .{ .func = ziglua.wrap(l_screen_height), .name = "screen_height" },
+    .{ .func = ziglua.wrap(l_clear_constraints), .name = "clear_constraints" },
+    .{ .func = ziglua.wrap(l_set_node_empty), .name = "set_node_empty" },
+    .{ .func = ziglua.wrap(l_set_node_window), .name = "set_node_window" },
+    .{ .func = ziglua.wrap(l_get_node_type), .name = "get_node_type" },
+    .{ .func = ziglua.wrap(l_move_window_to_node), .name = "move_window_to_node" },
+    .{ .func = ziglua.wrap(l_set_resize_modifier), .name = "set_resize_modifier" },
+    .{ .func = ziglua.wrap(l_set_float_modifier), .name = "set_float_modifier" },
+    .{ .func = ziglua.wrap(l_toggle_floating), .name = "toggle_floating" },
+    .{ .func = ziglua.wrap(l_set_node_focused_border_color), .name = "set_node_focused_border_color" },
+    .{ .func = ziglua.wrap(l_set_node_unfocused_border_color), .name = "set_node_unfocused_border_color" },
+    .{ .func = ziglua.wrap(l_set_default_focused_border_color), .name = "set_default_focused_border_color" },
     .{ .func = ziglua.wrap(l_set_default_unfocused_border_color), .name = "set_default_unfocused_border_color" },
-    .{ .func = ziglua.wrap(l_set_preview_colors),                 .name = "set_preview_colors" },
-    .{ .func = ziglua.wrap(l_get_node_geometry),                  .name = "get_node_geometry" },
-    .{ .func = ziglua.wrap(l_set_border_width),                   .name = "set_border_width" },
-    .{ .func = ziglua.wrap(l_create_nested_workspace),            .name = "create_nested_workspace" },
-    .{ .func = ziglua.wrap(l_enter_nested),                       .name = "enter_nested" },
-    .{ .func = ziglua.wrap(l_leave_nested),                       .name = "leave_nested" },
-    .{ .func = ziglua.wrap(l_enter_nested_by_id),                 .name = "enter_nested_by_id" },
-    .{ .func = ziglua.wrap(l_get_workspace),                      .name = "get_workspace" },
-    .{ .func = ziglua.wrap(l_create_empty_node),                  .name = "create_empty_node" },
-    .{ .func = ziglua.wrap(l_get_workspaces_at_level),            .name = "get_workspaces_at_level" },
-    .{ .func = ziglua.wrap(l_enter_workspace_by_id),              .name = "enter_workspace_by_id" },
-    .{ .func = ziglua.wrap(l_switch_to_workspace),                .name = "switch_to_workspace" },
-    .{ .func = ziglua.wrap(l_send_to_workspace),                  .name = "send_to_workspace" },
-    .{ .func = ziglua.wrap(l_create_container),                   .name = "create_container" },
-    .{ .func = ziglua.wrap(l_destroy_container),                  .name = "destroy_container" },
-    .{ .func = ziglua.wrap(l_reparent),                           .name = "reparent" },
-    .{ .func = ziglua.wrap(l_get_container_of),                   .name = "get_container_of" },
-    .{ .func = ziglua.wrap(l_set_reparent_strategy),              .name = "set_reparent_strategy" },
-    .{ .func = ziglua.wrap(l_unregister_node),                    .name = "unregister_node" },
-    .{ .func = ziglua.wrap(l_get_cursor_pos),                     .name = "get_cursor_pos" },
-    .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused),     .name = "get_cursor_relative_to_focused" },
-    .{ .func = ziglua.wrap(l_warp_cursor),                        .name = "warp_cursor" },
-    .{ .func = ziglua.wrap(l_warp_cursor_to_node),                .name = "warp_cursor_to_node" },
-    .{ .func = ziglua.wrap(l_get_mouse_node),                     .name = "get_mouse_node" },
-    .{ .func = ziglua.wrap(l_set_focus_follows_mouse),            .name = "set_focus_follows_mouse" },
-    .{ .func = ziglua.wrap(l_set_float_move_button),              .name = "set_float_move_button" },
-    .{ .func = ziglua.wrap(l_set_float_resize_button),            .name = "set_float_resize_button" },
-    .{ .func = ziglua.wrap(l_set_gaps),                           .name = "set_gaps" },
-    .{ .func = ziglua.wrap(l_set_gaps_workspace),                 .name = "set_gaps_workspace" },
-    .{ .func = ziglua.wrap(l_quit),                               .name = "quit" },
-    .{ .func = ziglua.wrap(l_get_window_class),                   .name = "get_window_class" },
-    .{ .func = ziglua.wrap(l_get_window_name),                    .name = "get_window_name" },
-    .{ .func = ziglua.wrap(l_set_floating),                       .name = "set_floating" },
-    .{ .func = ziglua.wrap(l_set_fullscreen),                     .name = "set_fullscreen" },
-    .{ .func = ziglua.wrap(l_toggle_fullscreen),                  .name = "toggle_fullscreen" },
-    .{ .func = ziglua.wrap(l_reload_config),                      .name = "reload_config" },
-    .{ .func = ziglua.wrap(l_reload_visuals),                     .name = "reload_visuals" },
-    .{ .func = ziglua.wrap(l_get_window_pid),                     .name = "get_window_pid" },
-    .{ .func = ziglua.wrap(l_get_urgent),                         .name = "get_urgent" },
-    .{ .func = ziglua.wrap(l_set_urgent),                         .name = "set_urgent" },
-    .{ .func = ziglua.wrap(l_set_default_urgent_border_color),    .name = "set_default_urgent_border_color" },
-    .{ .func = ziglua.wrap(l_set_click_to_focus),                 .name = "set_click_to_focus" },
-    .{ .func = ziglua.wrap(l_hide_window),                        .name = "hide_window" },
-    .{ .func = ziglua.wrap(l_show_window),                        .name = "show_window" },
-    .{ .func = ziglua.wrap(l_set_pan),                            .name = "set_pan" },
-    .{ .func = ziglua.wrap(l_get_pan),                            .name = "get_pan" },
-    .{ .func = ziglua.wrap(l_pan_by),                             .name = "pan_by" },
-    .{ .func = ziglua.wrap(l_set_virtual_size),                   .name = "set_virtual_size" },
-    .{ .func = ziglua.wrap(l_get_work_area),                      .name = "get_work_area" },
-    .{ .func = ziglua.wrap(l_set_lock_horizontal_resize),         .name = "set_lock_horizontal_resize" },
-    .{ .func = ziglua.wrap(l_set_lock_vertical_resize),           .name = "set_lock_vertical_resize" },
-    .{ .func = ziglua.wrap(l_remove_constraint),                  .name = "remove_constraint" },
-    .{ .func = ziglua.wrap(l_set_pan_modifier),                   .name = "set_pan_modifier" },
-    .{ .func = ziglua.wrap(l_set_pan_button),                     .name = "set_pan_button" },
-    .{ .func = ziglua.wrap(l_get_arranger_index),                 .name = "get_arranger_index" },
-    .{ .func = ziglua.wrap(l_set_arranger_index),                 .name = "set_arranger_index" },
-    .{ .func = ziglua.wrap(l_get_current_workspace),              .name = "get_current_workspace" },
-    .{ .func = ziglua.wrap(l_set_workspace_switch_mode),          .name = "set_workspace_switch_mode" },
-    .{ .func = ziglua.wrap(l_get_arranger_name),                  .name = "get_arranger_name" },
-    .{ .func = ziglua.wrap(l_set_pan_disabled),                   .name = "set_pan_disabled" },
-    .{ .func = ziglua.wrap(l_set_cursor_theme),                   .name = "set_cursor_theme" },
-    .{ .func = ziglua.wrap(l_get_current_level),                  .name = "get_current_level" },
-    .{ .func = ziglua.wrap(l_get_node_level),                     .name = "get_node_level" },
-    .{ .func = ziglua.wrap(l_add_rule),                           .name = "add_rule" },
-    .{ .func = ziglua.wrap(l_remove_rule),                        .name = "remove_rule" },
-    .{ .func = ziglua.wrap(l_print_graph),                        .name = "print_graph" },
-    .{ .func = ziglua.wrap(l_get_workspace_positions),            .name = "get_workspace_positions" },
-    .{ .func = ziglua.wrap(l_get_current_workspace_position),     .name = "get_current_workspace_position" },
-    .{ .func = ziglua.wrap(l_get_split_ratios),                   .name = "get_split_ratios" },
-    .{ .func = ziglua.wrap(l_get_layout),                         .name = "get_layout" },
-    .{ .func = ziglua.wrap(l_set_layout),                         .name = "set_layout" },
-    .{ .func = ziglua.wrap(l_set_node_border_side_color),         .name = "set_node_border_side_color" },
-    .{ .func = ziglua.wrap(l_clear_node_border_side_colors),      .name = "clear_node_border_side_colors" },
-    .{ .func = ziglua.wrap(l_set_border_side_colors_focused_only),.name = "set_border_side_colors_focused_only" },
-    .{ .func = ziglua.wrap(l_get_node_border_side_colors),        .name = "get_node_border_side_colors" },
-    .{ .func = ziglua.wrap(l_float_left_of),                      .name = "float_left_of"  },
-    .{ .func = ziglua.wrap(l_float_right_of),                     .name = "float_right_of" },
-    .{ .func = ziglua.wrap(l_float_above),                        .name = "float_above"    },
-    .{ .func = ziglua.wrap(l_float_below),                        .name = "float_below"    },
-    .{ .func = ziglua.wrap(l_float_equal_width),                  .name = "float_equal_width"       },
-    .{ .func = ziglua.wrap(l_float_equal_height),                 .name = "float_equal_height"      },
-    .{ .func = ziglua.wrap(l_float_align_left),                   .name = "float_align_left"        },
-    .{ .func = ziglua.wrap(l_float_align_top),                    .name = "float_align_top"         },
-    .{ .func = ziglua.wrap(l_float_align_right),                  .name = "float_align_right"       },
-    .{ .func = ziglua.wrap(l_float_align_bottom),                 .name = "float_align_bottom"      },
-    .{ .func = ziglua.wrap(l_float_clear_constraints),            .name = "float_clear_constraints" },
-    .{ .func = ziglua.wrap(l_clear_node_focused_border_color),    .name = "clear_node_focused_border_color"   },
-    .{ .func = ziglua.wrap(l_clear_node_unfocused_border_color),  .name = "clear_node_unfocused_border_color" },
-    .{ .func = ziglua.wrap(l_register_swallow),                   .name = "register_swallow"   },
-    .{ .func = ziglua.wrap(l_unregister_swallow),                 .name = "unregister_swallow" },
-    .{ .func = ziglua.wrap(l_reload_persistent),                  .name = "reload_persistent" },
-    .{ .func = ziglua.wrap(l_get_workspace_states),               .name = "get_workspace_states" },
-    .{ .func = ziglua.wrap(l_cleanup_left_behind),                .name = "cleanup_left_behind" },
-    .{ .func = ziglua.wrap(l_set_preview_font),                   .name = "set_preview_font" },
-    .{ .func = ziglua.wrap(l_set_preview_font_workspace),         .name = "set_preview_font_workspace" },
-    .{ .func = ziglua.wrap(l_set_preview_max_icon_size),          .name = "set_preview_max_icon_size" },
-    .{ .func = ziglua.wrap(l_set_autoclean),                      .name = "set_autoclean" },
-    .{ .func = ziglua.wrap(l_scratchpad_toggle),                  .name = "scratchpad_toggle" },
-    .{ .func = ziglua.wrap(l_scratchpad_show),                    .name = "scratchpad_show" },
-    .{ .func = ziglua.wrap(l_scratchpad_hide),                    .name = "scratchpad_hide" },
+    .{ .func = ziglua.wrap(l_set_preview_colors), .name = "set_preview_colors" },
+    .{ .func = ziglua.wrap(l_get_node_geometry), .name = "get_node_geometry" },
+    .{ .func = ziglua.wrap(l_set_border_width), .name = "set_border_width" },
+    .{ .func = ziglua.wrap(l_create_nested_workspace), .name = "create_nested_workspace" },
+    .{ .func = ziglua.wrap(l_enter_nested), .name = "enter_nested" },
+    .{ .func = ziglua.wrap(l_leave_nested), .name = "leave_nested" },
+    .{ .func = ziglua.wrap(l_enter_nested_by_id), .name = "enter_nested_by_id" },
+    .{ .func = ziglua.wrap(l_get_workspace), .name = "get_workspace" },
+    .{ .func = ziglua.wrap(l_create_empty_node), .name = "create_empty_node" },
+    .{ .func = ziglua.wrap(l_get_workspaces_at_level), .name = "get_workspaces_at_level" },
+    .{ .func = ziglua.wrap(l_enter_workspace_by_id), .name = "enter_workspace_by_id" },
+    .{ .func = ziglua.wrap(l_switch_to_workspace), .name = "switch_to_workspace" },
+    .{ .func = ziglua.wrap(l_send_to_workspace), .name = "send_to_workspace" },
+    .{ .func = ziglua.wrap(l_create_container), .name = "create_container" },
+    .{ .func = ziglua.wrap(l_destroy_container), .name = "destroy_container" },
+    .{ .func = ziglua.wrap(l_reparent), .name = "reparent" },
+    .{ .func = ziglua.wrap(l_get_container_of), .name = "get_container_of" },
+    .{ .func = ziglua.wrap(l_set_reparent_strategy), .name = "set_reparent_strategy" },
+    .{ .func = ziglua.wrap(l_unregister_node), .name = "unregister_node" },
+    .{ .func = ziglua.wrap(l_get_cursor_pos), .name = "get_cursor_pos" },
+    .{ .func = ziglua.wrap(l_get_cursor_relative_to_focused), .name = "get_cursor_relative_to_focused" },
+    .{ .func = ziglua.wrap(l_warp_cursor), .name = "warp_cursor" },
+    .{ .func = ziglua.wrap(l_warp_cursor_to_node), .name = "warp_cursor_to_node" },
+    .{ .func = ziglua.wrap(l_get_mouse_node), .name = "get_mouse_node" },
+    .{ .func = ziglua.wrap(l_set_focus_follows_mouse), .name = "set_focus_follows_mouse" },
+    .{ .func = ziglua.wrap(l_set_float_move_button), .name = "set_float_move_button" },
+    .{ .func = ziglua.wrap(l_set_float_resize_button), .name = "set_float_resize_button" },
+    .{ .func = ziglua.wrap(l_set_gaps), .name = "set_gaps" },
+    .{ .func = ziglua.wrap(l_set_gaps_workspace), .name = "set_gaps_workspace" },
+    .{ .func = ziglua.wrap(l_quit), .name = "quit" },
+    .{ .func = ziglua.wrap(l_get_window_class), .name = "get_window_class" },
+    .{ .func = ziglua.wrap(l_get_window_name), .name = "get_window_name" },
+    .{ .func = ziglua.wrap(l_set_floating), .name = "set_floating" },
+    .{ .func = ziglua.wrap(l_set_fullscreen), .name = "set_fullscreen" },
+    .{ .func = ziglua.wrap(l_toggle_fullscreen), .name = "toggle_fullscreen" },
+    .{ .func = ziglua.wrap(l_reload_config), .name = "reload_config" },
+    .{ .func = ziglua.wrap(l_reload_visuals), .name = "reload_visuals" },
+    .{ .func = ziglua.wrap(l_get_window_pid), .name = "get_window_pid" },
+    .{ .func = ziglua.wrap(l_get_urgent), .name = "get_urgent" },
+    .{ .func = ziglua.wrap(l_set_urgent), .name = "set_urgent" },
+    .{ .func = ziglua.wrap(l_set_default_urgent_border_color), .name = "set_default_urgent_border_color" },
+    .{ .func = ziglua.wrap(l_set_click_to_focus), .name = "set_click_to_focus" },
+    .{ .func = ziglua.wrap(l_hide_window), .name = "hide_window" },
+    .{ .func = ziglua.wrap(l_show_window), .name = "show_window" },
+    .{ .func = ziglua.wrap(l_set_pan), .name = "set_pan" },
+    .{ .func = ziglua.wrap(l_get_pan), .name = "get_pan" },
+    .{ .func = ziglua.wrap(l_pan_by), .name = "pan_by" },
+    .{ .func = ziglua.wrap(l_set_virtual_size), .name = "set_virtual_size" },
+    .{ .func = ziglua.wrap(l_get_work_area), .name = "get_work_area" },
+    .{ .func = ziglua.wrap(l_set_lock_horizontal_resize), .name = "set_lock_horizontal_resize" },
+    .{ .func = ziglua.wrap(l_set_lock_vertical_resize), .name = "set_lock_vertical_resize" },
+    .{ .func = ziglua.wrap(l_remove_constraint), .name = "remove_constraint" },
+    .{ .func = ziglua.wrap(l_set_pan_modifier), .name = "set_pan_modifier" },
+    .{ .func = ziglua.wrap(l_set_pan_button), .name = "set_pan_button" },
+    .{ .func = ziglua.wrap(l_get_arranger_index), .name = "get_arranger_index" },
+    .{ .func = ziglua.wrap(l_set_arranger_index), .name = "set_arranger_index" },
+    .{ .func = ziglua.wrap(l_get_current_workspace), .name = "get_current_workspace" },
+    .{ .func = ziglua.wrap(l_set_workspace_switch_mode), .name = "set_workspace_switch_mode" },
+    .{ .func = ziglua.wrap(l_get_arranger_name), .name = "get_arranger_name" },
+    .{ .func = ziglua.wrap(l_set_pan_disabled), .name = "set_pan_disabled" },
+    .{ .func = ziglua.wrap(l_set_cursor_theme), .name = "set_cursor_theme" },
+    .{ .func = ziglua.wrap(l_get_current_level), .name = "get_current_level" },
+    .{ .func = ziglua.wrap(l_get_node_level), .name = "get_node_level" },
+    .{ .func = ziglua.wrap(l_add_rule), .name = "add_rule" },
+    .{ .func = ziglua.wrap(l_remove_rule), .name = "remove_rule" },
+    .{ .func = ziglua.wrap(l_print_graph), .name = "print_graph" },
+    .{ .func = ziglua.wrap(l_get_workspace_positions), .name = "get_workspace_positions" },
+    .{ .func = ziglua.wrap(l_get_current_workspace_position), .name = "get_current_workspace_position" },
+    .{ .func = ziglua.wrap(l_get_split_ratios), .name = "get_split_ratios" },
+    .{ .func = ziglua.wrap(l_get_layout), .name = "get_layout" },
+    .{ .func = ziglua.wrap(l_set_layout), .name = "set_layout" },
+    .{ .func = ziglua.wrap(l_set_node_border_side_color), .name = "set_node_border_side_color" },
+    .{ .func = ziglua.wrap(l_clear_node_border_side_colors), .name = "clear_node_border_side_colors" },
+    .{ .func = ziglua.wrap(l_set_border_side_colors_focused_only), .name = "set_border_side_colors_focused_only" },
+    .{ .func = ziglua.wrap(l_get_node_border_side_colors), .name = "get_node_border_side_colors" },
+    .{ .func = ziglua.wrap(l_float_left_of), .name = "float_left_of" },
+    .{ .func = ziglua.wrap(l_float_right_of), .name = "float_right_of" },
+    .{ .func = ziglua.wrap(l_float_above), .name = "float_above" },
+    .{ .func = ziglua.wrap(l_float_below), .name = "float_below" },
+    .{ .func = ziglua.wrap(l_float_equal_width), .name = "float_equal_width" },
+    .{ .func = ziglua.wrap(l_float_equal_height), .name = "float_equal_height" },
+    .{ .func = ziglua.wrap(l_float_align_left), .name = "float_align_left" },
+    .{ .func = ziglua.wrap(l_float_align_top), .name = "float_align_top" },
+    .{ .func = ziglua.wrap(l_float_align_right), .name = "float_align_right" },
+    .{ .func = ziglua.wrap(l_float_align_bottom), .name = "float_align_bottom" },
+    .{ .func = ziglua.wrap(l_float_clear_constraints), .name = "float_clear_constraints" },
+    .{ .func = ziglua.wrap(l_clear_node_focused_border_color), .name = "clear_node_focused_border_color" },
+    .{ .func = ziglua.wrap(l_clear_node_unfocused_border_color), .name = "clear_node_unfocused_border_color" },
+    .{ .func = ziglua.wrap(l_register_swallow), .name = "register_swallow" },
+    .{ .func = ziglua.wrap(l_unregister_swallow), .name = "unregister_swallow" },
+    .{ .func = ziglua.wrap(l_reload_persistent), .name = "reload_persistent" },
+    .{ .func = ziglua.wrap(l_get_workspace_states), .name = "get_workspace_states" },
+    .{ .func = ziglua.wrap(l_cleanup_left_behind), .name = "cleanup_left_behind" },
+    .{ .func = ziglua.wrap(l_set_preview_font), .name = "set_preview_font" },
+    .{ .func = ziglua.wrap(l_set_preview_font_workspace), .name = "set_preview_font_workspace" },
+    .{ .func = ziglua.wrap(l_set_preview_max_icon_size), .name = "set_preview_max_icon_size" },
+    .{ .func = ziglua.wrap(l_set_autoclean), .name = "set_autoclean" },
+    .{ .func = ziglua.wrap(l_scratchpad_toggle), .name = "scratchpad_toggle" },
+    .{ .func = ziglua.wrap(l_scratchpad_show), .name = "scratchpad_show" },
+    .{ .func = ziglua.wrap(l_scratchpad_hide), .name = "scratchpad_hide" },
+    .{ .func = ziglua.wrap(l_set_argb_frames), .name = "set_argb_frames" },
+    .{ .func = ziglua.wrap(l_force_rgb_frames), .name = "force_rgb_frames" },
 };
 
 fn l_scratchpad_toggle(lua: *Lua) i32 {
@@ -507,6 +511,22 @@ fn l_scratchpad_show(lua: *Lua) i32 {
 fn l_scratchpad_hide(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
     global_wm.hide_scratchpad(id) catch {};
+    return 0;
+}
+
+fn l_set_argb_frames(lua: *Lua) i32 {
+    global_wm.argb_frames = lua.toBoolean(1);
+    return 0;
+}
+
+fn l_force_rgb_frames(lua: *Lua) i32 {
+    const name = lua.checkString(1);
+    const owned = global_wm.allocator.dupe(u8, name) catch
+        return luaL_error_str(lua, "force_rgb_frames: out of memory");
+    global_wm.rgb_frame_classes.append(global_wm.allocator, owned) catch {
+        global_wm.allocator.free(owned);
+        return luaL_error_str(lua, "force_rgb_frames: out of memory");
+    };
     return 0;
 }
 
@@ -550,13 +570,14 @@ fn l_get_workspace_states(lua: *Lua) i32 {
         var has_content = false;
         for (sub.nodes.items) |n| {
             switch (n.content) {
-                .window, .workspace => { has_content = true; break; },
+                .window, .workspace => {
+                    has_content = true;
+                    break;
+                },
                 else => {},
             }
         }
-        const state: [:0]const u8 = if (is_current) "focused"
-            else if (has_content) "active"
-            else "inactive";
+        const state: [:0]const u8 = if (is_current) "focused" else if (has_content) "active" else "inactive";
 
         lua.newTable();
         lua.pushInteger(@intCast(i + 1));
@@ -574,9 +595,9 @@ fn l_reload_persistent(lua: *Lua) i32 {
 }
 
 fn l_register_swallow(lua: *Lua) i32 {
-    const term  = lua.checkString(1);
+    const term = lua.checkString(1);
     const child = lua.checkString(2);
-    const term_owned  = global_wm.allocator.dupe(u8, term) catch
+    const term_owned = global_wm.allocator.dupe(u8, term) catch
         return luaL_error_str(lua, "register_swallow: out of memory");
     const child_owned = global_wm.allocator.dupe(u8, child) catch {
         global_wm.allocator.free(term_owned);
@@ -584,7 +605,7 @@ fn l_register_swallow(lua: *Lua) i32 {
     };
     global_wm.swallow_pairs.append(global_wm.allocator, .{
         .terminal = term_owned,
-        .child    = child_owned,
+        .child = child_owned,
     }) catch {
         global_wm.allocator.free(term_owned);
         global_wm.allocator.free(child_owned);
@@ -594,7 +615,7 @@ fn l_register_swallow(lua: *Lua) i32 {
 }
 
 fn l_unregister_swallow(lua: *Lua) i32 {
-    const term  = lua.checkString(1);
+    const term = lua.checkString(1);
     const child = lua.checkString(2);
     var i: usize = 0;
     while (i < global_wm.swallow_pairs.items.len) {
@@ -766,22 +787,31 @@ fn l_get_node_border_side_colors(lua: *Lua) i32 {
         return 1;
     };
     lua.newTable();
-    if (node.border_color_top) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "top"); }
-    if (node.border_color_bottom) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "bottom"); }
-    if (node.border_color_left) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "left"); }
-    if (node.border_color_right) |color| { lua.pushInteger(@intCast(color)); lua.setField(-2, "right"); }
+    if (node.border_color_top) |color| {
+        lua.pushInteger(@intCast(color));
+        lua.setField(-2, "top");
+    }
+    if (node.border_color_bottom) |color| {
+        lua.pushInteger(@intCast(color));
+        lua.setField(-2, "bottom");
+    }
+    if (node.border_color_left) |color| {
+        lua.pushInteger(@intCast(color));
+        lua.setField(-2, "left");
+    }
+    if (node.border_color_right) |color| {
+        lua.pushInteger(@intCast(color));
+        lua.setField(-2, "right");
+    }
     return 1;
 }
 
 fn l_set_node_border_side_color(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node id");
-    const side       = lua.checkString(2);
+    const side = lua.checkString(2);
     const color = check_color(lua, 3) orelse return luaL_error_str(lua, "invalid color");
     const node = global_wm.get_node_by_id(id) orelse return 0;
-    if (std.mem.eql(u8, side, "top"))         node.border_color_top    = color
-    else if (std.mem.eql(u8, side, "bottom")) node.border_color_bottom = color
-    else if (std.mem.eql(u8, side, "left"))   node.border_color_left   = color
-    else if (std.mem.eql(u8, side, "right"))  node.border_color_right  = color;
+    if (std.mem.eql(u8, side, "top")) node.border_color_top = color else if (std.mem.eql(u8, side, "bottom")) node.border_color_bottom = color else if (std.mem.eql(u8, side, "left")) node.border_color_left = color else if (std.mem.eql(u8, side, "right")) node.border_color_right = color;
     repaint_node(global_wm, node);
     return 0;
 }
@@ -789,10 +819,10 @@ fn l_set_node_border_side_color(lua: *Lua) i32 {
 fn l_clear_node_border_side_colors(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node id");
     const node = global_wm.get_node_by_id(id) orelse return 0;
-    node.border_color_top    = null;
+    node.border_color_top = null;
     node.border_color_bottom = null;
-    node.border_color_left   = null;
-    node.border_color_right  = null;
+    node.border_color_left = null;
+    node.border_color_right = null;
     repaint_node(global_wm, node);
     return 0;
 }
@@ -880,44 +910,82 @@ fn l_set_layout(lua: *Lua) i32 {
                     lua.pop(1);
                     g.add_constraint(node, .{ .fixed_ratio = v }) catch {};
                 } else if (std.mem.eql(u8, con_type, "grid_cell")) {
-                    _ = lua.getField(-1, "col");  const col:  u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    _ = lua.getField(-1, "row");  const row:  u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    _ = lua.getField(-1, "cols"); const cols: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    _ = lua.getField(-1, "rows"); const rows: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "col");
+                    const col: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    _ = lua.getField(-1, "row");
+                    const row: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    _ = lua.getField(-1, "cols");
+                    const cols: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    _ = lua.getField(-1, "rows");
+                    const rows: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
                     _ = lua.getField(-1, "container");
-                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    const cont = global_wm.get_node_by_id(cont_id) orelse { lua.pop(1); continue; };
+                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    const cont = global_wm.get_node_by_id(cont_id) orelse {
+                        lua.pop(1);
+                        continue;
+                    };
                     g.add_constraint(node, .{ .grid_cell = .{
-                        .col = col, .row = row, .cols = cols, .rows = rows, .container = cont,
-                    }}) catch {};
+                        .col = col,
+                        .row = row,
+                        .cols = cols,
+                        .rows = rows,
+                        .container = cont,
+                    } }) catch {};
                 } else if (std.mem.eql(u8, con_type, "grid_cell_abs")) {
-                    _ = lua.getField(-1, "x"); const x: i32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    _ = lua.getField(-1, "y"); const y: i32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    _ = lua.getField(-1, "w"); const w: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    _ = lua.getField(-1, "h"); const h: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    _ = lua.getField(-1, "x");
+                    const x: i32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    _ = lua.getField(-1, "y");
+                    const y: i32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    _ = lua.getField(-1, "w");
+                    const w: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    _ = lua.getField(-1, "h");
+                    const h: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
                     _ = lua.getField(-1, "container");
-                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    const cont = global_wm.get_node_by_id(cont_id) orelse { lua.pop(1); continue; };
+                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    const cont = global_wm.get_node_by_id(cont_id) orelse {
+                        lua.pop(1);
+                        continue;
+                    };
                     g.add_constraint(node, .{ .grid_cell_abs = .{
-                        .x = x, .y = y, .w = w, .h = h, .container = cont,
-                    }}) catch {};
+                        .x = x,
+                        .y = y,
+                        .w = w,
+                        .h = h,
+                        .container = cont,
+                    } }) catch {};
                 } else if (std.mem.eql(u8, con_type, "split")) {
                     _ = lua.getField(-1, "axis");
-                    const axis_str = lua.toString(-1) catch "h"; lua.pop(1);
+                    const axis_str = lua.toString(-1) catch "h";
+                    lua.pop(1);
                     const axis: graph_mod.SplitAxis = if (std.mem.eql(u8, axis_str, "h")) .horizontal else .vertical;
                     _ = lua.getField(-1, "count");
-                    const count: u8 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
+                    const count: u8 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
                     _ = lua.getField(-1, "container");
-                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0); lua.pop(1);
-                    const cont = global_wm.get_node_by_id(cont_id) orelse { lua.pop(1); continue; };
+                    const cont_id: u32 = @intCast(lua.toInteger(-1) catch 0);
+                    lua.pop(1);
+                    const cont = global_wm.get_node_by_id(cont_id) orelse {
+                        lua.pop(1);
+                        continue;
+                    };
 
                     var con = graph_mod.Constraint{ .split = .{
                         .container = cont,
-                        .axis      = axis,
-                        .count     = count,
-                        .ratios    = undefined,
-                        .children  = undefined,
-                    }};
+                        .axis = axis,
+                        .count = count,
+                        .ratios = undefined,
+                        .children = undefined,
+                    } };
 
                     _ = lua.getField(-1, "ratios");
                     for (0..count) |ri| {
@@ -940,16 +1008,27 @@ fn l_set_layout(lua: *Lua) i32 {
                     lua.pop(1);
 
                     g.add_constraint(node, con) catch {};
-                } else if (std.mem.eql(u8, con_type, "left_of"))     { apply_other(lua, g, node, .left_of);     }
-                  else if (std.mem.eql(u8, con_type, "right_of"))    { apply_other(lua, g, node, .right_of);    }
-                  else if (std.mem.eql(u8, con_type, "above"))       { apply_other(lua, g, node, .above);       }
-                  else if (std.mem.eql(u8, con_type, "below"))       { apply_other(lua, g, node, .below);       }
-                  else if (std.mem.eql(u8, con_type, "align_left"))  { apply_other(lua, g, node, .align_left);  }
-                  else if (std.mem.eql(u8, con_type, "align_top"))   { apply_other(lua, g, node, .align_top);   }
-                  else if (std.mem.eql(u8, con_type, "align_right")) { apply_other(lua, g, node, .align_right); }
-                  else if (std.mem.eql(u8, con_type, "align_bottom")){ apply_other(lua, g, node, .align_bottom);}
-                  else if (std.mem.eql(u8, con_type, "equal_width")) { apply_other(lua, g, node, .equal_width); }
-                  else if (std.mem.eql(u8, con_type, "equal_height")){ apply_other(lua, g, node, .equal_height);}
+                } else if (std.mem.eql(u8, con_type, "left_of")) {
+                    apply_other(lua, g, node, .left_of);
+                } else if (std.mem.eql(u8, con_type, "right_of")) {
+                    apply_other(lua, g, node, .right_of);
+                } else if (std.mem.eql(u8, con_type, "above")) {
+                    apply_other(lua, g, node, .above);
+                } else if (std.mem.eql(u8, con_type, "below")) {
+                    apply_other(lua, g, node, .below);
+                } else if (std.mem.eql(u8, con_type, "align_left")) {
+                    apply_other(lua, g, node, .align_left);
+                } else if (std.mem.eql(u8, con_type, "align_top")) {
+                    apply_other(lua, g, node, .align_top);
+                } else if (std.mem.eql(u8, con_type, "align_right")) {
+                    apply_other(lua, g, node, .align_right);
+                } else if (std.mem.eql(u8, con_type, "align_bottom")) {
+                    apply_other(lua, g, node, .align_bottom);
+                } else if (std.mem.eql(u8, con_type, "equal_width")) {
+                    apply_other(lua, g, node, .equal_width);
+                } else if (std.mem.eql(u8, con_type, "equal_height")) {
+                    apply_other(lua, g, node, .equal_height);
+                }
 
                 lua.pop(1); // constraint table
             }
@@ -1001,16 +1080,20 @@ fn l_get_layout(lua: *Lua) i32 {
         lua.setField(-2, "id");
 
         _ = switch (node.content) {
-            .window    => lua.pushString("window"),
-            .empty     => lua.pushString("empty"),
+            .window => lua.pushString("window"),
+            .empty => lua.pushString("empty"),
             .workspace => lua.pushString("workspace"),
         };
         lua.setField(-2, "type");
 
-        lua.pushInteger(node.x);      lua.setField(-2, "x");
-        lua.pushInteger(node.y);      lua.setField(-2, "y");
-        lua.pushInteger(node.width);  lua.setField(-2, "width");
-        lua.pushInteger(node.height); lua.setField(-2, "height");
+        lua.pushInteger(node.x);
+        lua.setField(-2, "x");
+        lua.pushInteger(node.y);
+        lua.setField(-2, "y");
+        lua.pushInteger(node.width);
+        lua.setField(-2, "width");
+        lua.pushInteger(node.height);
+        lua.setField(-2, "height");
 
         if (parent_map.get(node)) |pn| {
             if (global_wm.get_id_for_node(pn)) |pid| {
@@ -1019,12 +1102,16 @@ fn l_get_layout(lua: *Lua) i32 {
                 lua.pushInteger(@intCast(parent_idx_map.get(node) orelse 1));
                 lua.setField(-2, "parent_idx");
             } else {
-                lua.pushNil(); lua.setField(-2, "parent");
-                lua.pushNil(); lua.setField(-2, "parent_idx");
+                lua.pushNil();
+                lua.setField(-2, "parent");
+                lua.pushNil();
+                lua.setField(-2, "parent_idx");
             }
         } else {
-            lua.pushNil(); lua.setField(-2, "parent");
-            lua.pushNil(); lua.setField(-2, "parent_idx");
+            lua.pushNil();
+            lua.setField(-2, "parent");
+            lua.pushNil();
+            lua.setField(-2, "parent_idx");
         }
 
         lua.newTable();
@@ -1032,34 +1119,71 @@ fn l_get_layout(lua: *Lua) i32 {
             lua.checkStack(20) catch {};
             lua.newTable();
             switch (con) {
-                .fixed_x      => |v| { _ = lua.pushString("fixed_x");      lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
-                .fixed_y      => |v| { _ = lua.pushString("fixed_y");      lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
-                .fixed_width  => |v| { _ = lua.pushString("fixed_width");  lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
-                .fixed_height => |v| { _ = lua.pushString("fixed_height"); lua.setField(-2, "type"); lua.pushInteger(v); lua.setField(-2, "value"); },
-                .fixed_ratio  => |v| { _ = lua.pushString("fixed_ratio");  lua.setField(-2, "type"); lua.pushNumber(v);  lua.setField(-2, "value"); },
+                .fixed_x => |v| {
+                    _ = lua.pushString("fixed_x");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(v);
+                    lua.setField(-2, "value");
+                },
+                .fixed_y => |v| {
+                    _ = lua.pushString("fixed_y");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(v);
+                    lua.setField(-2, "value");
+                },
+                .fixed_width => |v| {
+                    _ = lua.pushString("fixed_width");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(v);
+                    lua.setField(-2, "value");
+                },
+                .fixed_height => |v| {
+                    _ = lua.pushString("fixed_height");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(v);
+                    lua.setField(-2, "value");
+                },
+                .fixed_ratio => |v| {
+                    _ = lua.pushString("fixed_ratio");
+                    lua.setField(-2, "type");
+                    lua.pushNumber(v);
+                    lua.setField(-2, "value");
+                },
                 .grid_cell => |gc| {
-                    _ = lua.pushString("grid_cell"); lua.setField(-2, "type");
-                    lua.pushInteger(@intCast(gc.col));  lua.setField(-2, "col");
-                    lua.pushInteger(@intCast(gc.row));  lua.setField(-2, "row");
-                    lua.pushInteger(@intCast(gc.cols)); lua.setField(-2, "cols");
-                    lua.pushInteger(@intCast(gc.rows)); lua.setField(-2, "rows");
+                    _ = lua.pushString("grid_cell");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(gc.col));
+                    lua.setField(-2, "col");
+                    lua.pushInteger(@intCast(gc.row));
+                    lua.setField(-2, "row");
+                    lua.pushInteger(@intCast(gc.cols));
+                    lua.setField(-2, "cols");
+                    lua.pushInteger(@intCast(gc.rows));
+                    lua.setField(-2, "rows");
                     lua.pushInteger(@intCast(global_wm.get_id_for_node(gc.container) orelse 0));
                     lua.setField(-2, "container");
                 },
                 .grid_cell_abs => |gc| {
-                    _ = lua.pushString("grid_cell_abs"); lua.setField(-2, "type");
-                    lua.pushInteger(gc.x); lua.setField(-2, "x");
-                    lua.pushInteger(gc.y); lua.setField(-2, "y");
-                    lua.pushInteger(gc.w); lua.setField(-2, "w");
-                    lua.pushInteger(gc.h); lua.setField(-2, "h");
+                    _ = lua.pushString("grid_cell_abs");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(gc.x);
+                    lua.setField(-2, "x");
+                    lua.pushInteger(gc.y);
+                    lua.setField(-2, "y");
+                    lua.pushInteger(gc.w);
+                    lua.setField(-2, "w");
+                    lua.pushInteger(gc.h);
+                    lua.setField(-2, "h");
                     lua.pushInteger(@intCast(global_wm.get_id_for_node(gc.container) orelse 0));
                     lua.setField(-2, "container");
                 },
                 .split => |s| {
-                    _ = lua.pushString("split"); lua.setField(-2, "type");
+                    _ = lua.pushString("split");
+                    lua.setField(-2, "type");
                     _ = lua.pushString(if (s.axis == .horizontal) "h" else "v");
                     lua.setField(-2, "axis");
-                    lua.pushInteger(@intCast(s.count)); lua.setField(-2, "count");
+                    lua.pushInteger(@intCast(s.count));
+                    lua.setField(-2, "count");
                     lua.pushInteger(@intCast(global_wm.get_id_for_node(s.container) orelse 0));
                     lua.setField(-2, "container");
                     lua.newTable();
@@ -1075,16 +1199,66 @@ fn l_get_layout(lua: *Lua) i32 {
                     }
                     lua.setField(-2, "children");
                 },
-                .left_of      => |o| { _ = lua.pushString("left_of");      lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .right_of     => |o| { _ = lua.pushString("right_of");     lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .above        => |o| { _ = lua.pushString("above");        lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .below        => |o| { _ = lua.pushString("below");        lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .align_left   => |o| { _ = lua.pushString("align_left");   lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .align_top    => |o| { _ = lua.pushString("align_top");    lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .align_right  => |o| { _ = lua.pushString("align_right");  lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .align_bottom => |o| { _ = lua.pushString("align_bottom"); lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .equal_width  => |o| { _ = lua.pushString("equal_width");  lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
-                .equal_height => |o| { _ = lua.pushString("equal_height"); lua.setField(-2, "type"); lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0)); lua.setField(-2, "other"); },
+                .left_of => |o| {
+                    _ = lua.pushString("left_of");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .right_of => |o| {
+                    _ = lua.pushString("right_of");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .above => |o| {
+                    _ = lua.pushString("above");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .below => |o| {
+                    _ = lua.pushString("below");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .align_left => |o| {
+                    _ = lua.pushString("align_left");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .align_top => |o| {
+                    _ = lua.pushString("align_top");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .align_right => |o| {
+                    _ = lua.pushString("align_right");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .align_bottom => |o| {
+                    _ = lua.pushString("align_bottom");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .equal_width => |o| {
+                    _ = lua.pushString("equal_width");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
+                .equal_height => |o| {
+                    _ = lua.pushString("equal_height");
+                    lua.setField(-2, "type");
+                    lua.pushInteger(@intCast(global_wm.get_id_for_node(o) orelse 0));
+                    lua.setField(-2, "other");
+                },
             }
             lua.setIndexRaw(-2, @intCast(ci + 1));
         }
@@ -1220,7 +1394,10 @@ fn l_get_workspace_positions(lua: *Lua) i32 {
         var has_content = false;
         for (sub.nodes.items) |n| {
             switch (n.content) {
-                .window, .workspace => { has_content = true; break; },
+                .window, .workspace => {
+                    has_content = true;
+                    break;
+                },
                 else => {},
             }
         }
@@ -1324,7 +1501,6 @@ fn l_set_preview_max_icon_size(lua: *Lua) i32 {
             global_wm.repaint_preview(node);
         }
     }
-    _ = c.XFlush(global_wm.display);
     return 0;
 }
 
@@ -1336,52 +1512,48 @@ fn l_set_preview_font(lua: *Lua) i32 {
             global_wm.repaint_preview(node);
         }
     }
-    _ = c.XFlush(global_wm.display);
     return 0;
 }
 
 fn l_set_preview_font_workspace(lua: *Lua) i32 {
-    const id   = check_node_id(lua, 1) orelse return 0;
+    const id = check_node_id(lua, 1) orelse return 0;
     const name = lua.toString(2) catch return luaL_error_str(lua, "expected font name string");
     const node = global_wm.get_node_by_id(id) orelse return 0;
     if (node.content != .workspace) return 0;
     const sub = node.content.workspace;
     sub.set_preview_font(name);
     global_wm.repaint_preview(node);
-    _ = c.XFlush(global_wm.display);
     return 0;
 }
 
 fn l_set_preview_colors(lua: *Lua) i32 {
-    const bg     = check_color(lua, 1) orelse return luaL_error_str(lua, "invalid bg color");
+    const bg = check_color(lua, 1) orelse return luaL_error_str(lua, "invalid bg color");
     const win_bg = check_color(lua, 2) orelse return luaL_error_str(lua, "invalid win_bg color");
     const border = check_color(lua, 3) orelse return luaL_error_str(lua, "invalid border color");
-    const text   = check_color(lua, 4) orelse return luaL_error_str(lua, "invalid text color");
+    const text = check_color(lua, 4) orelse return luaL_error_str(lua, "invalid text color");
     global_wm.set_preview_colors(bg, win_bg, border, text);
     for (global_wm.current_graph.nodes.items) |node| {
         if (node.content == .workspace and !node.hidden) {
             global_wm.repaint_preview(node);
         }
     }
-    _ = c.XFlush(global_wm.display);
     return 0;
 }
 
 fn l_set_preview_colors_workspace(lua: *Lua) i32 {
-    const id     = check_node_id(lua, 1) orelse return 0;
-    const bg     = check_color(lua, 2) orelse return luaL_error_str(lua, "invalid bg color");
+    const id = check_node_id(lua, 1) orelse return 0;
+    const bg = check_color(lua, 2) orelse return luaL_error_str(lua, "invalid bg color");
     const win_bg = check_color(lua, 3) orelse return luaL_error_str(lua, "invalid win_bg color");
     const border = check_color(lua, 4) orelse return luaL_error_str(lua, "invalid border color");
-    const text   = check_color(lua, 5) orelse return luaL_error_str(lua, "invalid text color");
+    const text = check_color(lua, 5) orelse return luaL_error_str(lua, "invalid text color");
     const node = global_wm.get_node_by_id(id) orelse return 0;
     if (node.content != .workspace) return 0;
     const sub = node.content.workspace;
-    sub.preview_bg     = bg;
+    sub.preview_bg = bg;
     sub.preview_win_bg = win_bg;
     sub.preview_border = border;
-    sub.preview_text   = text;
+    sub.preview_text = text;
     global_wm.repaint_preview(node);
-    _ = c.XFlush(global_wm.display);
     return 0;
 }
 
@@ -1410,24 +1582,6 @@ fn l_set_arranger_index(lua: *Lua) i32 {
     return 0;
 }
 
-fn l_set_pan_modifier(lua: *Lua) i32 {
-    const mod: c_uint = @intCast(lua.checkInteger(1));
-    global_wm.pan_modifier = mod;
-    const locks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
-    for (locks) |lock| {
-        _ = c.XGrabButton(@ptrCast(global_wm.display), global_wm.pan_button, mod | lock,
-            global_wm.root, 1,
-            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
-            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
-    }
-    return 0;
-}
-
-fn l_set_pan_button(lua: *Lua) i32 {
-    global_wm.pan_button = @intCast(lua.checkInteger(1));
-    return 0;
-}
-
 fn l_remove_constraint(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
     const type_str = lua.checkString(2);
@@ -1436,21 +1590,21 @@ fn l_remove_constraint(lua: *Lua) i32 {
     while (i < node.constraints.items.len) {
         const con = node.constraints.items[i];
         const matches = blk: {
-            if (std.mem.eql(u8, type_str, "fixed_x"))      break :blk con == .fixed_x;
-            if (std.mem.eql(u8, type_str, "fixed_y"))      break :blk con == .fixed_y;
-            if (std.mem.eql(u8, type_str, "fixed_width"))  break :blk con == .fixed_width;
+            if (std.mem.eql(u8, type_str, "fixed_x")) break :blk con == .fixed_x;
+            if (std.mem.eql(u8, type_str, "fixed_y")) break :blk con == .fixed_y;
+            if (std.mem.eql(u8, type_str, "fixed_width")) break :blk con == .fixed_width;
             if (std.mem.eql(u8, type_str, "fixed_height")) break :blk con == .fixed_height;
-            if (std.mem.eql(u8, type_str, "left_of"))      break :blk con == .left_of;
-            if (std.mem.eql(u8, type_str, "right_of"))     break :blk con == .right_of;
-            if (std.mem.eql(u8, type_str, "above"))        break :blk con == .above;
-            if (std.mem.eql(u8, type_str, "below"))        break :blk con == .below;
-            if (std.mem.eql(u8, type_str, "grid_cell"))    break :blk con == .grid_cell;
-            if (std.mem.eql(u8, type_str, "split"))        break :blk con == .split;
-            if (std.mem.eql(u8, type_str, "align_left"))   break :blk con == .align_left;
-            if (std.mem.eql(u8, type_str, "align_right"))  break :blk con == .align_right;
-            if (std.mem.eql(u8, type_str, "align_top"))    break :blk con == .align_top;
+            if (std.mem.eql(u8, type_str, "left_of")) break :blk con == .left_of;
+            if (std.mem.eql(u8, type_str, "right_of")) break :blk con == .right_of;
+            if (std.mem.eql(u8, type_str, "above")) break :blk con == .above;
+            if (std.mem.eql(u8, type_str, "below")) break :blk con == .below;
+            if (std.mem.eql(u8, type_str, "grid_cell")) break :blk con == .grid_cell;
+            if (std.mem.eql(u8, type_str, "split")) break :blk con == .split;
+            if (std.mem.eql(u8, type_str, "align_left")) break :blk con == .align_left;
+            if (std.mem.eql(u8, type_str, "align_right")) break :blk con == .align_right;
+            if (std.mem.eql(u8, type_str, "align_top")) break :blk con == .align_top;
             if (std.mem.eql(u8, type_str, "align_bottom")) break :blk con == .align_bottom;
-            if (std.mem.eql(u8, type_str, "equal_width"))  break :blk con == .equal_width;
+            if (std.mem.eql(u8, type_str, "equal_width")) break :blk con == .equal_width;
             if (std.mem.eql(u8, type_str, "equal_height")) break :blk con == .equal_height;
             break :blk false;
         };
@@ -1505,7 +1659,7 @@ fn l_pan_by(lua: *Lua) i32 {
 fn l_set_virtual_size(lua: *Lua) i32 {
     const w: u32 = @intCast(lua.checkInteger(1));
     const h: u32 = @intCast(lua.checkInteger(2));
-    global_wm.current_graph.virtual_width  = w;
+    global_wm.current_graph.virtual_width = w;
     global_wm.current_graph.virtual_height = h;
     return 0;
 }
@@ -1514,23 +1668,7 @@ fn l_hide_window(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
     const node = global_wm.get_node_by_id(id) orelse return 0;
     node.hidden = true;
-    switch (node.content) {
-        .window => |win| {
-            if (global_wm.frames.get(win)) |frame| {
-                _ = c.XUnmapWindow(global_wm.display, frame);
-                _ = c.XFlush(global_wm.display);
-            }
-        },
-        .workspace => {
-            if (node.preview_window) |pw| {
-                if (global_wm.frames.get(pw)) |frame| {
-                    _ = c.XUnmapWindow(global_wm.display, frame);
-                    _ = c.XFlush(global_wm.display);
-                }
-            }
-        },
-        else => {},
-    }
+    if (WM.node_window(node)) |h| global_wm.backend.hide_window(h);
     global_wm.rebuild_focus_edges() catch {};
     return 0;
 }
@@ -1539,50 +1677,10 @@ fn l_show_window(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
     const node = global_wm.get_node_by_id(id) orelse return 0;
     node.hidden = false;
-    switch (node.content) {
-        .window => |win| {
-            if (global_wm.frames.get(win)) |frame| {
-                _ = c.XMapWindow(global_wm.display, frame);
-                _ = c.XMapWindow(global_wm.display, win);
-                _ = c.XRaiseWindow(global_wm.display, frame);
-                _ = c.XFlush(global_wm.display);
-                global_wm.focus(node);
-            }
-        },
-        .workspace => {
-            if (node.preview_window) |pw| {
-                if (global_wm.frames.get(pw)) |frame| {
-                    _ = c.XMapWindow(global_wm.display, frame);
-                    _ = c.XMapWindow(global_wm.display, pw);
-                    _ = c.XRaiseWindow(global_wm.display, frame);
-                    global_wm.repaint_preview(node);
-                    _ = c.XFlush(global_wm.display);
-                    global_wm.focus(node);
-                }
-            }
-        },
-        else => {},
-    }
+    global_wm.flush(global_wm.current_graph) catch {};
+    if (WM.node_window(node)) |h| global_wm.backend.raise_window(h);
     global_wm.rebuild_focus_edges() catch {};
-    return 0;
-}
-
-fn l_set_click_to_focus(lua: *Lua) i32 {
-    global_wm.click_to_focus = lua.toBoolean(1);
-    if (global_wm.click_to_focus) {
-        // Grab button 1 on all existing frames so clicks reach on_button_press
-        var it = global_wm.frames.valueIterator();
-        while (it.next()) |frame| {
-            _ = c.XGrabButton(global_wm.display, 1, c.AnyModifier, frame.*, 0,
-                c.ButtonPressMask | c.ButtonReleaseMask,
-                c.GrabModeSync, c.GrabModeAsync, c.None, c.None);
-        }
-    } else {
-        var it = global_wm.frames.valueIterator();
-        while (it.next()) |frame| {
-            _ = c.XUngrabButton(global_wm.display, 1, c.AnyModifier, frame.*);
-        }
-    }
+    global_wm.focus(node);
     return 0;
 }
 
@@ -1600,7 +1698,7 @@ fn l_get_urgent(lua: *Lua) i32 {
 }
 
 fn l_set_urgent(lua: *Lua) i32 {
-    const id  = check_node_id(lua, 1) orelse return 0;
+    const id = check_node_id(lua, 1) orelse return 0;
     const val = lua.toBoolean(2);
     const node = global_wm.get_node_by_id(id) orelse return 0;
     node.urgent = val;
@@ -1616,24 +1714,15 @@ fn l_get_window_class(lua: *Lua) i32 {
         lua.pushNil();
         return 1;
     };
-    const win = switch (node.content) {
-        .window => |w| w,
-        else => {
-            lua.pushNil();
-            return 1;
-        },
-    };
-    var hint: c.XClassHint = std.mem.zeroes(c.XClassHint);
-    if (c.XGetClassHint(global_wm.display, win, &hint) == 0) {
+    if (node.content != .window) {
         lua.pushNil();
         return 1;
     }
-    defer {
-        if (hint.res_name)  |n| _ = c.XFree(n);
-        if (hint.res_class) |cl| _ = c.XFree(cl);
-    }
-    _ = lua.pushString(if (hint.res_class) |cl| std.mem.span(cl) else "");
-    return 1;
+
+    const info = &node.info;
+    if (info.class_len == 0) lua.pushNil() else _ = lua.pushString(info.class());
+    if (info.instance_len == 0) lua.pushNil() else _ = lua.pushString(info.instance());
+    return 2;
 }
 
 fn l_get_window_name(lua: *Lua) i32 {
@@ -1645,20 +1734,11 @@ fn l_get_window_name(lua: *Lua) i32 {
         lua.pushNil();
         return 1;
     };
-    const win = switch (node.content) {
-        .window => |w| w,
-        else => {
-            lua.pushNil();
-            return 1;
-        },
-    };
-    var name: [*c]u8 = null;
-    if (c.XFetchName(global_wm.display, win, &name) == 0 or name == null) {
+    if (node.content != .window or node.info.title_len == 0) {
         lua.pushNil();
         return 1;
     }
-    defer _ = c.XFree(name);
-    _ = lua.pushString(std.mem.span(name));
+    _ = lua.pushString(node.info.title());
     return 1;
 }
 
@@ -1684,7 +1764,7 @@ fn l_set_gaps(lua: *Lua) i32 {
 }
 
 fn l_set_gaps_workspace(lua: *Lua) i32 {
-    const id      = check_node_id(lua, 1) orelse return 0;
+    const id = check_node_id(lua, 1) orelse return 0;
     const inner_h = check_u32(lua, 2) orelse return luaL_error_str(lua, "invalid inner_h");
     const inner_v = check_u32(lua, 3) orelse return luaL_error_str(lua, "invalid inner_v");
     const outer_h = check_u32(lua, 4) orelse return luaL_error_str(lua, "invalid outer_h");
@@ -1703,57 +1783,56 @@ fn l_set_gaps_workspace(lua: *Lua) i32 {
 }
 
 fn l_set_resize_modifier(lua: *Lua) i32 {
-    const mod: c_uint = @intCast(lua.checkInteger(1));
-    if (global_wm.resize_modifier) |old|
-        _ = c.XUngrabButton(@ptrCast(global_wm.display), c.AnyButton, old, global_wm.root);
-    global_wm.resize_modifier = mod;
-    const locks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
-    for (locks) |lock| {
-        _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod | lock, global_wm.root, 0,
-            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
-            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
-    }
+    global_wm.resize_modifier = check_mods(lua, 1);
+    global_wm.sync_pointer_grabs();
     return 0;
 }
 
 fn l_set_float_modifier(lua: *Lua) i32 {
-    const mod: c_uint = @intCast(lua.checkInteger(1));
-    if (global_wm.float_move_modifier) |old|
-        _ = c.XUngrabButton(@ptrCast(global_wm.display), c.AnyButton, old, global_wm.root);
-    global_wm.float_move_modifier = mod;
-    const locks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
-    for (locks) |lock| {
-        _ = c.XGrabButton(@ptrCast(global_wm.display), c.AnyButton, mod | lock, global_wm.root, 0,
-            c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
-            c.GrabModeAsync, c.GrabModeAsync, c.None, c.None);
-    }
+    global_wm.float_move_modifier = check_mods(lua, 1);
+    global_wm.sync_pointer_grabs();
+    return 0;
+}
+
+fn l_set_pan_modifier(lua: *Lua) i32 {
+    global_wm.pan_modifier = check_mods(lua, 1);
+    global_wm.sync_pointer_grabs();
+    return 0;
+}
+
+fn l_set_pan_button(lua: *Lua) i32 {
+    global_wm.pan_button = check_button(lua, 1);
+    global_wm.sync_pointer_grabs();
     return 0;
 }
 
 fn l_set_float_move_button(lua: *Lua) i32 {
-    global_wm.float_move_button = @intCast(lua.checkInteger(1));
+    global_wm.float_move_button = check_button(lua, 1);
     return 0;
 }
 
 fn l_set_float_resize_button(lua: *Lua) i32 {
-    global_wm.float_resize_button = @intCast(lua.checkInteger(1));
+    global_wm.float_resize_button = check_button(lua, 1);
+    return 0;
+}
+
+fn l_set_click_to_focus(lua: *Lua) i32 {
+    global_wm.set_click_to_focus(lua.toBoolean(1));
     return 0;
 }
 
 fn l_bind(lua: *Lua) i32 {
-    const mod: c_uint = @intCast(lua.checkInteger(1));
+    const mods = lua.checkInteger(1);
+    if (mods < 0) return luaL_error_str(lua, "bind: invalid modifier mask");
     const key = lua.checkString(2);
     lua.checkType(3, .function);
+    const keysym = global_wm.backend.keysym_from_name(key) orelse
+        return luaL_error_str(lua, "bind: unknown keysym");
     lua.pushValue(3);
     const ref = lua.ref(ziglua.registry_index);
-    const keysym = c.XStringToKeysym(key.ptr);
-    if (keysym == c.NoSymbol) {
-        _ = lua.pushString("bind: unknown keysym");
-        return lua.raiseError();
-    }
-    global_wm.bind_lua(mod, keysym, ref) catch {
-        _ = lua.pushString("bind: failed to bind key");
-        return lua.raiseError();
+    global_wm.bind_lua(@intCast(mods), keysym, ref) catch {
+        lua.unref(ziglua.registry_index, ref);
+        return luaL_error_str(lua, "bind: failed to bind key");
     };
     return 0;
 }
@@ -1931,11 +2010,7 @@ fn l_resize_edge(lua: *Lua) i32 {
     const dir_str = lua.checkString(2);
     const delta: i32 = @intCast(lua.checkInteger(3));
     const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node id");
-    const dir: graph_mod.Direction = if (std.mem.eql(u8, dir_str, "left")) .Left
-        else if (std.mem.eql(u8, dir_str, "right")) .Right
-        else if (std.mem.eql(u8, dir_str, "up")) .Up
-        else if (std.mem.eql(u8, dir_str, "down")) .Down
-        else return luaL_error_str(lua, "direction must be left/right/up/down");
+    const dir: graph_mod.Direction = if (std.mem.eql(u8, dir_str, "left")) .Left else if (std.mem.eql(u8, dir_str, "right")) .Right else if (std.mem.eql(u8, dir_str, "up")) .Up else if (std.mem.eql(u8, dir_str, "down")) .Down else return luaL_error_str(lua, "direction must be left/right/up/down");
     global_wm.resize_edge(node, dir, delta) catch
         return luaL_error_str(lua, "resize failed (size limit)");
     return 0;
@@ -1955,14 +2030,10 @@ fn l_resize_focused_edge(lua: *Lua) i32 {
     const dir_str = lua.checkString(1);
     const delta: i32 = @intCast(lua.checkInteger(2));
     const node = global_wm.focused orelse return 0;
-    const dir: graph_mod.Direction = if (std.mem.eql(u8, dir_str, "left")) .Left
-        else if (std.mem.eql(u8, dir_str, "right")) .Right
-        else if (std.mem.eql(u8, dir_str, "up")) .Up
-        else if (std.mem.eql(u8, dir_str, "down")) .Down
-        else {
-            _ = lua.pushString("direction must be left/right/up/down");
-            return lua.raiseError();
-        };
+    const dir: graph_mod.Direction = if (std.mem.eql(u8, dir_str, "left")) .Left else if (std.mem.eql(u8, dir_str, "right")) .Right else if (std.mem.eql(u8, dir_str, "up")) .Up else if (std.mem.eql(u8, dir_str, "down")) .Down else {
+        _ = lua.pushString("direction must be left/right/up/down");
+        return lua.raiseError();
+    };
     global_wm.resize_edge(node, dir, delta) catch {
         _ = lua.pushString("resize edge failed");
         return lua.raiseError();
@@ -2011,14 +2082,19 @@ fn l_get_node_info(lua: *Lua) i32 {
         return 1;
     };
     lua.newTable();
-    lua.pushInteger(node.x);       lua.setField(-2, "x");
-    lua.pushInteger(node.y);       lua.setField(-2, "y");
-    lua.pushInteger(node.width);   lua.setField(-2, "width");
-    lua.pushInteger(node.height);  lua.setField(-2, "height");
-    lua.pushBoolean(node.floating); lua.setField(-2, "floating");
+    lua.pushInteger(node.x);
+    lua.setField(-2, "x");
+    lua.pushInteger(node.y);
+    lua.setField(-2, "y");
+    lua.pushInteger(node.width);
+    lua.setField(-2, "width");
+    lua.pushInteger(node.height);
+    lua.setField(-2, "height");
+    lua.pushBoolean(node.floating);
+    lua.setField(-2, "floating");
     _ = switch (node.content) {
-        .window    => lua.pushString("window"),
-        .empty     => lua.pushString("empty"),
+        .window => lua.pushString("window"),
+        .empty => lua.pushString("empty"),
         .workspace => lua.pushString("workspace"),
     };
     lua.setField(-2, "type");
@@ -2028,10 +2104,8 @@ fn l_get_node_info(lua: *Lua) i32 {
 fn l_create_root_node(lua: *Lua) i32 {
     const node = global_wm.current_graph.add_node(.empty) catch
         return luaL_error_str(lua, "failed to create root node");
-    const w = @as(u32, @intCast(c.XDisplayWidth(@ptrCast(global_wm.display), 0)));
-    const h = @as(u32, @intCast(c.XDisplayHeight(@ptrCast(global_wm.display), 0)));
-    node.width = w;
-    node.height = h;
+    node.width = global_wm.screen_width;
+    node.height = global_wm.screen_height;
     node.x = 0;
     node.y = 0;
     // Root container is not a real window, so pass null.
@@ -2042,7 +2116,7 @@ fn l_create_root_node(lua: *Lua) i32 {
 }
 
 fn l_create_empty_node(lua: *Lua) i32 {
-     const node = global_wm.current_graph.add_node(.empty) catch
+    const node = global_wm.current_graph.add_node(.empty) catch
         return luaL_error_str(lua, "failed to create empty node");
     // Empty nodes have no window; just register them.
     const id = global_wm.register_node(null, node) catch
@@ -2157,16 +2231,15 @@ fn l_fixed_ratio(lua: *Lua) i32 {
 
 fn l_fixed_width(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
-    const w  = check_u32(lua, 2) orelse return luaL_error_str(lua, "width must be non-negative");
+    const w = check_u32(lua, 2) orelse return luaL_error_str(lua, "width must be non-negative");
     const node = global_wm.get_node_by_id(id) orelse return 0;
     global_wm.current_graph.add_constraint(node, .{ .fixed_width = w }) catch {};
     return 0;
 }
 
-
 fn l_fixed_height(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
-    const h  = check_u32(lua, 2) orelse return luaL_error_str(lua, "height must be non-negative");
+    const h = check_u32(lua, 2) orelse return luaL_error_str(lua, "height must be non-negative");
     const node = global_wm.get_node_by_id(id) orelse return 0;
     global_wm.current_graph.add_constraint(node, .{ .fixed_height = h }) catch {};
     return 0;
@@ -2189,15 +2262,15 @@ fn l_fixed_y(lua: *Lua) i32 {
 }
 
 fn l_grid_cell(lua: *Lua) i32 {
-    const id           = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node");
-    const col          = lua.checkInteger(2);
-    const row          = lua.checkInteger(3);
-    const cols         = lua.checkInteger(4);
-    const rows         = lua.checkInteger(5);
+    const id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node");
+    const col = lua.checkInteger(2);
+    const row = lua.checkInteger(3);
+    const cols = lua.checkInteger(4);
+    const rows = lua.checkInteger(5);
     const container_id = check_node_id(lua, 6) orelse return luaL_error_str(lua, "invalid container");
     if (cols <= 0 or rows <= 0) return luaL_error_str(lua, "grid_cell: cols and rows must be positive");
     if (col < 0 or row < 0 or col >= cols or row >= rows) return luaL_error_str(lua, "grid_cell: cell (col,row) out of range");
-    const node      = global_wm.get_node_by_id(id)           orelse return luaL_error_str(lua, "invalid node");
+    const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
     const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
     const g = Constraint{ .grid_cell = .{
         .col = @intCast(col),
@@ -2211,30 +2284,35 @@ fn l_grid_cell(lua: *Lua) i32 {
 }
 
 fn l_grid_cell_abs(lua: *Lua) i32 {
-    const id           = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node");
-    const x            = @as(i32, @intCast(lua.checkInteger(2)));
-    const y            = @as(i32, @intCast(lua.checkInteger(3)));
-    const w            = check_u32(lua, 4) orelse return luaL_error_str(lua, "width must be non-negative");
-    const h            = check_u32(lua, 5) orelse return luaL_error_str(lua, "height must be non-negative");
+    const id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node");
+    const x = @as(i32, @intCast(lua.checkInteger(2)));
+    const y = @as(i32, @intCast(lua.checkInteger(3)));
+    const w = check_u32(lua, 4) orelse return luaL_error_str(lua, "width must be non-negative");
+    const h = check_u32(lua, 5) orelse return luaL_error_str(lua, "height must be non-negative");
     const container_id = check_node_id(lua, 6) orelse return luaL_error_str(lua, "invalid container");
-    const node      = global_wm.get_node_by_id(id)           orelse return luaL_error_str(lua, "invalid node");
+    const node = global_wm.get_node_by_id(id) orelse return luaL_error_str(lua, "invalid node");
     const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
     global_wm.current_graph.add_constraint(node, .{ .grid_cell_abs = .{
-        .x = x, .y = y, .w = w, .h = h, .container = container,
-    }}) catch return luaL_error_str(lua, "out of memory");
+        .x = x,
+        .y = y,
+        .w = w,
+        .h = h,
+        .container = container,
+    } }) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
 fn l_split(lua: *Lua) i32 {
     const container_id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid container");
-    const axis_str     = lua.checkString(2);
+    const axis_str = lua.checkString(2);
     lua.checkType(3, .table);
     lua.checkType(4, .table);
 
-    const container = global_wm.get_node_by_id(container_id)
-        orelse return luaL_error_str(lua, "invalid container");
+    const container = global_wm.get_node_by_id(container_id) orelse return luaL_error_str(lua, "invalid container");
     const axis: graph_mod.SplitAxis = if (std.mem.eql(u8, axis_str, "h"))
-        .horizontal else .vertical;
+        .horizontal
+    else
+        .vertical;
 
     const count: u8 = @intCast(lua.lenRaw(3));
     if (count == 0 or count > 16)
@@ -2247,11 +2325,11 @@ fn l_split(lua: *Lua) i32 {
 
     var con: graph_mod.Constraint = .{ .split = .{
         .container = container,
-        .axis      = axis,
-        .count     = count,
-        .ratios    = undefined,
-        .children  = undefined,
-    }};
+        .axis = axis,
+        .count = count,
+        .ratios = undefined,
+        .children = undefined,
+    } };
 
     for (0..count) |i| {
         _ = lua.getIndexRaw(3, @intCast(i + 1));
@@ -2272,12 +2350,10 @@ fn l_split(lua: *Lua) i32 {
             return luaL_error_str(lua, "split: invalid child id");
         };
         lua.pop(1);
-        con.split.children[i] = global_wm.get_node_by_id(child_id)
-            orelse return luaL_error_str(lua, "split: invalid child id");
+        con.split.children[i] = global_wm.get_node_by_id(child_id) orelse return luaL_error_str(lua, "split: invalid child id");
     }
 
-    global_wm.current_graph.add_constraint(container, con)
-        catch return luaL_error_str(lua, "out of memory");
+    global_wm.current_graph.add_constraint(container, con) catch return luaL_error_str(lua, "out of memory");
     return 0;
 }
 
@@ -2305,9 +2381,9 @@ fn l_destroy_container(lua: *Lua) i32 {
 }
 
 fn l_reparent(lua: *Lua) i32 {
-    const child_id  = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid child node");
+    const child_id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid child node");
     const parent_id = check_node_id(lua, 2) orelse return luaL_error_str(lua, "invalid parent node");
-    const child  = global_wm.get_node_by_id(child_id)  orelse return luaL_error_str(lua, "invalid child node");
+    const child = global_wm.get_node_by_id(child_id) orelse return luaL_error_str(lua, "invalid child node");
     const parent = global_wm.get_node_by_id(parent_id) orelse return luaL_error_str(lua, "invalid parent node");
     var i: usize = 0;
     while (i < child.constraints.items.len) {
@@ -2318,7 +2394,11 @@ fn l_reparent(lua: *Lua) i32 {
         }
     }
     const g = Constraint{ .grid_cell = .{
-        .col = 0, .row = 0, .cols = 1, .rows = 1, .container = parent,
+        .col = 0,
+        .row = 0,
+        .cols = 1,
+        .rows = 1,
+        .container = parent,
     } };
     global_wm.current_graph.add_constraint(child, g) catch
         return luaL_error_str(lua, "out of memory");
@@ -2354,10 +2434,14 @@ fn l_get_node_geometry(lua: *Lua) i32 {
         return 1;
     };
     lua.createTable(0, 4);
-    lua.pushInteger(node.x);      lua.setField(-2, "x");
-    lua.pushInteger(node.y);      lua.setField(-2, "y");
-    lua.pushInteger(node.width);  lua.setField(-2, "width");
-    lua.pushInteger(node.height); lua.setField(-2, "height");
+    lua.pushInteger(node.x);
+    lua.setField(-2, "x");
+    lua.pushInteger(node.y);
+    lua.setField(-2, "y");
+    lua.pushInteger(node.width);
+    lua.setField(-2, "width");
+    lua.pushInteger(node.height);
+    lua.setField(-2, "height");
     return 1;
 }
 
@@ -2366,10 +2450,10 @@ fn l_get_all_windows(lua: *Lua) i32 {
     var i: usize = 0;
     for (global_wm.current_graph.nodes.items) |node| {
         // Include real windows AND workspace-preview nodes.
-        const lookup_win: c.Window = switch (node.content) {
-            .window    => |w| w,
+        const lookup_win: types.WindowHandle = switch (node.content) {
+            .window => |w| w,
             .workspace => node.preview_window orelse continue,
-            .empty     => continue,
+            .empty => continue,
         };
         if (global_wm.window_to_node_id.get(lookup_win)) |nid| {
             lua.pushInteger(@intCast(nid));
@@ -2397,7 +2481,6 @@ fn l_clear_constraints(lua: *Lua) i32 {
     return 0;
 }
 
-
 fn l_set_node_empty(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;
     global_wm.set_node_empty(id);
@@ -2419,8 +2502,8 @@ fn l_get_node_type(lua: *Lua) i32 {
     };
     if (global_wm.node_registry.get(id)) |node| {
         _ = switch (node.content) {
-            .window    => lua.pushString("window"),
-            .empty     => lua.pushString("empty"),
+            .window => lua.pushString("window"),
+            .empty => lua.pushString("empty"),
             .workspace => lua.pushString("workspace"),
         };
         return 1;
@@ -2452,7 +2535,7 @@ fn l_toggle_fullscreen(lua: *Lua) i32 {
 }
 
 fn l_set_fullscreen(lua: *Lua) i32 {
-    const id  = check_node_id(lua, 1) orelse return 0;
+    const id = check_node_id(lua, 1) orelse return 0;
     const val = lua.toBoolean(2);
     const node = global_wm.get_node_by_id(id) orelse return 0;
     if (node.content != .window) return 0;
@@ -2464,7 +2547,7 @@ fn l_set_fullscreen(lua: *Lua) i32 {
 }
 
 fn l_set_floating(lua: *Lua) i32 {
-    const id  = check_node_id(lua, 1) orelse return 0;
+    const id = check_node_id(lua, 1) orelse return 0;
     const val = lua.toBoolean(2);
     const node = global_wm.get_node_by_id(id) orelse return 0;
     if (node.content != .window) return 0;
@@ -2481,7 +2564,10 @@ fn l_set_floating(lua: *Lua) i32 {
             if (f != node) {
                 var it = global_wm.node_registry.iterator();
                 while (it.next()) |entry| {
-                    if (entry.value_ptr.* == f) { prev_id = entry.key_ptr.*; break; }
+                    if (entry.value_ptr.* == f) {
+                        prev_id = entry.key_ptr.*;
+                        break;
+                    }
                 }
             }
         }
@@ -2494,8 +2580,8 @@ fn l_set_floating(lua: *Lua) i32 {
 }
 
 fn l_set_node_focused_border_color(lua: *Lua) i32 {
-    const id    = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node id");
-    const color = check_color(lua, 2)   orelse return luaL_error_str(lua, "invalid color");
+    const id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node id");
+    const color = check_color(lua, 2) orelse return luaL_error_str(lua, "invalid color");
     if (global_wm.get_node_by_id(id)) |node| {
         node.border_color_focused = color;
         if (global_wm.focused == node) repaint_node(global_wm, node);
@@ -2505,8 +2591,8 @@ fn l_set_node_focused_border_color(lua: *Lua) i32 {
 }
 
 fn l_set_node_unfocused_border_color(lua: *Lua) i32 {
-    const id    = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node id");
-    const color = check_color(lua, 2)   orelse return luaL_error_str(lua, "invalid color");
+    const id = check_node_id(lua, 1) orelse return luaL_error_str(lua, "invalid node id");
+    const color = check_color(lua, 2) orelse return luaL_error_str(lua, "invalid color");
     if (global_wm.get_node_by_id(id)) |node| {
         node.border_color_unfocused = color;
         if (global_wm.focused != node) repaint_node(global_wm, node);
@@ -2559,10 +2645,7 @@ fn l_set_default_urgent_border_color(lua: *Lua) i32 {
 fn l_set_border_width(lua: *Lua) i32 {
     const width = check_u32(lua, 1) orelse return luaL_error_str(lua, "border width must be non-negative");
     global_wm.border_width = @intCast(width);
-    var it = global_wm.frames.keyIterator();
-    while (it.next()) |win| {
-        global_wm.set_frame_extents(win.*);
-    }
+    global_wm.backend.publish_frame_extents(width);
     global_wm.resolve(global_wm.current_graph) catch {};
     global_wm.flush(global_wm.current_graph) catch {};
     return 0;
@@ -2580,7 +2663,10 @@ fn l_create_nested_workspace(lua: *Lua) i32 {
             if (n == prev_focused) {
                 var it = global_wm.node_registry.iterator();
                 while (it.next()) |entry| {
-                    if (entry.value_ptr.* == prev_focused) { prev_id = entry.key_ptr.*; break; }
+                    if (entry.value_ptr.* == prev_focused) {
+                        prev_id = entry.key_ptr.*;
+                        break;
+                    }
                 }
                 break;
             }
@@ -2671,7 +2757,10 @@ fn l_get_workspaces_at_level(lua: *Lua) i32 {
         var has_content = false;
         for (sub.nodes.items) |sub_node| {
             switch (sub_node.content) {
-                .window, .workspace => { has_content = true; break; },
+                .window, .workspace => {
+                    has_content = true;
+                    break;
+                },
                 else => {},
             }
         }
@@ -2706,7 +2795,6 @@ fn l_get_current_workspace(lua: *Lua) i32 {
     lua.pushInteger(@intCast(global_wm.current_graph.id.number + 1));
     return 1;
 }
-
 
 fn l_switch_to_workspace(lua: *Lua) i32 {
     const index = lua.checkInteger(1);
@@ -2943,48 +3031,47 @@ fn l_unregister_node(lua: *Lua) i32 {
     return 0;
 }
 
+fn l_get_cursor_pos(lua: *Lua) i32 {
+    const p = global_wm.backend.pointer_position();
+    lua.pushInteger(p.x);
+    lua.pushInteger(p.y);
+    return 2;
+}
+
+fn l_get_cursor_relative_to_focused(lua: *Lua) i32 {
+    const p = global_wm.backend.pointer_position();
+    const focused = global_wm.focused orelse {
+        lua.pushInteger(0);
+        lua.pushInteger(0);
+        return 2;
+    };
+    const cx = focused.x + @divTrunc(@as(i32, @intCast(focused.width)), 2);
+    const cy = focused.y + @divTrunc(@as(i32, @intCast(focused.height)), 2);
+    lua.pushInteger(p.x - cx);
+    lua.pushInteger(p.y - cy);
+    return 2;
+}
+
+fn l_warp_cursor(lua: *Lua) i32 {
+    const x: i32 = @intCast(lua.checkInteger(1));
+    const y: i32 = @intCast(lua.checkInteger(2));
+    global_wm.backend.warp_pointer(.{ .x = x, .y = y });
+    return 0;
+}
+
+fn l_warp_cursor_to_node(lua: *Lua) i32 {
+    const id = check_node_id(lua, 1) orelse return 0;
+    const node = global_wm.get_node_by_id(id) orelse return 0;
+    global_wm.backend.warp_pointer(.{
+        .x = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2),
+        .y = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2),
+    });
+    return 0;
+}
+
 fn l_get_mouse_node(lua: *Lua) i32 {
-    var root_return: c.Window = undefined;
-    var child_return: c.Window = undefined;
-    var root_x: c_int = 0;
-    var root_y: c_int = 0;
-    var win_x: c_int = 0;
-    var win_y: c_int = 0;
-    var mask: c_uint = 0;
-    _ = c.XQueryPointer(
-        global_wm.display,
-        global_wm.root,
-        &root_return,
-        &child_return,
-        &root_x,
-        &root_y,
-        &win_x,
-        &win_y,
-        &mask,
-    );
-
-    var best: ?*graph_mod.Node = null;
-    for (global_wm.current_graph.nodes.items) |node| {
-        if (node.width == 0 or node.height == 0) continue;
-        const nx = node.x;
-        const ny = node.y;
-        const nw = @as(i32, @intCast(node.width));
-        const nh = @as(i32, @intCast(node.height));
-        if (root_x >= nx and root_x < nx + nw and
-            root_y >= ny and root_y < ny + nh)
-        {
-            // Prefer the smallest node (most specific hit)
-            if (best) |b| {
-                if (nw * nh < @as(i32, @intCast(b.width)) * @as(i32, @intCast(b.height))) {
-                    best = node;
-                }
-            } else {
-                best = node;
-            }
-        }
-    }
-
-    if (best) |node| {
+    const p = global_wm.backend.pointer_position();
+    if (global_wm.node_at(p)) |node| {
         if (global_wm.get_id_for_node(node)) |id| {
             lua.pushInteger(@intCast(id));
             return 1;
@@ -2994,82 +3081,21 @@ fn l_get_mouse_node(lua: *Lua) i32 {
     return 1;
 }
 
-fn l_warp_cursor(lua: *Lua) i32 {
-    const x: i32 = @intCast(lua.checkInteger(1));
-    const y: i32 = @intCast(lua.checkInteger(2));
-    _ = c.XWarpPointer(global_wm.display, c.None, global_wm.root, 0, 0, 0, 0, x, y);
+fn l_set_cursor_theme(lua: *Lua) i32 {
+    const theme = lua.checkString(1);
+    const size = lua.checkInteger(2);
+    if (size < 0) return luaL_error_str(lua, "set_cursor_theme: size must be non-negative");
+    global_wm.backend.set_cursor_theme(theme, @intCast(size));
     return 0;
-}
-
-fn l_warp_cursor_to_node(lua: *Lua) i32 {
-    const id = check_node_id(lua, 1) orelse return 0;
-    const node = global_wm.get_node_by_id(id) orelse return 0;
-    const cx = node.x + @divTrunc(@as(i32, @intCast(node.width)), 2);
-    const cy = node.y + @divTrunc(@as(i32, @intCast(node.height)), 2);
-    _ = c.XWarpPointer(global_wm.display, c.None, global_wm.root, 0, 0, 0, 0, cx, cy);
-    return 0;
-}
-
-fn l_get_cursor_pos(lua: *Lua) i32 {
-    var root_return: c.Window = undefined;
-    var child_return: c.Window = undefined;
-    var root_x: c_int = 0;
-    var root_y: c_int = 0;
-    var win_x: c_int = 0;
-    var win_y: c_int = 0;
-    var mask: c_uint = 0;
-    _ = c.XQueryPointer(
-        global_wm.display,
-        global_wm.root,
-        &root_return,
-        &child_return,
-        &root_x,
-        &root_y,
-        &win_x,
-        &win_y,
-        &mask,
-    );
-    lua.pushInteger(root_x);
-    lua.pushInteger(root_y);
-    return 2;
-}
-
-fn l_get_cursor_relative_to_focused(lua: *Lua) i32 {
-    var root_return: c.Window = undefined;
-    var child_return: c.Window = undefined;
-    var root_x: c_int = 0;
-    var root_y: c_int = 0;
-    var win_x: c_int = 0;
-    var win_y: c_int = 0;
-    var mask: c_uint = 0;
-    _ = c.XQueryPointer(
-        global_wm.display,
-        global_wm.root,
-        &root_return,
-        &child_return,
-        &root_x,
-        &root_y,
-        &win_x,
-        &win_y,
-        &mask,
-    );
-
-    const focused = global_wm.focused orelse {
-        lua.pushInteger(0);
-        lua.pushInteger(0);
-        return 2;
-    };
-
-    const cx = focused.x + @divTrunc(@as(i32, @intCast(focused.width)), 2);
-    const cy = focused.y + @divTrunc(@as(i32, @intCast(focused.height)), 2);
-
-    lua.pushInteger(root_x - cx);
-    lua.pushInteger(root_y - cy);
-    return 2;
 }
 
 fn l_set_focus_follows_mouse(lua: *Lua) i32 {
-    global_wm.focus_follows_mouse = lua.toBoolean(1);
+    const enabled = lua.toBoolean(1);
+    if (global_wm.ffm_suspended) {
+        global_wm.saved_focus_follows_mouse = enabled;
+    } else {
+        global_wm.focus_follows_mouse = enabled;
+    }
     return 0;
 }
 
@@ -3086,7 +3112,9 @@ fn l_reload_visuals(lua: *Lua) i32 {
     defer global_wm.allocator.free(path_z);
 
     lua.pushFunction(ziglua.wrap(struct {
-        fn noop(_: *Lua) i32 { return 0; }
+        fn noop(_: *Lua) i32 {
+            return 0;
+        }
     }.noop));
     const noop_ref = lua.ref(ziglua.registry_index);
     defer lua.unref(ziglua.registry_index, noop_ref);
@@ -3094,25 +3122,7 @@ fn l_reload_visuals(lua: *Lua) i32 {
     _ = lua.getGlobal("wm");
     for (registrations) |reg| {
         const is_visual =
-            std.mem.eql(u8,    reg.name, "set_default_focused_border_color")
-            or std.mem.eql(u8, reg.name, "set_default_unfocused_border_color")
-            or std.mem.eql(u8, reg.name, "set_default_urgent_border_color")
-            or std.mem.eql(u8, reg.name, "set_border_width")
-            or std.mem.eql(u8, reg.name, "set_gaps")
-            or std.mem.eql(u8, reg.name, "set_gaps_workspace")
-            or std.mem.eql(u8, reg.name, "set_preview_colors")
-            or std.mem.eql(u8, reg.name, "set_preview_colors_workspace")
-            or std.mem.eql(u8, reg.name, "set_preview_font")
-            or std.mem.eql(u8, reg.name, "set_preview_font_workspace")
-            or std.mem.eql(u8, reg.name, "set_preview_max_icon_size")
-            or std.mem.eql(u8, reg.name, "set_node_focused_border_color")
-            or std.mem.eql(u8, reg.name, "set_node_unfocused_border_color")
-            or std.mem.eql(u8, reg.name, "set_node_border_side_color")
-            or std.mem.eql(u8, reg.name, "clear_node_focused_border_color")
-            or std.mem.eql(u8, reg.name, "clear_node_unfocused_border_color")
-            or std.mem.eql(u8, reg.name, "clear_node_border_side_colors")
-            or std.mem.eql(u8, reg.name, "set_border_side_colors_focused_only")
-            or std.mem.eql(u8, reg.name, "set_cursor_theme");
+            std.mem.eql(u8, reg.name, "set_default_focused_border_color") or std.mem.eql(u8, reg.name, "set_default_unfocused_border_color") or std.mem.eql(u8, reg.name, "set_default_urgent_border_color") or std.mem.eql(u8, reg.name, "set_border_width") or std.mem.eql(u8, reg.name, "set_gaps") or std.mem.eql(u8, reg.name, "set_gaps_workspace") or std.mem.eql(u8, reg.name, "set_preview_colors") or std.mem.eql(u8, reg.name, "set_preview_colors_workspace") or std.mem.eql(u8, reg.name, "set_preview_font") or std.mem.eql(u8, reg.name, "set_preview_font_workspace") or std.mem.eql(u8, reg.name, "set_preview_max_icon_size") or std.mem.eql(u8, reg.name, "set_node_focused_border_color") or std.mem.eql(u8, reg.name, "set_node_unfocused_border_color") or std.mem.eql(u8, reg.name, "set_node_border_side_color") or std.mem.eql(u8, reg.name, "clear_node_focused_border_color") or std.mem.eql(u8, reg.name, "clear_node_unfocused_border_color") or std.mem.eql(u8, reg.name, "clear_node_border_side_colors") or std.mem.eql(u8, reg.name, "set_border_side_colors_focused_only") or std.mem.eql(u8, reg.name, "set_cursor_theme");
         if (!is_visual) {
             _ = lua.getIndexRaw(ziglua.registry_index, noop_ref);
             lua.setField(-2, reg.name);
@@ -3138,53 +3148,10 @@ fn l_reload_visuals(lua: *Lua) i32 {
     };
     restore.run(lua);
 
-    for (global_wm.current_graph.nodes.items) |node| {
-        const win = switch (node.content) {
-            .window    => |w| w,
-            .workspace => node.preview_window orelse continue,
-            .empty     => continue,
-        };
-        if (global_wm.frames.get(win)) |win_frame| {
-            _ = c.XClearWindow(global_wm.display, win_frame);
-            global_wm.draw_frame_borders(win_frame, node);
-        }
-    }
+    for (global_wm.current_graph.nodes.items) |node| global_wm.paint_borders(node, null);
 
     global_wm.resolve(global_wm.current_graph) catch {};
     global_wm.flush(global_wm.current_graph) catch {};
-    _ = c.XFlush(global_wm.display);
-    return 0;
-}
-
-fn l_set_cursor_theme(lua: *Lua) i32 {
-    const theme = lua.checkString(1);
-    const size: c_int = @intCast(lua.checkInteger(2));
-
-    _ = c.setenv("XCURSOR_THEME", theme.ptr, 1);
-    var size_buf: [16]u8 = undefined;
-    const size_str = std.fmt.bufPrintZ(&size_buf, "{}", .{size}) catch return 0;
-    _ = c.setenv("XCURSOR_SIZE", size_str.ptr, 1);
-
-    var buf: [256]u8 = undefined;
-    const prop = std.fmt.bufPrint(&buf, "Xcursor.theme: {s}\nXcursor.size: {}", .{theme, size}) catch return 0;
-    const xa_string = c.XInternAtom(global_wm.display, "STRING", 0);
-    const resource_manager = c.XInternAtom(global_wm.display, "RESOURCE_MANAGER", 0);
-    _ = c.XChangeProperty(global_wm.display, global_wm.root,
-        resource_manager, xa_string, 8, c.PropModeReplace,
-        prop.ptr, @intCast(prop.len));
-
-    // create and set cursor on root and all frames
-    const cursor = c.XcursorLibraryLoadCursor(global_wm.display, "left_ptr");
-    if (cursor != 0) {
-        _ = c.XDefineCursor(global_wm.display, global_wm.root, cursor);
-        var it = global_wm.frames.valueIterator();
-        while (it.next()) |frame| {
-            _ = c.XDefineCursor(global_wm.display, frame.*, cursor);
-        }
-        _ = c.XFreeCursor(global_wm.display, cursor);
-    }
-
-    _ = c.XFlush(global_wm.display);
     return 0;
 }
 
@@ -3197,32 +3164,8 @@ fn l_get_window_pid(lua: *Lua) i32 {
         lua.pushNil();
         return 1;
     };
-    const win = switch (node.content) {
-        .window => |w| w,
-        else => {
-            lua.pushNil();
-            return 1;
-        },
-    };
-    const net_wm_pid = c.XInternAtom(global_wm.display, "_NET_WM_PID", 0);
-    var actual_type: c.Atom = undefined;
-    var actual_format: c_int = undefined;
-    var nitems: c_ulong = undefined;
-    var bytes_after: c_ulong = undefined;
-    var prop: [*c]u8 = null;
-    const result = c.XGetWindowProperty(
-        global_wm.display, win, net_wm_pid,
-        0, 1, 0, c.AnyPropertyType,
-        &actual_type, &actual_format, &nitems, &bytes_after, &prop,
-    );
-    if (result != c.Success or prop == null or nitems == 0) {
-        if (prop != null) _ = c.XFree(prop);
-        lua.pushNil();
-        return 1;
-    }
-    defer _ = c.XFree(prop);
-    const pid: c_ulong = @as(*c_ulong, @ptrCast(@alignCast(prop))).*;
-    lua.pushInteger(@intCast(pid));
+    const pid = if (node.content == .window) node.info.pid else null;
+    if (pid) |p| lua.pushInteger(@intCast(p)) else lua.pushNil();
     return 1;
 }
 
@@ -3234,18 +3177,30 @@ fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
 fn setup_lua(wm: *WM, lua: *Lua) void {
     lua.openLibs();
     lua.newTable();
-    lua.pushInteger(c.Mod4Mask);    lua.setField(-2, "MOD_SUPER");
-    lua.pushInteger(c.Mod1Mask);    lua.setField(-2, "MOD_ALT");
-    lua.pushInteger(c.ShiftMask);   lua.setField(-2, "MOD_SHIFT");
-    lua.pushInteger(c.ControlMask); lua.setField(-2, "MOD_CTRL");
-    lua.pushInteger(c.Mod2Mask);    lua.setField(-2, "MOD_MOD2");
-    lua.pushInteger(c.Mod3Mask);    lua.setField(-2, "MOD_MOD3");
-    lua.pushInteger(c.Mod5Mask);    lua.setField(-2, "MOD_MOD5");
-    lua.pushInteger(c.Button1);     lua.setField(-2, "BUTTON_LEFT");
-    lua.pushInteger(c.Button2);     lua.setField(-2, "BUTTON_MIDDLE");
-    lua.pushInteger(c.Button3);     lua.setField(-2, "BUTTON_RIGHT");
-    lua.pushInteger(c.Button4);     lua.setField(-2, "BUTTON_SCROLL_UP");
-    lua.pushInteger(c.Button5);     lua.setField(-2, "BUTTON_SCROLL_DOWN");
+    lua.pushInteger(types.mod.super);
+    lua.setField(-2, "MOD_SUPER");
+    lua.pushInteger(types.mod.alt);
+    lua.setField(-2, "MOD_ALT");
+    lua.pushInteger(types.mod.shift);
+    lua.setField(-2, "MOD_SHIFT");
+    lua.pushInteger(types.mod.ctrl);
+    lua.setField(-2, "MOD_CTRL");
+    lua.pushInteger(types.mod.num_lock);
+    lua.setField(-2, "MOD_MOD2");
+    lua.pushInteger(types.mod.mod3);
+    lua.setField(-2, "MOD_MOD3");
+    lua.pushInteger(types.mod.mod5);
+    lua.setField(-2, "MOD_MOD5");
+    lua.pushInteger(types.button.left);
+    lua.setField(-2, "BUTTON_LEFT");
+    lua.pushInteger(types.button.middle);
+    lua.setField(-2, "BUTTON_MIDDLE");
+    lua.pushInteger(types.button.right);
+    lua.setField(-2, "BUTTON_RIGHT");
+    lua.pushInteger(types.button.scroll_up);
+    lua.setField(-2, "BUTTON_SCROLL_UP");
+    lua.pushInteger(types.button.scroll_down);
+    lua.setField(-2, "BUTTON_SCROLL_DOWN");
     for (registrations) |reg| {
         lua.pushFunction(reg.func);
         lua.setField(-2, reg.name);
@@ -3269,6 +3224,7 @@ fn reset_vm(wm: *WM) !*Lua {
     wm.keybinds.clearRetainingCapacity();
     wm.default_arranger_ref = 0;
     wm.reset_arranger_refs(&wm.graph);
+    wm.clear_rgb_frame_classes();
     return lua;
 }
 
@@ -3355,6 +3311,7 @@ pub fn reload(wm: *WM) void {
         return;
     };
     remap_all_graphs(wm, &wm.graph);
+    wm.hide_error();
     std.debug.print("config reloaded successfully\n", .{});
 }
 
@@ -3362,7 +3319,7 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
     if (g.arranger_ref == 0 and wm.default_arranger_ref == 0) return;
 
     const saved_graph = wm.current_graph;
-    wm.current_graph = g;  // <-- add this
+    wm.current_graph = g; // <-- add this
     defer wm.current_graph = saved_graph;
 
     var ids: std.ArrayListUnmanaged(u32) = .{ .items = &.{}, .capacity = 0 };
@@ -3421,14 +3378,20 @@ pub fn load(wm: *WM) !void {
             if (std.mem.eql(u8, entry.category, "Guides")) continue;
             var found = false;
             for (registrations) |reg| {
-                if (std.mem.eql(u8, entry.name, reg.name)) { found = true; break; }
+                if (std.mem.eql(u8, entry.name, reg.name)) {
+                    found = true;
+                    break;
+                }
             }
             if (!found) @compileError("api.entries has '" ++ entry.name ++ "' but it is not registered");
         }
         for (registrations) |reg| {
             var found = false;
             for (api.entries) |entry| {
-                if (std.mem.eql(u8, entry.name, reg.name)) { found = true; break; }
+                if (std.mem.eql(u8, entry.name, reg.name)) {
+                    found = true;
+                    break;
+                }
             }
             if (!found) @compileError("registration '" ++ reg.name ++ "' has no entry in api.entries");
         }
@@ -3461,7 +3424,7 @@ pub fn load(wm: *WM) !void {
 
             const is_missing = if (owned_msg) |msg|
                 std.mem.indexOf(u8, msg, "No such file") != null or
-                std.mem.indexOf(u8, msg, "cannot open") != null
+                    std.mem.indexOf(u8, msg, "cannot open") != null
             else
                 err == error.FileNotFound;
 
@@ -3474,7 +3437,7 @@ pub fn load(wm: *WM) !void {
                 pending_error = std.fmt.allocPrint(wm.allocator, "{s}", .{owned_msg orelse @errorName(err)}) catch null;
             continue;
         };
-         std.debug.print("load: doFile succeeded for '{s}'\n", .{path});
+        std.debug.print("load: doFile succeeded for '{s}'\n", .{path});
 
         // Loaded successfully
         if (pending_error) |msg| {
@@ -3497,7 +3460,6 @@ pub fn load(wm: *WM) !void {
         return;
     }
 
-    wm.post_load_error = pending_error
-        orelse std.fmt.allocPrint(wm.allocator, "no config found at $XDG_CONFIG_HOME/duckwm/config.lua or /etc/duckwm/config.lua", .{}) catch null;
+    wm.post_load_error = pending_error orelse std.fmt.allocPrint(wm.allocator, "no config found at $XDG_CONFIG_HOME/duckwm/config.lua or /etc/duckwm/config.lua", .{}) catch null;
     pending_error = null;
 }

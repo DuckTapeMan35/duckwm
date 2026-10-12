@@ -1,7 +1,13 @@
 const std = @import("std");
-const c = @import("c").c;
-const WM = @import("core.zig").WM;
+const c = @import("libc");
 const graph_mod = @import("graph");
+const types = @import("types");
+const WM = @import("core.zig").WM;
+
+/// A swallow rule name matches a window by class or by instance.
+fn matches(name: []const u8, info: *const types.WindowInfo) bool {
+    return std.mem.eql(u8, name, info.class()) or std.mem.eql(u8, name, info.instance());
+}
 
 fn read_ppid(pid: u32) ?u32 {
     var buf: [64]u8 = undefined;
@@ -30,42 +36,7 @@ fn is_ancestor(ancestor_pid: u32, child_pid: u32) bool {
     return false;
 }
 
-fn get_wm_class(display: *c.Display, win: c.Window, buf: []u8) ?[]const u8 {
-    var hint: c.XClassHint = std.mem.zeroes(c.XClassHint);
-    if (c.XGetClassHint(display, win, &hint) == 0) return null;
-    defer {
-        if (hint.res_name)  |n|  _ = c.XFree(n);
-        if (hint.res_class) |cl| _ = c.XFree(cl);
-    }
-    const cl = hint.res_class orelse return null;
-    const span = std.mem.span(cl);
-    if (span.len > buf.len) return null;
-    @memcpy(buf[0..span.len], span);
-    return buf[0..span.len];
-}
-
-fn get_net_wm_pid(display: *c.Display, win: c.Window) ?u32 {
-    const net_wm_pid = c.XInternAtom(display, "_NET_WM_PID", 0);
-    var actual_type: c.Atom = undefined;
-    var actual_format: c_int = undefined;
-    var nitems: c_ulong = undefined;
-    var bytes_after: c_ulong = undefined;
-    var prop: [*c]u8 = null;
-    const result = c.XGetWindowProperty(
-        display, win, net_wm_pid,
-        0, 1, 0, c.AnyPropertyType,
-        &actual_type, &actual_format, &nitems, &bytes_after, &prop,
-    );
-    if (result != c.Success or prop == null or nitems == 0) {
-        if (prop != null) _ = c.XFree(prop);
-        return null;
-    }
-    defer _ = c.XFree(prop);
-    const pid: c_ulong = @as(*c_ulong, @ptrCast(@alignCast(prop))).*;
-    return @intCast(pid);
-}
-
-pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
+pub fn try_terminal_died(wm: *WM, win: types.WindowHandle) bool {
     const term_id = wm.window_to_node_id.get(win) orelse return false;
     const term_node = wm.node_registry.get(term_id) orelse return false;
 
@@ -78,17 +49,19 @@ pub fn try_terminal_died(wm: *WM, win: c.Window) bool {
             break;
         }
     }
-    const child = holder orelse return false;  // not a parked terminal
+    const child = holder orelse return false; // not a parked terminal
     if (child.owner_graph != wm.current_graph) return false;
 
     // Terminal is gone; the child keeps the slot (it already has the terminal's constraints).
     child.parked_term = null;
 
-    if (wm.frames.get(win) != null) wm.destroy_frame(win);
+    wm.backend.unframe(win, false);
     _ = wm.window_to_node_id.remove(win);
     _ = wm.node_registry.remove(term_id);
     if (wm.focused == term_node) wm.focused = null;
-    if (child.owner_graph) |og| { if (og.fullscreen_node == term_node) og.fullscreen_node = null; }
+    if (child.owner_graph) |og| {
+        if (og.fullscreen_node == term_node) og.fullscreen_node = null;
+    }
     term_node.deinit(wm.allocator);
     wm.allocator.destroy(term_node);
 
@@ -99,49 +72,42 @@ pub fn try_swallow(wm: *WM, child_id: u32) void {
     if (wm.swallow_pairs.items.len == 0) return;
 
     const child_node = wm.node_registry.get(child_id) orelse return;
-    const child_win = switch (child_node.content) {
-        .window => |w| w,
-        else => return,
-    };
+    if (child_node.content != .window) return;
+    if (child_node.info.class_len == 0 and child_node.info.instance_len == 0) return;
 
-    var child_buf: [256]u8 = undefined;
-    const child_cls = get_wm_class(wm.display, child_win, &child_buf) orelse return;
+    const child_cls = child_node.info.class();
+    if (child_cls.len == 0) return;
 
-    // Bail early if this class never swallows anything
+    // Bail early if this window never swallows anything
     var any = false;
     for (wm.swallow_pairs.items) |p| {
-        if (std.mem.eql(u8, p.child, child_cls)) { any = true; break; }
+        if (matches(p.child, &child_node.info)) {
+            any = true;
+            break;
+        }
     }
     if (!any) return;
 
-    const child_pid = get_net_wm_pid(wm.display, child_win) orelse return;
+    const child_pid = child_node.info.pid orelse return;
 
-    var term_buf: [256]u8 = undefined;
     var it = wm.node_registry.iterator();
     while (it.next()) |entry| {
         const term_id = entry.key_ptr.*;
         if (term_id == child_id) continue;
         const term_node = entry.value_ptr.*;
         if (term_node.owner_graph != wm.current_graph) continue;
-        const term_win = switch (term_node.content) {
-            .window => |w| w,
-            else => continue,
-        };
-
-        const term_cls = get_wm_class(wm.display, term_win, &term_buf) orelse continue;
+        if (term_node.content != .window) continue;
 
         var matched = false;
         for (wm.swallow_pairs.items) |p| {
-            if (std.mem.eql(u8, p.terminal, term_cls) and
-                std.mem.eql(u8, p.child, child_cls))
-            {
+            if (matches(p.terminal, &term_node.info) and matches(p.child, &child_node.info)) {
                 matched = true;
                 break;
             }
         }
         if (!matched) continue;
 
-        const term_pid = get_net_wm_pid(wm.display, term_win) orelse continue;
+        const term_pid = term_node.info.pid orelse continue;
         if (!is_ancestor(term_pid, child_pid)) continue;
 
         do_swallow(wm, term_id, term_node, child_node);
@@ -154,14 +120,14 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
 
     child_node.constraints.deinit(wm.allocator);
     child_node.constraints = term_node.constraints;
-    term_node.constraints  = .{ .items = &.{}, .capacity = 0 };
+    term_node.constraints = .{ .items = &.{}, .capacity = 0 };
 
     rewrite_refs(g, term_node, child_node);
 
     var term_idx: ?usize = null;
     var child_idx: ?usize = null;
     for (g.nodes.items, 0..) |n, i| {
-        if (n == term_node)  term_idx  = i;
+        if (n == term_node) term_idx = i;
         if (n == child_node) child_idx = i;
     }
 
@@ -169,21 +135,10 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
     if (child_idx) |ci| _ = g.nodes.swapRemove(ci);
 
     child_node.owner_graph = g;
-    term_node.owner_graph  = null;
-
+    term_node.owner_graph = null;
     child_node.hidden = false;
-
-    switch (term_node.content) {
-        .window => |win| {
-            if (wm.frames.get(win)) |frame| {
-                _ = c.XUnmapWindow(wm.display, frame);
-                _ = c.XFlush(wm.display);
-            }
-        },
-        else => {},
-    }
-
     child_node.parked_term = term_node;
+
     if (g.fullscreen_node == term_node) g.fullscreen_node = null;
 
     // Notify arranger the terminal unmapped so its internal list is correct
@@ -197,14 +152,14 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
 
 pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     const child_node = wm.node_registry.get(child_id) orelse return false;
-    const term_node  = child_node.parked_term orelse return false;
+    const term_node = child_node.parked_term orelse return false;
     const g = child_node.owner_graph orelse return false;
     if (g != wm.current_graph) return false;
     child_node.parked_term = null;
 
     // Transfer constraints back: child -> term
     term_node.constraints.deinit(wm.allocator);
-    term_node.constraints  = child_node.constraints;
+    term_node.constraints = child_node.constraints;
     child_node.constraints = .{ .items = &.{}, .capacity = 0 };
 
     // Rewrite graph-wide constraint references: child -> term
@@ -218,16 +173,13 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
         }
     }
 
-    term_node.owner_graph  = g;
+    term_node.owner_graph = g;
     child_node.owner_graph = null;
 
     // Fully destroy the child's frame and clean up registries
     switch (child_node.content) {
         .window => |win| {
-            if (wm.frames.get(win)) |frame| {
-                _ = c.XUnmapWindow(wm.display, frame);
-            }
-            wm.destroy_frame(win);
+            wm.backend.unframe(win, false);
             _ = wm.window_to_node_id.remove(win);
         },
         else => {},
@@ -237,19 +189,6 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     // Free the child node itself
     child_node.deinit(wm.allocator);
     wm.allocator.destroy(child_node);
-
-    // Remap terminal's frame
-    switch (term_node.content) {
-        .window => |win| {
-            if (wm.frames.get(win)) |frame| {
-                _ = c.XMapWindow(wm.display, frame);
-                _ = c.XMapWindow(wm.display, win);
-                _ = c.XRaiseWindow(wm.display, frame);
-                _ = c.XFlush(wm.display);
-            }
-        },
-        else => {},
-    }
 
     if (wm.focused == child_node) wm.focused = null;
     if (g.fullscreen_node == child_node) g.fullscreen_node = null;
@@ -266,17 +205,37 @@ fn rewrite_refs(g: *graph_mod.Graph, old: *graph_mod.Node, new: *graph_mod.Node)
     for (g.nodes.items) |n| {
         for (n.constraints.items) |*con| {
             switch (con.*) {
-                .left_of      => |*o| if (o.* == old) { o.* = new; },
-                .right_of     => |*o| if (o.* == old) { o.* = new; },
-                .above        => |*o| if (o.* == old) { o.* = new; },
-                .below        => |*o| if (o.* == old) { o.* = new; },
-                .align_left   => |*o| if (o.* == old) { o.* = new; },
-                .align_top    => |*o| if (o.* == old) { o.* = new; },
-                .align_right  => |*o| if (o.* == old) { o.* = new; },
-                .align_bottom => |*o| if (o.* == old) { o.* = new; },
-                .equal_width  => |*o| if (o.* == old) { o.* = new; },
-                .equal_height => |*o| if (o.* == old) { o.* = new; },
-                .grid_cell     => |*gc| {
+                .left_of => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .right_of => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .above => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .below => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .align_left => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .align_top => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .align_right => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .align_bottom => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .equal_width => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .equal_height => |*o| if (o.* == old) {
+                    o.* = new;
+                },
+                .grid_cell => |*gc| {
                     if (gc.container == old) gc.container = new;
                 },
                 .grid_cell_abs => |*gc| {
