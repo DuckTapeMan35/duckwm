@@ -23,12 +23,23 @@
           zig
           zls
           pkg-config
+          river
+          foot
         ];
         buildInputs = with pkgs; [
+          #x11 backend
           libx11
           libxft
           libxcursor
           stdenv.cc.libc.dev
+
+          # river backend
+          wayland
+          wayland-scanner
+          wayland-protocols
+          libxkbcommon
+          fcft
+          pixman
         ];
       };
     };

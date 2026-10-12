@@ -1,5 +1,5 @@
-// Selection point. Later this becomes a switch on a build option.
-pub const Backend = @import("x11").Backend;
+pub const Backend = @import("platform").Backend;
+pub const platform_id = @import("platform").id;
 
 pub const WindowHandle = @import("types").WindowHandle;
 
@@ -47,6 +47,7 @@ comptime {
         "unframe",
         "create_preview_window",
         "destroy_preview_window",
+        "end_session",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

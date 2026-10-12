@@ -6,7 +6,7 @@ const core = @import("core.zig");
 const WM = core.WM;
 const swallow_mod = @import("swallow.zig");
 
-fn sweep_dead_containers(wm: *WM) void {
+pub fn sweep_dead_containers(wm: *WM) void {
     const g = wm.current_graph;
     var i: usize = 0;
     while (i < g.nodes.items.len) {
@@ -202,14 +202,12 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
         try wm.flush(wm.current_graph);
         if (focused_is_dying) {
             wm.focused = next_focus;
-            if (next_focus) |n| wm.focus(n) else {
-                _ = wm.backend.set_input_focus(null, false);
-            }
+            if (next_focus) |n| wm.focus(n) else wm.clear_focus();
         }
         wm.sync_workspace_state();
     } else {
         if (focused_is_dying) wm.focused = null;
-        _ = wm.backend.set_input_focus(null, false);
+        wm.focus_dirty = true;
         wm.current_graph.focus_edges.clearRetainingCapacity();
     }
 }

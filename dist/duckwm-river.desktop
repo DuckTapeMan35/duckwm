@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=duckwm (river)
+Comment=duckwm running on the river Wayland compositor
+Exec=river -c duckwm
+Type=Application

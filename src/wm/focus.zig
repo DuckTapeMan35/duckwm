@@ -137,10 +137,9 @@ pub fn focus_down(wm: *WM) anyerror!void {
 
 pub fn set_focus(wm: *WM, node: *Node) void {
     wm.focused = node;
+    wm.focus_dirty = true;
+    if (!wm.is_shown(node)) return; // nothing on screen to focus (yet)
     const g = wm.current_graph;
-    const h = WM.node_window(node) orelse return;
-    if (!wm.backend.set_input_focus(h, node.content == .window)) return;
-
     wm.focus_clock += 1;
     node.focus_serial = wm.focus_clock;
     node.urgent = false;
@@ -180,13 +179,10 @@ pub fn set_focus(wm: *WM, node: *Node) void {
             g.pan_y = 0;
             pan_changed = true;
         }
-
-        if (pan_changed) {
-            wm.flush(g) catch {};
-        }
     }
 
-    for (g.nodes.items) |n| wm.paint_borders(n, null);
+    // Focus changes border colors (and which window counts as fullscreen-focused).
+    wm.flush(g) catch {};
     if (wm.get_id_for_node(node)) |id| wm.call_arranger(g, "focus", id, null);
 }
 

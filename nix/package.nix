@@ -4,13 +4,29 @@
   runCommand,
   zig,
   pkg-config,
+  # x11
   libx11,
   libxft,
   libxcursor,
+  # river
+  river,
+  wayland,
+  wayland-scanner,
+  wayland-protocols,
+  libxkbcommon,
+  fcft,
+  pixman,
+  platform ? "x11",
 }:
+
+assert lib.assertOneOf "platform" platform [
+  "x11"
+  "river"
+];
 
 let
   src = ../.;
+  isRiver = platform == "river";
 
   depsTarballs = stdenv.mkDerivation {
     name = "duckwm-deps-tarballs";
@@ -24,7 +40,7 @@ let
     installPhase = "cp -r $TMPDIR/zig-cache/p $out";
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-j6TpiEZlcuUXPHLN1K0TRhRIxdEb5qy05nOCCk8KBzo=";
+    outputHash = "sha256-EVniAMInYX18XsTdwBzBwKcKkMzbVC4UGXNNu58TYyY=";
   };
 
   deps = runCommand "duckwm-deps" { } ''
@@ -42,20 +58,35 @@ let
   '';
 in
 stdenv.mkDerivation {
-  pname = "duckwm";
+  pname = if isRiver then "duckwm-river" else "duckwm";
   version = "0.1.0";
   inherit src;
 
   nativeBuildInputs = [
     zig
     pkg-config
-  ];
+  ]
+  ++ lib.optionals isRiver [ wayland-scanner ];
+
   buildInputs = [
-    libx11
-    libxft
-    libxcursor
     stdenv.cc.libc.dev
-  ];
+  ]
+  ++ (
+    if isRiver then
+      [
+        wayland
+        wayland-protocols
+        libxkbcommon
+        fcft
+        pixman
+      ]
+    else
+      [
+        libx11
+        libxft
+        libxcursor
+      ]
+  );
 
   dontConfigure = true;
   dontBuild = true;
@@ -64,20 +95,36 @@ stdenv.mkDerivation {
     runHook preInstall
     export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
     make install PREFIX=$out SYSCONFDIR=$out/etc \
-      BUILD_FLAGS="--system ${deps} -Doptimize=ReleaseFast"
+      BUILD_FLAGS="--system ${deps} -Doptimize=ReleaseFast -Dplatform=${platform}"
     runHook postInstall
   '';
 
   postInstall = ''
     install -Dm644 dist/luarc.json $out/share/duckwm/luarc.json
-    substituteInPlace $out/share/xsessions/duckwm.desktop \
-      --replace-fail "Exec=duckwm" "Exec=$out/bin/duckwm"
-  '';
+  ''
+  + (
+    if isRiver then
+      ''
+        # river launches its window manager, so the session entry starts river.
+        rm -rf $out/share/xsessions
+        install -Dm644 dist/duckwm-river.desktop $out/share/wayland-sessions/duckwm-river.desktop
+        substituteInPlace $out/share/wayland-sessions/duckwm-river.desktop \
+          --replace-fail "Exec=river -c duckwm" "Exec=${lib.getExe river} -c $out/bin/duckwm"
+      ''
+    else
+      ''
+        substituteInPlace $out/share/xsessions/duckwm.desktop \
+          --replace-fail "Exec=duckwm" "Exec=$out/bin/duckwm"
+      ''
+  );
 
-  passthru.providedSessions = [ "duckwm" ];
+  passthru.providedSessions = [ (if isRiver then "duckwm-river" else "duckwm") ];
 
   meta = {
-    description = "Graph-based X11 tiling window manager with a Lua configuration API";
+    description =
+      "Graph-based tiling window manager with a Lua configuration API ("
+      + (if isRiver then "river/Wayland" else "X11")
+      + ")";
     homepage = "https://github.com/DuckTapeMan35/duckwm";
     license = lib.licenses.gpl3Plus;
     mainProgram = "duckwm";

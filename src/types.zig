@@ -6,6 +6,11 @@ fn utf8_prefix_len(s: []const u8, max: usize) usize {
     return n;
 }
 
+pub const platform = struct {
+    pub const x11 = 1;
+    pub const river = 2;
+};
+
 pub const Event = union(enum) {
     /// A bound key was pressed.
     key: KeyCombo,

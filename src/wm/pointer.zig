@@ -196,7 +196,7 @@ fn resize_floating(wm: *WM, focused: *Node, pos: types.Point) void {
         wm.resolve(wm.current_graph) catch {};
         wm.flush(wm.current_graph) catch {};
         wm.repaint_preview(focused);
-        wm.backend.sync();
+        wm.sync_on_commit = true;
     }
 }
 
@@ -236,7 +236,7 @@ fn resize_tiled(wm: *WM, pos: types.Point) void {
     wm.last_flushed_edge_x = cx;
     wm.last_flushed_edge_y = cy;
     wm.flush(wm.current_graph) catch {};
-    wm.backend.sync();
+    wm.sync_on_commit = true;
 }
 
 fn throttle_elapsed(wm: *WM) bool {

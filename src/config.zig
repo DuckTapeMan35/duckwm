@@ -1744,6 +1744,7 @@ fn l_get_window_name(lua: *Lua) i32 {
 
 fn l_quit(lua: *Lua) i32 {
     _ = lua;
+    global_wm.end_session();
     std.process.exit(0);
 }
 
@@ -3201,6 +3202,12 @@ fn setup_lua(wm: *WM, lua: *Lua) void {
     lua.setField(-2, "BUTTON_SCROLL_UP");
     lua.pushInteger(types.button.scroll_down);
     lua.setField(-2, "BUTTON_SCROLL_DOWN");
+    lua.pushInteger(types.platform.x11);
+    lua.setField(-2, "PLATFORM_X11");
+    lua.pushInteger(types.platform.river);
+    lua.setField(-2, "PLATFORM_RIVER");
+    lua.pushInteger(wm_mod.platform_id);
+    lua.setField(-2, "PLATFORM");
     for (registrations) |reg| {
         lua.pushFunction(reg.func);
         lua.setField(-2, reg.name);

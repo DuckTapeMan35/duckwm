@@ -63,6 +63,9 @@ pub const WM = struct {
     scene: std.ArrayListUnmanaged(types.WindowState),
     preview_defaults: preview_mod.Defaults,
     preview_items: std.ArrayListUnmanaged(types.PreviewItem),
+    scene_dirty: bool,
+    focus_dirty: bool,
+    sync_on_commit: bool,
 
     // user defined keybindings
     keybinds: std.AutoHashMap(KeybindKey, Keybind),
@@ -176,6 +179,9 @@ pub const WM = struct {
             .scene = .empty,
             .preview_defaults = .{},
             .preview_items = .empty,
+            .scene_dirty = false,
+            .focus_dirty = false,
+            .sync_on_commit = false,
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
@@ -477,6 +483,10 @@ pub const WM = struct {
 
     pub fn set_preview_font(self: *WM, name: []const u8) void {
         self.preview_defaults.set_font(name);
+    }
+
+    pub fn end_session(self: *WM) void {
+        self.backend.end_session();
     }
 
     pub fn alloc_workspace_id(self: *WM, level: u32) !graph_mod.GraphId {
@@ -918,8 +928,13 @@ pub const WM = struct {
         self.backend.set_click_to_focus(enabled);
     }
 
+    /// Ask for g's state to be pushed to the screen at the next commit.
     pub fn flush(self: *WM, g: *Graph) !void {
-        if (g != self.visible_graph) return;
+        if (g == self.visible_graph) self.scene_dirty = true;
+    }
+
+    fn apply_scene(self: *WM) !void {
+        const g = self.visible_graph;
         self.flushing = true;
         defer self.flushing = false;
 
@@ -934,6 +949,53 @@ pub const WM = struct {
         for (g.nodes.items) |node| {
             if (node.content == .workspace and self.preview_visible(node)) self.repaint_preview(node);
         }
+    }
+
+    /// Push everything changed during this loop iteration to the backend, once.
+    pub fn commit(self: *WM) void {
+        if (self.scene_dirty) {
+            // Catch containers emptied by any path, not just a close.
+            const g = self.visible_graph;
+            const before = g.nodes.items.len;
+            lifecycle.sweep_dead_containers(self);
+            if (g.nodes.items.len != before) {
+                self.resolve(g) catch {};
+                self.rebuild_focus_edges() catch {};
+            }
+
+            self.scene_dirty = false;
+            self.apply_scene() catch |err| std.debug.print("commit: {}\n", .{err});
+        }
+        // After the scene, so a window focused this iteration is already mapped.
+        if (self.focus_dirty) {
+            self.focus_dirty = false;
+            if (self.focused) |n| {
+                if (self.is_shown(n)) {
+                    if (node_window(n)) |h| _ = self.backend.set_input_focus(h, n.content == .window);
+                }
+            } else {
+                _ = self.backend.set_input_focus(null, false);
+            }
+        }
+        if (self.sync_on_commit) {
+            self.sync_on_commit = false;
+            self.backend.sync();
+        }
+    }
+
+    /// Will node be on screen after the next commit?
+    pub fn is_shown(self: *WM, node: *Node) bool {
+        if (node.owner_graph != self.visible_graph) return false;
+        return switch (node.content) {
+            .window => !node.hidden,
+            .workspace => self.preview_visible(node),
+            .empty => false,
+        };
+    }
+
+    pub fn clear_focus(self: *WM) void {
+        self.focused = null;
+        self.focus_dirty = true;
     }
 
     pub fn focus(self: *WM, node: *Node) void {
@@ -1119,8 +1181,7 @@ pub const WM = struct {
         if (focus_mod.top_left_window(self)) |n| {
             self.focus(n);
         } else {
-            self.focused = null;
-            _ = self.backend.set_input_focus(null, false);
+            self.clear_focus();
         }
         self.sync_workspace_state();
     }
@@ -1142,8 +1203,7 @@ pub const WM = struct {
         const target_idx = self.find_leave_target() orelse return;
         const old = self.current_graph;
 
-        self.focused = null;
-        _ = self.backend.set_input_focus(null, false);
+        self.clear_focus();
 
         while (self.workspace_stack.items.len > target_idx + 1) {
             _ = self.workspace_stack.pop();
@@ -1159,24 +1219,9 @@ pub const WM = struct {
             self.repaint_preview(pn);
         }
         if (focus_mod.top_left_window(self)) |n| self.focus(n) else {
-            self.focused = null;
-            _ = self.backend.set_input_focus(null, false);
+            self.clear_focus();
         }
         self.sync_workspace_state();
-    }
-
-    pub fn leave_workspace_silent(self: *WM) !void {
-        if (self.workspace_stack.items.len == 0) return;
-        const target_idx = self.find_leave_target() orelse return;
-
-        hide_graph_frames(self, self.current_graph);
-        self.focused = null;
-        _ = self.backend.set_input_focus(null, false);
-
-        while (self.workspace_stack.items.len > target_idx + 1) {
-            _ = self.workspace_stack.pop();
-        }
-        self.current_graph = self.workspace_stack.pop().?;
     }
 
     pub fn send_to_workspace(self: *WM, node_id: u32, target_graph: *graph_mod.Graph) !void {
@@ -1204,9 +1249,8 @@ pub const WM = struct {
         try target_graph.nodes.append(self.allocator, node);
 
         if (self.focused == node) {
-            self.focused = null;
             if (src_graph.fullscreen_node == node) src_graph.fullscreen_node = null;
-            _ = self.backend.set_input_focus(null, false);
+            self.clear_focus();
         }
 
         // Call source arranger in source graph context
@@ -1598,7 +1642,12 @@ pub const WM = struct {
             .key => |k| self.handle_key(k),
             .expose => |h| self.window_exposed(h),
             .keymap_changed => self.regrab_keys(),
-            .reserved_area_changed => self.relayout(),
+            .reserved_area_changed => {
+                const size = self.backend.screen_size();
+                self.screen_width = size.width;
+                self.screen_height = size.height;
+                self.relayout();
+            },
             .map_request => |req| lifecycle.window_mapped(self, req) catch |err|
                 std.debug.print("map_request: {}\n", .{err}),
             .window_gone => |h| lifecycle.window_gone(self, h) catch |err|
@@ -1629,8 +1678,8 @@ pub const WM = struct {
         self.current_graph = &self.graph;
         self.graph.on_node_free = on_node_freed;
         self.graph.on_node_free_ctx = self;
-        self.backend.start() catch {
-            std.debug.print("Another window manager is already running. Exiting.\n", .{});
+        self.backend.start() catch |err| {
+            std.debug.print("duckwm: backend failed to start: {}\n", .{err});
             return;
         };
         try self.create_initial_workspace();
@@ -1644,6 +1693,7 @@ pub const WM = struct {
         }
 
         self.startup_done = true;
+        self.commit();
 
         try self.init_ipc();
         const x11_fd = self.backend.event_fd();
@@ -1694,6 +1744,7 @@ pub const WM = struct {
                 self.pending_reload = false;
                 if (self.reload_fn) |f| f(self);
             }
+            self.commit();
             self.backend.flush_output();
         }
     }

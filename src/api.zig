@@ -45,6 +45,9 @@ pub const constants = [_]Constant{
     .{ .name = "BUTTON_RIGHT", .desc = "Right mouse button (3)" },
     .{ .name = "BUTTON_SCROLL_UP", .desc = "Scroll wheel up (4)" },
     .{ .name = "BUTTON_SCROLL_DOWN", .desc = "Scroll wheel down (5)" },
+    .{ .name = "PLATFORM_X11", .desc = "X11 backend" },
+    .{ .name = "PLATFORM_RIVER", .desc = "river (Wayland) backend" },
+    .{ .name = "PLATFORM", .desc = "Backend this build of duckwm uses: wm.PLATFORM_X11 or wm.PLATFORM_RIVER" },
 };
 
 pub const entries = [_]ApiEntry{

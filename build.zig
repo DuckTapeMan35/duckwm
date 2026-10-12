@@ -1,5 +1,6 @@
 const std = @import("std");
 const api = @import("src/api.zig");
+const Scanner = @import("wayland").Scanner;
 
 const MetaStep = struct {
     step: std.Build.Step,
@@ -166,9 +167,12 @@ const MetaStep = struct {
     }
 };
 
+const Platform = enum { x11, river };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const platform = b.option(Platform, "platform", "Display server backend (default: x11)") orelse .x11;
 
     // ---- C headers ----
 
@@ -225,13 +229,55 @@ pub fn build(b: *std.Build) void {
     x11_mod.linkSystemLibrary("X11", .{});
     x11_mod.linkSystemLibrary("Xcursor", .{});
 
+    const platform_mod = switch (platform) {
+        .x11 => x11_mod,
+        .river => blk: {
+            const scanner = Scanner.create(b, .{});
+            scanner.addCustomProtocol(b.path("protocol/river-window-management-v1.xml"));
+            scanner.addCustomProtocol(b.path("protocol/river-xkb-bindings-v1.xml"));
+            scanner.addCustomProtocol(b.path("protocol/river-layer-shell-v1.xml"));
+            scanner.generate("river_window_manager_v1", 4);
+            scanner.generate("river_xkb_bindings_v1", 1);
+            scanner.generate("river_layer_shell_v1", 1);
+            scanner.generate("wl_compositor", 4);
+            scanner.generate("wl_shm", 1);
+
+            const rc_tc = b.addTranslateC(.{
+                .root_source_file = b.path("src/river/c.h"),
+                .target = target,
+                .optimize = optimize,
+            });
+            rc_tc.linkSystemLibrary("fcft", .{ .use_pkg_config = .force });
+            rc_tc.linkSystemLibrary("pixman-1", .{ .use_pkg_config = .force });
+
+            const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
+
+            const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");
+
+            const river_mod = b.createModule(.{
+                .root_source_file = b.path("src/river.zig"),
+                .target = target,
+                .link_libc = true,
+            });
+            river_mod.addImport("types", types_mod);
+            river_mod.addImport("wayland", wayland_mod);
+            river_mod.addImport("xkbcommon", xkbcommon);
+            river_mod.linkSystemLibrary("xkbcommon", .{});
+            river_mod.linkSystemLibrary("wayland-client", .{});
+            river_mod.addImport("rc", rc_tc.createModule());
+            river_mod.linkSystemLibrary("fcft", .{});
+            river_mod.linkSystemLibrary("pixman-1", .{});
+            break :blk river_mod;
+        },
+    };
+
     const wm_mod = b.addModule("wm", .{
         .root_source_file = b.path("src/wm.zig"),
         .target = target,
     });
     wm_mod.addImport("graph", graph_mod);
     wm_mod.addImport("types", types_mod);
-    wm_mod.addImport("x11", x11_mod);
+    wm_mod.addImport("platform", platform_mod);
     wm_mod.addImport("libc", libc_mod);
     wm_mod.addImport("ziglua", zlua);
 

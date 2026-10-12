@@ -1395,4 +1395,9 @@ pub const Backend = struct {
         }
         return false;
     }
+
+    /// On X the session ends when the WM's process does (xinit/startx), so nothing to do.
+    pub fn end_session(self: *Backend) void {
+        _ = self;
+    }
 };
