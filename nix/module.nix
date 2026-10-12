@@ -7,28 +7,43 @@
 
 let
   cfg = config.programs.duckwm;
+  hasX11 = lib.elem "x11" cfg.platforms;
+  hasRiver = lib.elem "river" cfg.platforms;
+  packages = lib.optional hasX11 cfg.package ++ lib.optional hasRiver cfg.riverPackage;
+  # config.lua, docs and stubs are identical in both; take them from either.
+  shared = if hasX11 then cfg.package else cfg.riverPackage;
 in
 {
   options.programs.duckwm = {
     enable = lib.mkEnableOption "duckwm, a graph-based tiling window manager";
 
-    platform = lib.mkOption {
-      type = lib.types.enum [
+    platforms = lib.mkOption {
+      type = lib.types.nonEmptyListOf (
+        lib.types.enum [
+          "x11"
+          "river"
+        ]
+      );
+      default = [ "x11" ];
+      example = [
         "x11"
         "river"
       ];
-      default = "x11";
-      description = ''
-        Display server backend. "x11" runs duckwm as an X11 window manager;
-        "river" runs it as the window manager of the river Wayland compositor.
-      '';
+      description = "Backends to install. Each one adds its own session to the display manager.";
     };
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ./package.nix { inherit (cfg) platform; };
-      defaultText = lib.literalExpression "duckwm.packages.\${system}.duckwm (or duckwm-river, per `platform`)";
-      description = "The duckwm package to use.";
+      default = pkgs.callPackage ./package.nix { };
+      defaultText = lib.literalExpression "duckwm.packages.\${system}.duckwm";
+      description = "The X11 duckwm package.";
+    };
+
+    riverPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.callPackage ./package.nix { platform = "river"; };
+      defaultText = lib.literalExpression "duckwm.packages.\${system}.duckwm-river";
+      description = "The river duckwm package.";
     };
 
     installUserFiles = lib.mkOption {
@@ -46,23 +61,22 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        environment.systemPackages = [ cfg.package ];
-        services.displayManager.sessionPackages = [ cfg.package ];
+        environment.systemPackages = packages;
+        services.displayManager.sessionPackages = packages;
 
-        environment.etc."duckwm/config.lua".source = "${cfg.package}/etc/duckwm/config.lua";
+        environment.etc."duckwm/config.lua".source = "${shared}/etc/duckwm/config.lua";
 
         systemd.user.tmpfiles.rules = lib.mkIf cfg.installUserFiles [
-          "L+ %h/.config/duckwm/meta/wm.lua   - - - - ${cfg.package}/share/duckwm/meta/wm.lua"
-          "L+ %h/.config/duckwm/docs/API.md   - - - - ${cfg.package}/share/doc/duckwm/API.md"
-          "L+ %h/.config/duckwm/docs/API.norg - - - - ${cfg.package}/share/doc/duckwm/API.norg"
-          "C  %h/.config/duckwm/.luarc.json   - - - - ${cfg.package}/share/duckwm/luarc.json"
-          "C  %h/.config/duckwm/config.lua    - - - - ${cfg.package}/etc/duckwm/config.lua"
+          "L+ %h/.config/duckwm/meta/wm.lua   - - - - ${shared}/share/duckwm/meta/wm.lua"
+          "L+ %h/.config/duckwm/docs/API.md   - - - - ${shared}/share/doc/duckwm/API.md"
+          "L+ %h/.config/duckwm/docs/API.norg - - - - ${shared}/share/doc/duckwm/API.norg"
+          "C  %h/.config/duckwm/.luarc.json   - - - - ${shared}/share/duckwm/luarc.json"
+          "C  %h/.config/duckwm/config.lua    - - - - ${shared}/etc/duckwm/config.lua"
         ];
       }
 
-      (lib.mkIf (cfg.platform == "river") {
+      (lib.mkIf hasRiver {
         environment.systemPackages = [ pkgs.river ];
-        # A Wayland session needs these on NixOS.
         hardware.graphics.enable = lib.mkDefault true;
         security.polkit.enable = lib.mkDefault true;
       })

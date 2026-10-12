@@ -105,11 +105,11 @@ stdenv.mkDerivation {
   + (
     if isRiver then
       ''
-        # river launches its window manager, so the session entry starts river.
+        mv $out/bin/duckwm $out/bin/duckwm-river
         rm -rf $out/share/xsessions
         install -Dm644 dist/duckwm-river.desktop $out/share/wayland-sessions/duckwm-river.desktop
         substituteInPlace $out/share/wayland-sessions/duckwm-river.desktop \
-          --replace-fail "Exec=river -c duckwm" "Exec=${lib.getExe river} -c $out/bin/duckwm"
+          --replace-fail "Exec=river -c duckwm" "Exec=${lib.getExe river} -c $out/bin/duckwm-river"
       ''
     else
       ''
@@ -127,7 +127,7 @@ stdenv.mkDerivation {
       + ")";
     homepage = "https://github.com/DuckTapeMan35/duckwm";
     license = lib.licenses.gpl3Plus;
-    mainProgram = "duckwm";
+    mainProgram = if isRiver then "duckwm-river" else "duckwm";
     platforms = lib.platforms.linux;
   };
 }
