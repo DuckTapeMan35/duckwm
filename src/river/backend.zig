@@ -3,6 +3,7 @@ const surface = @import("surface.zig");
 const types = @import("types");
 const wayland = @import("wayland");
 const xkb = @import("xkbcommon");
+const c = @import("rc");
 const wl = wayland.client.wl;
 const river = wayland.client.river;
 
@@ -131,6 +132,13 @@ const State = struct {
 
     wm: ?*river.WindowManagerV1 = null,
     xkb_bindings: ?*river.XkbBindingsV1 = null,
+    xkb_config: ?*river.XkbConfigV1 = null,
+    keyboards: std.ArrayListUnmanaged(*river.XkbKeyboardV1) = .empty,
+    /// Accepted by river and applied to every keyboard, including new ones.
+    keymap: ?*river.XkbKeymapV1 = null,
+    /// Sent, waiting for river's success/failure.
+    pending_keymap: ?*river.XkbKeymapV1 = null,
+    layout_index: ?u32 = null,
     layer_shell: ?*river.LayerShellV1 = null,
     seat: ?*river.SeatV1 = null,
     layer_seat: ?*river.LayerShellSeatV1 = null,
@@ -214,6 +222,20 @@ const State = struct {
     fn live(s: *State, h: types.WindowHandle) ?*Window {
         const w = s.windows.get(h) orelse return null;
         return if (w.closed) null else w;
+    }
+
+    // --- keyboard ---
+    fn configure_keyboard(s: *State, kb: *river.XkbKeyboardV1) void {
+        if (s.keymap) |km| kb.setKeymap(km);
+        if (s.layout_index) |i| kb.setLayoutByIndex(@intCast(i));
+    }
+
+    fn keymap_ready(s: *State, km: *river.XkbKeymapV1) void {
+        if (s.pending_keymap != km) return km.destroy(); // superseded by a newer one
+        s.pending_keymap = null;
+        if (s.keymap) |old| old.destroy();
+        s.keymap = km;
+        for (s.keyboards.items) |kb| s.configure_keyboard(kb);
     }
 
     // ---- windows ----
@@ -664,10 +686,10 @@ fn opt_eql(a: ?u32, b: ?u32) bool {
 /// 0xRRGGBB to the protocol's four 32-bit (pre-multiplied, here opaque) components.
 fn send_borders(w: *Window) void {
     const edges: river.WindowV1.Edges = @bitCast(if (w.want_border_color != null and w.want_border_width > 0) all_edges else 0);
-    const c = w.want_border_color orelse 0;
-    const r: u32 = (c >> 16) & 0xff;
-    const g: u32 = (c >> 8) & 0xff;
-    const b: u32 = c & 0xff;
+    const bc = w.want_border_color orelse 0;
+    const r: u32 = (bc >> 16) & 0xff;
+    const g: u32 = (bc >> 8) & 0xff;
+    const b: u32 = bc & 0xff;
     w.obj.setBorders(edges, @intCast(w.want_border_width), r * 0x01010101, g * 0x01010101, b * 0x01010101, 0xffffffff);
     w.border_width = w.want_border_width;
     w.border_color = w.want_border_color;
@@ -713,6 +735,9 @@ fn registry_listener(registry: *wl.Registry, event: wl.Registry.Event, s: *State
                 s.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 4)) catch return;
             } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
                 s.shm = registry.bind(g.name, wl.Shm, 1) catch return;
+            } else if (std.mem.orderZ(u8, g.interface, river.XkbConfigV1.interface.name) == .eq) {
+                s.xkb_config = registry.bind(g.name, river.XkbConfigV1, 1) catch return;
+                s.xkb_config.?.setListener(*State, xkb_config_listener, s);
             }
         },
         .global_remove => {},
@@ -804,6 +829,43 @@ fn layer_output_listener(_: *river.LayerShellOutputV1, event: river.LayerShellOu
         .non_exclusive_area => |e| {
             o.usable = .{ .x = e.x, .y = e.y, .width = nonneg(e.width), .height = nonneg(e.height) };
             if (o.state.primary == o) o.state.push(.reserved_area_changed);
+        },
+    }
+}
+
+fn xkb_config_listener(_: *river.XkbConfigV1, event: river.XkbConfigV1.Event, s: *State) void {
+    switch (event) {
+        .xkb_keyboard => |e| {
+            s.keyboards.append(s.allocator, e.id) catch return e.id.destroy();
+            e.id.setListener(*State, keyboard_listener, s);
+            s.configure_keyboard(e.id);
+        },
+        .finished => {},
+    }
+}
+
+fn keyboard_listener(kb: *river.XkbKeyboardV1, event: river.XkbKeyboardV1.Event, s: *State) void {
+    switch (event) {
+        .removed => {
+            for (s.keyboards.items, 0..) |k, i| {
+                if (k == kb) {
+                    _ = s.keyboards.swapRemove(i);
+                    break;
+                }
+            }
+            kb.destroy();
+        },
+        else => {},
+    }
+}
+
+fn keymap_listener(km: *river.XkbKeymapV1, event: river.XkbKeymapV1.Event, s: *State) void {
+    switch (event) {
+        .success => s.keymap_ready(km),
+        .failure => |e| {
+            std.debug.print("duckwm: river rejected keymap: {s}\n", .{e.error_msg});
+            if (s.pending_keymap == km) s.pending_keymap = null;
+            km.destroy();
         },
     }
 }
@@ -1368,5 +1430,53 @@ pub const Backend = struct {
         s.cursor_theme = owned;
         s.cursor_size = size;
         if (s.seat) |seat| seat.setXcursorTheme(owned.ptr, size);
+    }
+
+    pub fn set_keymap(self: *Backend, km: types.Keymap) bool {
+        const s = self.state;
+        const config = s.xkb_config orelse return false;
+
+        var arena = std.heap.ArenaAllocator.init(s.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const z = struct {
+            fn f(al: std.mem.Allocator, v: []const u8) ?[*:0]const u8 {
+                if (v.len == 0) return null;
+                return (al.dupeZ(u8, v) catch return null).ptr;
+            }
+        }.f;
+
+        const ctx = xkb.Context.new(.no_flags) orelse return false;
+        defer ctx.unref();
+        var names: xkb.RuleNames = .{
+            .rules = null,
+            .model = z(a, km.model),
+            .layout = z(a, km.layout),
+            .variant = z(a, km.variant),
+            .options = z(a, km.options),
+        };
+        const keymap = xkb.Keymap.newFromNames(ctx, &names, .no_flags) orelse return false;
+        defer keymap.unref();
+        const text = keymap.getAsString(.text_v1) orelse return false;
+        defer std.c.free(text);
+        const bytes = std.mem.span(text);
+
+        // river mmaps this: a sealed memfd holding the keymap text plus its NUL.
+        const fd = c.memfd_create("duckwm-keymap", c.MFD_CLOEXEC | c.MFD_ALLOW_SEALING);
+        if (fd < 0) return false;
+        defer _ = c.close(fd);
+        if (c.write(fd, bytes.ptr, bytes.len + 1) != @as(isize, @intCast(bytes.len + 1))) return false;
+        _ = c.fcntl(fd, c.F_ADD_SEALS, c.F_SEAL_SHRINK | c.F_SEAL_GROW | c.F_SEAL_WRITE | c.F_SEAL_SEAL);
+
+        const obj = config.createKeymap(fd, .text_v1) catch return false;
+        obj.setListener(*State, keymap_listener, s);
+        s.pending_keymap = obj; // any earlier pending one is destroyed when it answers
+        return true;
+    }
+
+    pub fn set_layout_index(self: *Backend, index: u32) void {
+        const s = self.state;
+        s.layout_index = index;
+        for (s.keyboards.items) |kb| kb.setLayoutByIndex(@intCast(index));
     }
 };

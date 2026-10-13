@@ -221,6 +221,14 @@ pub const FrameOptions = struct {
     allow_argb: bool = true,
 };
 
+/// An XKB keymap by its RMLVO names. Empty strings mean "default".
+pub const Keymap = struct {
+    layout: []const u8,
+    variant: []const u8 = "",
+    options: []const u8 = "",
+    model: []const u8 = "",
+};
+
 /// A modifier(+button) combination the WM wants to intercept. null button = any button.
 pub const PointerGrab = struct { mods: Mods, button: ?Button };
 

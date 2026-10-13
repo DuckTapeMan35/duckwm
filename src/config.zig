@@ -56,6 +56,10 @@ fn repaint_all_nodes(wm: *WM) void {
     }
 }
 
+fn opt_str(lua: *Lua, i: i32) []const u8 {
+    return if (lua.isNoneOrNil(i)) "" else lua.checkString(i);
+}
+
 fn print_graph_to_buf(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, g: *graph_mod.Graph, depth: u32) void {
     var ind = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
     defer ind.deinit(allocator);
@@ -494,7 +498,28 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_scratchpad_hide), .name = "scratchpad_hide" },
     .{ .func = ziglua.wrap(l_set_argb_frames), .name = "set_argb_frames" },
     .{ .func = ziglua.wrap(l_force_rgb_frames), .name = "force_rgb_frames" },
+    .{ .func = ziglua.wrap(l_set_keyboard_layout), .name = "set_keyboard_layout" },
+    .{ .func = ziglua.wrap(l_set_keyboard_layout_index), .name = "set_keyboard_layout_index" },
 };
+
+fn l_set_keyboard_layout(lua: *Lua) i32 {
+    const km: types.Keymap = .{
+        .layout = lua.checkString(1),
+        .variant = opt_str(lua, 2),
+        .options = opt_str(lua, 3),
+        .model = opt_str(lua, 4),
+    };
+    if (!global_wm.set_keyboard_layout(km))
+        return luaL_error_str(lua, "set_keyboard_layout: invalid layout, variant, options or model");
+    return 0;
+}
+
+fn l_set_keyboard_layout_index(lua: *Lua) i32 {
+    const i = lua.checkInteger(1);
+    if (i < 0) return luaL_error_str(lua, "set_keyboard_layout_index: index must be >= 0");
+    global_wm.set_keyboard_layout_index(@intCast(i));
+    return 0;
+}
 
 fn l_scratchpad_toggle(lua: *Lua) i32 {
     const id = check_node_id(lua, 1) orelse return 0;

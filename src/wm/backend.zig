@@ -48,6 +48,8 @@ comptime {
         "create_preview_window",
         "destroy_preview_window",
         "end_session",
+        "set_keymap",
+        "set_layout_index",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

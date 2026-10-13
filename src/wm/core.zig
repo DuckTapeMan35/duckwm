@@ -485,6 +485,15 @@ pub const WM = struct {
         self.preview_defaults.set_font(name);
     }
 
+    /// false if the backend could tell right away that the keymap is invalid.
+    pub fn set_keyboard_layout(self: *WM, km: types.Keymap) bool {
+        return self.backend.set_keymap(km);
+    }
+
+    pub fn set_keyboard_layout_index(self: *WM, index: u32) void {
+        self.backend.set_layout_index(index);
+    }
+
     pub fn end_session(self: *WM) void {
         self.backend.end_session();
     }

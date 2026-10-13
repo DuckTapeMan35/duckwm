@@ -29,6 +29,7 @@ pub const categories = [_][]const u8{
     "Rules",
     "Node Graph",
     "Debug",
+    "Input",
     "Guides",
 };
 
@@ -1388,6 +1389,29 @@ pub const entries = [_]ApiEntry{
         .desc = "Return the current split ratios of a container node as a table, or nil if the node has no split constraint.",
         .params = &.{.{ .name = "id", .typ = "integer" }},
         .ret = "number[]|nil",
+    },
+
+    // =========================================================
+    // Input
+    // =========================================================
+    .{
+        .category = "Input",
+        .name = "set_keyboard_layout",
+        .desc = "Set the XKB keymap for all keyboards. Comma-separated layouts give a multi-layout keymap (\"us,pt\"); options like \"grp:alt_shift_toggle\" add a switching key. variant, options and model may be omitted.",
+        .params = &.{
+            .{ .name = "layout", .typ = "string" },
+            .{ .name = "variant", .typ = "string?" },
+            .{ .name = "options", .typ = "string?" },
+            .{ .name = "model", .typ = "string?" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Input",
+        .name = "set_keyboard_layout_index",
+        .desc = "Switch to the layout at this 0-based index within the current keymap (\"us,pt\": 0 = us, 1 = pt).",
+        .params = &.{.{ .name = "index", .typ = "integer" }},
+        .ret = "nil",
     },
 
     // =========================================================

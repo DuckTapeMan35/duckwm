@@ -1400,4 +1400,52 @@ pub const Backend = struct {
     pub fn end_session(self: *Backend) void {
         _ = self;
     }
+
+    /// Runs setxkbmap; the server's MappingNotify then triggers keymap_changed.
+    pub fn set_keymap(self: *Backend, km: types.Keymap) bool {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+
+        var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .empty;
+        const add = struct {
+            fn f(al: std.mem.Allocator, list: *std.ArrayListUnmanaged(?[*:0]const u8), s: []const u8) void {
+                const zs = al.dupeZ(u8, s) catch return;
+                list.append(al, zs.ptr) catch {};
+            }
+        }.f;
+        add(a, &argv, "setxkbmap");
+        add(a, &argv, "-layout");
+        add(a, &argv, km.layout);
+        if (km.variant.len > 0) {
+            add(a, &argv, "-variant");
+            add(a, &argv, km.variant);
+        }
+        if (km.model.len > 0) {
+            add(a, &argv, "-model");
+            add(a, &argv, km.model);
+        }
+        // An empty -option clears what's set; setxkbmap otherwise appends.
+        add(a, &argv, "-option");
+        add(a, &argv, "");
+        if (km.options.len > 0) {
+            add(a, &argv, "-option");
+            add(a, &argv, km.options);
+        }
+        argv.append(a, null) catch return false;
+
+        const pid = c.fork();
+        if (pid < 0) return false;
+        if (pid == 0) {
+            _ = c.execvp("setxkbmap", @ptrCast(argv.items.ptr));
+            c._exit(127);
+        }
+        var status: c_int = 0;
+        _ = c.waitpid(pid, &status, 0);
+        return true;
+    }
+
+    pub fn set_layout_index(self: *Backend, index: u32) void {
+        _ = c.XkbLockGroup(self.display, c.XkbUseCoreKbd, index);
+    }
 };
