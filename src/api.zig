@@ -1262,10 +1262,10 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Appearance",
         .name = "set_animation",
-        .desc = "Set animation duration and curve for windows opening (currently river only)",
+        .desc = "Set animation duration and curve (currently river only)",
         .params = &.{
             .{ .name = "duration_ms", .typ = "integer" },
-            .{ .name = "curve", .typ = "string?" },
+            .{ .name = "curve", .typ = "string|number[]|fun(t: number): number" },
         },
         .ret = "nil",
     },

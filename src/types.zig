@@ -229,10 +229,20 @@ pub const Keymap = struct {
     model: []const u8 = "",
 };
 
+pub const curve_samples = 64;
+/// Progress at evenly spaced times 0, 1/64, ..., 1. May leave 0..1 (overshoot).
+pub const CurveTable = [curve_samples + 1]f32;
+
+pub const linear_curve: CurveTable = blk: {
+    var t: CurveTable = undefined;
+    for (&t, 0..) |*v, i| v.* = @as(f32, @floatFromInt(i)) / curve_samples;
+    break :blk t;
+};
+
 pub const Animation = struct {
     /// 0 disables animations.
     duration_ms: u32 = 0,
-    curve: Curve = .ease_out,
+    curve: CurveTable = linear_curve,
 };
 
 /// A modifier(+button) combination the WM wants to intercept. null button = any button.
@@ -250,5 +260,3 @@ pub const WindowHandle = u64;
 pub const Point = struct { x: i32, y: i32 };
 
 pub const BorderColors = struct { top: u32, bottom: u32, left: u32, right: u32 };
-
-pub const Curve = enum { linear, ease_out, ease_in_out };

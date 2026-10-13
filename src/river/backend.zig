@@ -713,7 +713,7 @@ fn displayed(s: *const State, w: *const Window, now: i64) Shown {
     if (!w.anim_active or s.anim.duration_ms == 0) return .{ .pos = w.want_pos, .size = w.want_size };
     const t: f32 = if (w.anim_start_ms == 0) 0 else @min(1.0, @as(f32, @floatFromInt(now - w.anim_start_ms)) /
         @as(f32, @floatFromInt(s.anim.duration_ms)));
-    const e = ease(s.anim.curve, t);
+    const e = ease(&s.anim.curve, t);
     return .{
         .pos = .{ .x = lerp(w.anim_from_pos.x, w.want_pos.x, e), .y = lerp(w.anim_from_pos.y, w.want_pos.y, e) },
         .size = .{
@@ -729,12 +729,12 @@ fn now_ms() i64 {
     return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
 }
 
-fn ease(curve: types.Curve, t: f32) f32 {
-    return switch (curve) {
-        .linear => t,
-        .ease_out => 1 - std.math.pow(f32, 1 - t, 3),
-        .ease_in_out => if (t < 0.5) 4 * t * t * t else 1 - std.math.pow(f32, -2 * t + 2, 3) / 2,
-    };
+fn ease(curve: *const types.CurveTable, t: f32) f32 {
+    const pos = std.math.clamp(t, 0, 1) * types.curve_samples;
+    const i: usize = @intFromFloat(@floor(pos));
+    if (i >= types.curve_samples) return curve[types.curve_samples];
+    const f = pos - @floor(pos);
+    return curve[i] + (curve[i + 1] - curve[i]) * f;
 }
 
 fn lerp(a: i32, b: i32, e: f32) i32 {
