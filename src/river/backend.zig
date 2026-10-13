@@ -60,6 +60,8 @@ const ErrorBar = struct {
 
 const Stacked = struct { node: *river.NodeV1, serial: u64 };
 
+const Shown = struct { pos: types.Point, size: types.Size };
+
 const Window = struct {
     state: *State,
     obj: *river.WindowV1,
@@ -96,8 +98,12 @@ const Window = struct {
 
     // animation fields
     anim_active: bool = false,
-    anim_from: types.Point = .{ .x = 0, .y = 0 },
+    /// 0 = start at the next render, once river has the new sizes on screen.
     anim_start_ms: i64 = 0,
+    anim_from_pos: types.Point = .{ .x = 0, .y = 0 },
+    anim_from_size: types.Size = .{ .width = 0, .height = 0 },
+    /// Content clip box last sent.
+    clip: ?types.Size = null,
 };
 
 const Output = struct {
@@ -213,6 +219,11 @@ const State = struct {
     /// Some window is mid-animation: keep requesting frames.
     animating: bool = false,
     last_frame_ms: i64 = 0,
+    /// An animation just ended: final sizes must be proposed.
+    settle: bool = false,
+    /// Hovered window reported this batch; acted on at manage_start.
+    pending_enter: ?types.WindowHandle = null,
+    pos_at_last_manage: types.Point = .{ .x = 0, .y = 0 },
 
     fn push(s: *State, ev: types.Event) void {
         // Coalesce: only the latest pointer position and one relayout matter.
@@ -357,6 +368,12 @@ const State = struct {
     fn start_manage(s: *State) void {
         // Properties of new windows arrive before manage_start, so this is
         // the first point where a map_request carries complete information.
+        if (s.pending_enter) |h| {
+            const moved = s.pointer_pos.x != s.pos_at_last_manage.x or s.pointer_pos.y != s.pos_at_last_manage.y;
+            if (moved) s.push(.{ .pointer_enter = h });
+        }
+        s.pending_enter = null;
+        s.pos_at_last_manage = s.pointer_pos;
         for (s.fresh.items) |w| {
             if (w.closed) continue;
             w.announced = true;
@@ -373,6 +390,7 @@ const State = struct {
 
     /// The window-management half: everything that must happen inside a manage sequence.
     fn send_manage(s: *State) void {
+        s.settle = false;
         if (s.primary) |p| {
             if (p.default_pending) {
                 if (p.layer) |l| l.setDefault();
@@ -422,6 +440,7 @@ const State = struct {
             w.obj.informNotFullscreen();
             w.fullscreen = false;
             w.proposed = .{ .width = 0, .height = 0 }; // force a proposal
+            w.clip = null;
         }
 
         for (s.order.items) |h| {
@@ -442,9 +461,13 @@ const State = struct {
                 }
             }
 
-            if (!w.fullscreen and !size_eql(w.proposed, w.want_size)) {
-                w.obj.proposeDimensions(@intCast(w.want_size.width), @intCast(w.want_size.height));
-                w.proposed = w.want_size;
+            const target: types.Size = if (w.anim_active) .{
+                .width = @max(w.anim_from_size.width, w.want_size.width),
+                .height = @max(w.anim_from_size.height, w.want_size.height),
+            } else w.want_size;
+            if (!w.fullscreen and !size_eql(w.proposed, target)) {
+                w.obj.proposeDimensions(@intCast(target.width), @intCast(target.height));
+                w.proposed = target;
             }
 
             if (w.tiled == null or w.tiled.? != w.want_tiled) {
@@ -525,19 +548,26 @@ const State = struct {
                 w.obj.show();
                 w.shown = true;
             }
-            var p = w.want_pos;
+            if (w.anim_active and w.anim_start_ms == 0) w.anim_start_ms = now;
+            var r = displayed(s, w, now);
             if (w.anim_active) {
-                p = displayed_pos(s, w, now);
                 if (now - w.anim_start_ms >= s.anim.duration_ms) {
                     w.anim_active = false;
-                    p = w.want_pos;
+                    r = .{ .pos = w.want_pos, .size = w.want_size };
+                    s.settle = true;
                 } else {
                     s.animating = true;
                 }
             }
-            if (w.pos == null or w.pos.?.x != p.x or w.pos.?.y != p.y) {
-                w.node.setPosition(p.x, p.y);
-                w.pos = p;
+            if (w.pos == null or w.pos.?.x != r.pos.x or w.pos.?.y != r.pos.y) {
+                w.node.setPosition(r.pos.x, r.pos.y);
+                w.pos = r.pos;
+            }
+            // The window's visible rectangle, borders included. Outside animations it's
+            // the tile, which also crops clients that pick a larger size than proposed.
+            if (!w.fullscreen and (w.clip == null or !size_eql(w.clip.?, r.size))) {
+                w.obj.setContentClipBox(0, 0, @intCast(r.size.width), @intCast(r.size.height));
+                w.clip = r.size;
             }
             if (w.border_width != w.want_border_width or !opt_eql(w.border_color, w.want_border_color)) {
                 send_borders(w);
@@ -674,6 +704,25 @@ const State = struct {
 };
 
 // --- Helpers ---
+fn lerp_u(a: u32, b: u32, e: f32) u32 {
+    return @intCast(@max(1, lerp(@intCast(a), @intCast(b), e)));
+}
+
+/// The rectangle a window occupies on screen right now.
+fn displayed(s: *const State, w: *const Window, now: i64) Shown {
+    if (!w.anim_active or s.anim.duration_ms == 0) return .{ .pos = w.want_pos, .size = w.want_size };
+    const t: f32 = if (w.anim_start_ms == 0) 0 else @min(1.0, @as(f32, @floatFromInt(now - w.anim_start_ms)) /
+        @as(f32, @floatFromInt(s.anim.duration_ms)));
+    const e = ease(s.anim.curve, t);
+    return .{
+        .pos = .{ .x = lerp(w.anim_from_pos.x, w.want_pos.x, e), .y = lerp(w.anim_from_pos.y, w.want_pos.y, e) },
+        .size = .{
+            .width = lerp_u(w.anim_from_size.width, w.want_size.width, e),
+            .height = lerp_u(w.anim_from_size.height, w.want_size.height, e),
+        },
+    };
+}
+
 fn now_ms() i64 {
     var ts: std.os.linux.timespec = undefined;
     _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
@@ -690,15 +739,6 @@ fn ease(curve: types.Curve, t: f32) f32 {
 
 fn lerp(a: i32, b: i32, e: f32) i32 {
     return a + @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(b - a)) * e)));
-}
-
-/// Where the window is on screen right now, mid-animation or not.
-fn displayed_pos(s: *const State, w: *const Window, now: i64) types.Point {
-    if (!w.anim_active or s.anim.duration_ms == 0) return w.want_pos;
-    const elapsed: f32 = @floatFromInt(now - w.anim_start_ms);
-    const t = @min(1.0, elapsed / @as(f32, @floatFromInt(s.anim.duration_ms)));
-    const e = ease(s.anim.curve, t);
-    return .{ .x = lerp(w.anim_from.x, w.want_pos.x, e), .y = lerp(w.anim_from.y, w.want_pos.y, e) };
 }
 
 fn river_mods(m: types.Mods) river.SeatV1.Modifiers {
@@ -929,7 +969,7 @@ fn seat_listener(_: *river.SeatV1, event: river.SeatV1.Event, s: *State) void {
         .pointer_enter => |e| {
             const h = s.handle_of(e.window);
             s.hovered = h;
-            if (h) |win| s.push(.{ .pointer_enter = win });
+            s.pending_enter = h;
         },
         .pointer_leave => s.hovered = null,
         .window_interaction => |e| {
@@ -1082,7 +1122,7 @@ pub const Backend = struct {
     /// End of the loop iteration: close the manage sequence, or ask for one.
     pub fn flush_output(self: *const Backend) void {
         const s = self.state;
-        if (s.animating and !s.in_manage and now_ms() - s.last_frame_ms >= frame_interval_ms) {
+        if ((s.settle or (s.animating and now_ms() - s.last_frame_ms >= frame_interval_ms)) and !s.in_manage) {
             s.want_manage = true;
         }
         if (s.wm) |wm| {
@@ -1246,24 +1286,24 @@ pub const Backend = struct {
                 .x = st.frame.x + @as(i32, @intCast(bw)),
                 .y = st.frame.y + @as(i32, @intCast(bw)),
             };
-            const moved = new_pos.x != w.want_pos.x or new_pos.y != w.want_pos.y;
-            // Only windows already on screen slide; new ones appear in place, and
-            // drags follow the pointer exactly.
-            if (moved and s.anim.duration_ms > 0 and w.pos != null and w.shown and
-                !w.fullscreen and !st.interactive and !s.op_active)
-            {
-                const now = now_ms();
-                w.anim_from = displayed_pos(s, w, now); // retargeting mid-flight starts from where it is
-                w.anim_start_ms = now;
-                w.anim_active = true;
-            } else if (moved) {
-                w.anim_active = false;
-            }
-            w.want_pos = new_pos;
-            w.want_size = .{
+            const new_size: types.Size = .{
                 .width = @max(1, st.frame.width -| 2 * bw),
                 .height = @max(1, st.frame.height -| 2 * bw),
             };
+            const changed = new_pos.x != w.want_pos.x or new_pos.y != w.want_pos.y or !size_eql(new_size, w.want_size);
+            if (changed and s.anim.duration_ms > 0 and w.pos != null and w.shown and
+                !w.fullscreen and !st.interactive and !s.op_active)
+            {
+                const cur = displayed(s, w, now_ms()); // mid-flight retargets start from where it is
+                w.anim_from_pos = cur.pos;
+                w.anim_from_size = cur.size;
+                w.anim_start_ms = 0;
+                w.anim_active = true;
+            } else if (changed) {
+                w.anim_active = false;
+            }
+            w.want_pos = new_pos;
+            w.want_size = new_size;
             w.want_tiled = st.tiled;
             w.want_border_width = bw;
             w.want_border_color = if (st.borders) |b| b.top else null;
