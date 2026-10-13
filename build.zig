@@ -1,5 +1,5 @@
 const std = @import("std");
-const api = @import("src/api.zig");
+const api = @import("src/api_docs.zig");
 const Scanner = @import("wayland").Scanner;
 
 const MetaStep = struct {
@@ -286,21 +286,21 @@ pub fn build(b: *std.Build) void {
     wm_mod.addImport("ziglua", zlua);
 
     const api_mod = b.addModule("api", .{
-        .root_source_file = b.path("src/api.zig"),
+        .root_source_file = b.path("src/api_docs.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
     });
 
-    const config_mod = b.addModule("config", .{
-        .root_source_file = b.path("src/config.zig"),
+    const lua_mod = b.addModule("lua", .{
+        .root_source_file = b.path("src/lua.zig"),
         .target = target,
     });
-    config_mod.addImport("wm", wm_mod);
-    config_mod.addImport("graph", graph_mod);
-    config_mod.addImport("types", types_mod);
-    config_mod.addImport("api", api_mod);
-    config_mod.addImport("libc", libc_mod);
-    config_mod.addImport("ziglua", zlua);
+    lua_mod.addImport("ziglua", zlua);
+    lua_mod.addImport("wm", wm_mod);
+    lua_mod.addImport("graph", graph_mod);
+    lua_mod.addImport("types", types_mod);
+    lua_mod.addImport("api_docs", api_mod);
+    lua_mod.addImport("libc", libc_mod);
 
     const mod = b.addModule("duckwm", .{
         .root_source_file = b.path("src/root.zig"),
@@ -308,7 +308,7 @@ pub fn build(b: *std.Build) void {
     });
     mod.addImport("graph", graph_mod);
     mod.addImport("wm", wm_mod);
-    mod.addImport("config", config_mod);
+    mod.addImport("config", lua_mod);
 
     // ---- duckwm ----
 
@@ -323,7 +323,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "duckwm", .module = mod },
                 .{ .name = "graph", .module = graph_mod },
                 .{ .name = "wm", .module = wm_mod },
-                .{ .name = "config", .module = config_mod },
+                .{ .name = "config", .module = lua_mod },
                 .{ .name = "ziglua", .module = zlua },
             },
         }),

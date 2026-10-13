@@ -327,7 +327,7 @@ pub const WM = struct {
         g.focus_edges.deinit(self.allocator);
     }
 
-    fn undo_free_graph(ctx: *anyopaque, arg: u64) void {
+    pub fn undo_free_graph(ctx: *anyopaque, arg: u64) void {
         const self: *WM = @ptrCast(@alignCast(ctx));
         const g: *graph_mod.Graph = @ptrFromInt(@as(usize, @intCast(arg)));
         g.nodes.deinit(self.allocator);
@@ -426,6 +426,10 @@ pub const WM = struct {
     }
 
     pub fn tx_end(self: *WM, tx: Tx, ok: bool) void {
+        _ = self.tx_finish(tx, ok);
+    }
+
+    pub fn tx_finish(self: *WM, tx: Tx, ok: bool) bool {
         var keep = ok;
         if (keep and self.journal.depth == 1) {
             self.validate() catch |err| {
@@ -455,6 +459,8 @@ pub const WM = struct {
             while (i < self.effects.items.len) : (i += 1) self.run_effect(self.effects.items[i]);
             self.effects.clearRetainingCapacity();
         }
+
+        return keep;
     }
 
     fn validate(self: *WM) !void {
@@ -529,6 +535,17 @@ pub const WM = struct {
     fn undo_stack_pop(ctx: *anyopaque, arg: u64) void {
         const self: *WM = @ptrCast(@alignCast(ctx));
         self.workspace_stack.append(self.allocator, @ptrFromInt(@as(usize, @intCast(arg)))) catch {};
+    }
+
+    /// A workspace without a preview window, registered and ready to enter.
+    pub fn add_workspace_node(self: *WM, parent: *graph_mod.Graph) !*Node {
+        const sub = try self.create_workspace_graph(parent.id.level + 1);
+        self.journal.external(undo_free_graph, self, @intFromPtr(sub));
+        const node = try parent.add_node(.{ .workspace = sub });
+        sub.parent_node = node;
+        node.floating = false;
+        _ = try self.register_node(null, node);
+        return node;
     }
 
     pub fn watch_file(self: *WM, path: [:0]const u8) void {
