@@ -1717,7 +1717,7 @@ pub const WM = struct {
                 nfds = 3;
             }
 
-            _ = std.posix.poll(fds_buf[0..nfds], -1) catch continue;
+            _ = std.posix.poll(fds_buf[0..nfds], self.backend.poll_timeout()) catch continue;
 
             if (fds_buf[1].revents & std.posix.POLL.IN != 0) {
                 self.accept_ipc_clients();

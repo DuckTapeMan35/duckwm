@@ -1259,6 +1259,16 @@ pub const entries = [_]ApiEntry{
         .params = &.{.{ .name = "id", .typ = "integer" }},
         .ret = "nil",
     },
+    .{
+        .category = "Appearance",
+        .name = "set_animation",
+        .desc = "Set animation duration and curve for windows opening (currently river only)",
+        .params = &.{
+            .{ .name = "duration_ms", .typ = "integer" },
+            .{ .name = "curve", .typ = "string?" },
+        },
+        .ret = "nil",
+    },
 
     // =========================================================
     // Rules

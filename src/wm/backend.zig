@@ -50,6 +50,8 @@ comptime {
         "end_session",
         "set_keymap",
         "set_layout_index",
+        "set_animation",
+        "poll_timeout",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

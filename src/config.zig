@@ -500,6 +500,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_force_rgb_frames), .name = "force_rgb_frames" },
     .{ .func = ziglua.wrap(l_set_keyboard_layout), .name = "set_keyboard_layout" },
     .{ .func = ziglua.wrap(l_set_keyboard_layout_index), .name = "set_keyboard_layout_index" },
+    .{ .func = ziglua.wrap(l_set_animation), .name = "set_animation" },
 };
 
 fn l_set_keyboard_layout(lua: *Lua) i32 {
@@ -3193,6 +3194,16 @@ fn l_get_window_pid(lua: *Lua) i32 {
     const pid = if (node.content == .window) node.info.pid else null;
     if (pid) |p| lua.pushInteger(@intCast(p)) else lua.pushNil();
     return 1;
+}
+
+fn l_set_animation(lua: *Lua) i32 {
+    const ms = lua.checkInteger(1);
+    if (ms < 0) return luaL_error_str(lua, "set_animation: duration must be >= 0");
+    const curve_name = if (lua.isNoneOrNil(2)) "ease_out" else lua.checkString(2);
+    const curve = std.meta.stringToEnum(types.Curve, curve_name) orelse
+        return luaL_error_str(lua, "set_animation: curve must be \"linear\", \"ease_out\" or \"ease_in_out\"");
+    global_wm.backend.set_animation(.{ .duration_ms = @intCast(ms), .curve = curve });
+    return 0;
 }
 
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {

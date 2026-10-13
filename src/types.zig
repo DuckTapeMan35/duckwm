@@ -229,6 +229,12 @@ pub const Keymap = struct {
     model: []const u8 = "",
 };
 
+pub const Animation = struct {
+    /// 0 disables animations.
+    duration_ms: u32 = 0,
+    curve: Curve = .ease_out,
+};
+
 /// A modifier(+button) combination the WM wants to intercept. null button = any button.
 pub const PointerGrab = struct { mods: Mods, button: ?Button };
 
@@ -244,3 +250,5 @@ pub const WindowHandle = u64;
 pub const Point = struct { x: i32, y: i32 };
 
 pub const BorderColors = struct { top: u32, bottom: u32, left: u32, right: u32 };
+
+pub const Curve = enum { linear, ease_out, ease_in_out };

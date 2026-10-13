@@ -1448,4 +1448,15 @@ pub const Backend = struct {
     pub fn set_layout_index(self: *Backend, index: u32) void {
         _ = c.XkbLockGroup(self.display, c.XkbUseCoreKbd, index);
     }
+
+    /// Animations on X belong to a compositor; nothing to do here yet.
+    pub fn set_animation(self: *Backend, a: types.Animation) void {
+        _ = self;
+        _ = a;
+    }
+
+    pub fn poll_timeout(self: *const Backend) i32 {
+        _ = self;
+        return -1;
+    }
 };

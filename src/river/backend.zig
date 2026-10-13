@@ -24,6 +24,8 @@ const error_bg: u32 = 0x8b1a1a;
 const error_fg: u32 = 0xffffff;
 const error_pad: i32 = 4;
 
+const frame_interval_ms: i64 = 16;
+
 const Preview = struct {
     surf: surface.ShellSurface,
     handle: types.WindowHandle,
@@ -91,6 +93,11 @@ const Window = struct {
     pos: ?types.Point = null,
     border_width: u32 = 0,
     border_color: ?u32 = null,
+
+    // animation fields
+    anim_active: bool = false,
+    anim_from: types.Point = .{ .x = 0, .y = 0 },
+    anim_start_ms: i64 = 0,
 };
 
 const Output = struct {
@@ -132,12 +139,6 @@ const State = struct {
 
     wm: ?*river.WindowManagerV1 = null,
     xkb_bindings: ?*river.XkbBindingsV1 = null,
-    xkb_config: ?*river.XkbConfigV1 = null,
-    keyboards: std.ArrayListUnmanaged(*river.XkbKeyboardV1) = .empty,
-    /// Accepted by river and applied to every keyboard, including new ones.
-    keymap: ?*river.XkbKeymapV1 = null,
-    /// Sent, waiting for river's success/failure.
-    pending_keymap: ?*river.XkbKeymapV1 = null,
     layout_index: ?u32 = null,
     layer_shell: ?*river.LayerShellV1 = null,
     seat: ?*river.SeatV1 = null,
@@ -200,6 +201,18 @@ const State = struct {
     layer_focus_exclusive: bool = false,
     cursor_theme: ?[:0]u8 = null,
     cursor_size: u32 = 24,
+    xkb_config: ?*river.XkbConfigV1 = null,
+    keyboards: std.ArrayListUnmanaged(*river.XkbKeyboardV1) = .empty,
+    /// Accepted by river and applied to every keyboard, including new ones.
+    keymap: ?*river.XkbKeymapV1 = null,
+    /// Sent, waiting for river's success/failure.
+    pending_keymap: ?*river.XkbKeymapV1 = null,
+
+    // Animations.
+    anim: types.Animation = .{},
+    /// Some window is mid-animation: keep requesting frames.
+    animating: bool = false,
+    last_frame_ms: i64 = 0,
 
     fn push(s: *State, ev: types.Event) void {
         // Coalesce: only the latest pointer position and one relayout matter.
@@ -476,6 +489,8 @@ const State = struct {
 
     fn send_render(s: *State) void {
         const wm = s.wm orelse return;
+        const now = now_ms();
+        s.animating = false;
 
         var it = s.windows.valueIterator();
         while (it.next()) |wp| {
@@ -510,9 +525,19 @@ const State = struct {
                 w.obj.show();
                 w.shown = true;
             }
-            if (w.pos == null or w.pos.?.x != w.want_pos.x or w.pos.?.y != w.want_pos.y) {
-                w.node.setPosition(w.want_pos.x, w.want_pos.y);
-                w.pos = w.want_pos;
+            var p = w.want_pos;
+            if (w.anim_active) {
+                p = displayed_pos(s, w, now);
+                if (now - w.anim_start_ms >= s.anim.duration_ms) {
+                    w.anim_active = false;
+                    p = w.want_pos;
+                } else {
+                    s.animating = true;
+                }
+            }
+            if (w.pos == null or w.pos.?.x != p.x or w.pos.?.y != p.y) {
+                w.node.setPosition(p.x, p.y);
+                w.pos = p;
             }
             if (w.border_width != w.want_border_width or !opt_eql(w.border_color, w.want_border_color)) {
                 send_borders(w);
@@ -536,6 +561,7 @@ const State = struct {
         if (fullscreen_node) |n| n.placeTop();
         s.render_error_bar();
 
+        if (s.animating) s.last_frame_ms = now;
         wm.renderFinish();
     }
 
@@ -648,6 +674,33 @@ const State = struct {
 };
 
 // --- Helpers ---
+fn now_ms() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+    return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+}
+
+fn ease(curve: types.Curve, t: f32) f32 {
+    return switch (curve) {
+        .linear => t,
+        .ease_out => 1 - std.math.pow(f32, 1 - t, 3),
+        .ease_in_out => if (t < 0.5) 4 * t * t * t else 1 - std.math.pow(f32, -2 * t + 2, 3) / 2,
+    };
+}
+
+fn lerp(a: i32, b: i32, e: f32) i32 {
+    return a + @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(b - a)) * e)));
+}
+
+/// Where the window is on screen right now, mid-animation or not.
+fn displayed_pos(s: *const State, w: *const Window, now: i64) types.Point {
+    if (!w.anim_active or s.anim.duration_ms == 0) return w.want_pos;
+    const elapsed: f32 = @floatFromInt(now - w.anim_start_ms);
+    const t = @min(1.0, elapsed / @as(f32, @floatFromInt(s.anim.duration_ms)));
+    const e = ease(s.anim.curve, t);
+    return .{ .x = lerp(w.anim_from.x, w.want_pos.x, e), .y = lerp(w.anim_from.y, w.want_pos.y, e) };
+}
+
 fn river_mods(m: types.Mods) river.SeatV1.Modifiers {
     return @bitCast(@as(u32, @intCast(m)) & valid_mods);
 }
@@ -1029,6 +1082,9 @@ pub const Backend = struct {
     /// End of the loop iteration: close the manage sequence, or ask for one.
     pub fn flush_output(self: *const Backend) void {
         const s = self.state;
+        if (s.animating and !s.in_manage and now_ms() - s.last_frame_ms >= frame_interval_ms) {
+            s.want_manage = true;
+        }
         if (s.wm) |wm| {
             if (s.in_manage) {
                 s.send_manage();
@@ -1186,7 +1242,24 @@ pub const Backend = struct {
             // core's rect is the whole footprint; river's geometry is the
             // content, with borders drawn outside it.
             w.in_scene = true;
-            w.want_pos = .{ .x = st.frame.x + @as(i32, @intCast(bw)), .y = st.frame.y + @as(i32, @intCast(bw)) };
+            const new_pos: types.Point = .{
+                .x = st.frame.x + @as(i32, @intCast(bw)),
+                .y = st.frame.y + @as(i32, @intCast(bw)),
+            };
+            const moved = new_pos.x != w.want_pos.x or new_pos.y != w.want_pos.y;
+            // Only windows already on screen slide; new ones appear in place, and
+            // drags follow the pointer exactly.
+            if (moved and s.anim.duration_ms > 0 and w.pos != null and w.shown and
+                !w.fullscreen and !st.interactive and !s.op_active)
+            {
+                const now = now_ms();
+                w.anim_from = displayed_pos(s, w, now); // retargeting mid-flight starts from where it is
+                w.anim_start_ms = now;
+                w.anim_active = true;
+            } else if (moved) {
+                w.anim_active = false;
+            }
+            w.want_pos = new_pos;
             w.want_size = .{
                 .width = @max(1, st.frame.width -| 2 * bw),
                 .height = @max(1, st.frame.height -| 2 * bw),
@@ -1478,5 +1551,22 @@ pub const Backend = struct {
         const s = self.state;
         s.layout_index = index;
         for (s.keyboards.items) |kb| kb.setLayoutByIndex(@intCast(index));
+    }
+
+    pub fn set_animation(self: *Backend, a: types.Animation) void {
+        const s = self.state;
+        s.anim = a;
+        if (a.duration_ms == 0) {
+            var it = s.windows.valueIterator();
+            while (it.next()) |wp| wp.*.anim_active = false;
+        }
+    }
+
+    /// While animating, wake up in time for the next frame.
+    pub fn poll_timeout(self: *const Backend) i32 {
+        const s = self.state;
+        if (!s.animating) return -1;
+        const wait = s.last_frame_ms + frame_interval_ms - now_ms();
+        return @intCast(@max(0, wait));
     }
 };
