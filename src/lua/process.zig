@@ -1,11 +1,6 @@
 const ziglua = @import("ziglua");
-const c = @import("libc");
 const util = @import("util.zig");
 const Lua = ziglua.Lua;
-
-pub fn l_spawn(lua: *Lua) i32 {
-    return spawn_from_table(lua, "spawn");
-}
 
 pub fn l_exec_once(lua: *Lua) i32 {
     if (util.global_wm.startup_done) return 0;
@@ -32,17 +27,4 @@ fn spawn_from_table(lua: *Lua, comptime name: []const u8) i32 {
     wm.allocator.free(args);
     result catch util.luaL_error_str(lua, name ++ ": failed to spawn process");
     return 0;
-}
-
-pub fn l_setenv(lua: *Lua) i32 {
-    const key = lua.checkString(1);
-    const val = lua.checkString(2);
-    _ = c.setenv(key.ptr, val.ptr, 1);
-    return 0;
-}
-
-pub fn l_quit(lua: *Lua) i32 {
-    _ = lua;
-    util.global_wm.end_session();
-    @import("std").process.exit(0);
 }

@@ -6,14 +6,9 @@ const Registration = @import("util.zig").Registration;
 const modules = .{
     @import("process.zig"),
     @import("input.zig"),
-    @import("windows.zig"),
-    @import("appearance.zig"),
-    @import("workspaces.zig"),
+    @import("animation.zig"),
     @import("arrangers.zig"),
-    @import("constraints.zig"),
-    @import("nodes.zig"),
     @import("layout.zig"),
-    @import("view.zig"),
     @import("config.zig"),
 };
 
