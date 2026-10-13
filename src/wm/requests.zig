@@ -40,7 +40,7 @@ pub fn state_request(wm: *WM, r: types.StateRequest) !void {
             .toggle => !current,
         };
         if (want != current) {
-            wm.focused = node;
+            wm.journal.set(wm, "focused", node);
             try wm.toggle_fullscreen();
         }
     }

@@ -195,6 +195,8 @@ pub const Journal = struct {
         field: struct { base: *anyopaque, offset: u16, len: u8, old: [16]u8 },
         /// State outside the graph (core's registry): undone by a callback.
         external: struct { undo: *const fn (*anyopaque, u64) void, ctx: *anyopaque, arg: u64 },
+        /// Undo: take the node back out of the graph, without destroying it.
+        node_attached: struct { graph: *Graph, node: *Node },
     };
 
     pub fn init(allocator: std.mem.Allocator) Journal {
@@ -210,6 +212,11 @@ pub const Journal = struct {
 
     pub fn active(self: *const Journal) bool {
         return self.depth > 0;
+    }
+
+    pub fn set(self: *Journal, obj: anytype, comptime field: []const u8, value: @TypeOf(@field(obj.*, field))) void {
+        if (self.active()) self.record_field(obj, field);
+        @field(obj.*, field) = value;
     }
 
     pub fn push(self: *Journal, e: Entry) void {
@@ -286,6 +293,14 @@ pub const Journal = struct {
                 @memcpy(dst[f.offset..][0..f.len], f.old[0..f.len]);
             },
             .external => |x| x.undo(x.ctx, x.arg),
+            .node_attached => |a| {
+                for (a.graph.nodes.items, 0..) |n, i| {
+                    if (n == a.node) {
+                        _ = a.graph.nodes.orderedRemove(i);
+                        break;
+                    }
+                }
+            },
         }
     }
 
@@ -492,7 +507,27 @@ pub const Graph = struct {
             else => {},
         };
 
-        // Drop or shrink every constraint that refers to the node.
+        self.strip_references(node);
+
+        for (self.nodes.items, 0..) |n, idx| {
+            if (n != node) continue;
+            _ = self.nodes.orderedRemove(idx);
+            if (self.jr()) |j| j.push(.{ .node_removed = .{ .graph = self, .node = node, .index = idx } });
+            break;
+        }
+
+        if (self.jr()) |j| {
+            j.graveyard.append(j.allocator, node) catch {
+                j.incomplete = true;
+                self.destroy_node(node);
+            };
+        } else {
+            self.destroy_node(node);
+        }
+    }
+
+    /// Drop or shrink every constraint in this graph that refers to node.
+    fn strip_references(self: *Graph, node: *Node) void {
         for (self.nodes.items) |n| {
             var i: usize = 0;
             while (i < n.constraints.items.len) {
@@ -525,22 +560,27 @@ pub const Graph = struct {
                 self.remove_constraint_at(n, i);
             }
         }
+    }
 
+    /// Take a node out of this graph without destroying it (for moving it elsewhere).
+    pub fn detach_node(self: *Graph, node: *Node) void {
+        self.strip_references(node);
         for (self.nodes.items, 0..) |n, idx| {
             if (n != node) continue;
             _ = self.nodes.orderedRemove(idx);
             if (self.jr()) |j| j.push(.{ .node_removed = .{ .graph = self, .node = node, .index = idx } });
-            break;
+            return;
         }
+    }
 
+    /// Put a detached node into this graph.
+    pub fn attach_node(self: *Graph, node: *Node) !void {
+        try self.nodes.append(self.allocator, node);
         if (self.jr()) |j| {
-            j.graveyard.append(j.allocator, node) catch {
-                j.incomplete = true;
-                self.destroy_node(node);
-            };
-        } else {
-            self.destroy_node(node);
+            j.record_field(node, "owner_graph");
+            j.push(.{ .node_attached = .{ .graph = self, .node = node } });
         }
+        node.owner_graph = self;
     }
 
     /// Final teardown of a removed node (immediately, or at commit).

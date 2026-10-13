@@ -2615,7 +2615,7 @@ fn l_set_fullscreen(lua: *Lua) i32 {
     if (node.content != .window) return 0;
     const already = if (node.owner_graph) |og| (og.fullscreen_node == node) else false;
     if (val == already) return 0;
-    global_wm.focused = node;
+    global_wm.journal.set(global_wm, "focused", node);
     global_wm.toggle_fullscreen() catch {};
     return 0;
 }

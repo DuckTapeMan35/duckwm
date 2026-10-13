@@ -45,7 +45,7 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
         if (!is_move and !is_resize) return;
 
         suspend_ffm(wm);
-        wm.focused = node;
+        wm.journal.set(wm, "focused", node);
 
         if (is_move) {
             wm.float_moving = true;

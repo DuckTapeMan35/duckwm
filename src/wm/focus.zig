@@ -136,7 +136,7 @@ pub fn focus_down(wm: *WM) anyerror!void {
 }
 
 pub fn set_focus(wm: *WM, node: *Node) void {
-    wm.focused = node;
+    wm.journal.set(wm, "focused", node);
     wm.focus_dirty = true;
     if (!wm.is_shown(node)) return; // nothing on screen to focus (yet)
     const g = wm.current_graph;

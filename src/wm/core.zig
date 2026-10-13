@@ -442,6 +442,7 @@ pub const WM = struct {
                 if (self.focused) |f| if (self.get_id_for_node(f) == null) {
                     self.focused = null;
                 };
+                self.focus_dirty = true;
                 self.relayout();
             } else {
                 std.debug.print("duckwm: could not roll back (out of memory); state may be partial\n", .{});
@@ -507,6 +508,27 @@ pub const WM = struct {
     fn free_argv(allocator: std.mem.Allocator, argv: [][:0]u8) void {
         for (argv) |a| allocator.free(a);
         allocator.free(argv);
+    }
+
+    fn stack_push(self: *WM, g: *Graph) !void {
+        try self.workspace_stack.append(self.allocator, g);
+        self.journal.external(undo_stack_push, self, 0);
+    }
+
+    fn stack_pop(self: *WM) ?*Graph {
+        const g = self.workspace_stack.pop() orelse return null;
+        self.journal.external(undo_stack_pop, self, @intFromPtr(g));
+        return g;
+    }
+
+    fn undo_stack_push(ctx: *anyopaque, _: u64) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        _ = self.workspace_stack.pop();
+    }
+
+    fn undo_stack_pop(ctx: *anyopaque, arg: u64) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        self.workspace_stack.append(self.allocator, @ptrFromInt(@as(usize, @intCast(arg)))) catch {};
     }
 
     pub fn watch_file(self: *WM, path: [:0]const u8) void {
@@ -1019,7 +1041,8 @@ pub const WM = struct {
         const node = self.node_registry.get(node_id) orelse return;
         if (node_window(node) == null) return;
 
-        node.floating = true;
+        self.journal.set(node, "floating", true);
+
         try self.send_to_workspace(node_id, self.current_graph);
 
         try self.rebuild_focus_edges();
@@ -1033,7 +1056,7 @@ pub const WM = struct {
         if (node_window(node) == null) return;
 
         try self.send_to_workspace(node_id, self.scratch_graph);
-        node.floating = true;
+        self.journal.set(node, "floating", true);
 
         if (focus_mod.top_left_window(self)) |n| self.focus(n);
     }
@@ -1150,7 +1173,7 @@ pub const WM = struct {
     }
 
     pub fn clear_focus(self: *WM) void {
-        self.focused = null;
+        self.journal.set(self, "focused", null);
         self.focus_dirty = true;
     }
 
@@ -1178,21 +1201,31 @@ pub const WM = struct {
     }
 
     pub fn exchange(self: *WM, a: *Node, b: *Node) !void {
-        // Find node IDs
-        var a_id: ?u32 = null;
-        var b_id: ?u32 = null;
-        var it = self.node_registry.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.* == a) a_id = entry.key_ptr.*;
-            if (entry.value_ptr.* == b) b_id = entry.key_ptr.*;
-        }
-        const id_a = a_id orelse return error.InvalidNode;
-        const id_b = b_id orelse return error.InvalidNode;
+        const id_a = self.get_id_for_node(a) orelse return error.InvalidNode;
+        const id_b = self.get_id_for_node(b) orelse return error.InvalidNode;
+        if (a.content == .empty and b.content == .empty) return;
+        try self.exchange_raw(a, b, id_a, id_b);
+        self.journal.external(undo_exchange, self, (@as(u64, id_a) << 32) | id_b);
+        try self.flush(self.current_graph);
+    }
 
+    fn undo_exchange(ctx: *anyopaque, arg: u64) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        const id_a: u32 = @truncate(arg >> 32);
+        const id_b: u32 = @truncate(arg);
+        const a = self.node_registry.get(id_a) orelse return;
+        const b = self.node_registry.get(id_b) orelse return;
+        self.exchange_raw(a, b, id_a, id_b) catch {};
+    }
+
+    fn exchange_raw(self: *WM, a: *Node, b: *Node, id_a: u32, id_b: u32) !void {
         // Swap contents
         const content_a = a.content;
         const content_b = b.content;
         if (content_a == .empty and content_b == .empty) return;
+
+        // At most four entries are re-added below; after this, nothing can fail.
+        try self.window_to_node_id.ensureUnusedCapacity(4);
 
         // Update window_to_node_id for window nodes
         switch (content_a) {
@@ -1256,8 +1289,6 @@ pub const WM = struct {
 
         // Update focused pointer
         if (self.focused == a) self.focused = b else if (self.focused == b) self.focused = a;
-
-        try self.flush(self.current_graph);
     }
 
     fn hide_graph_frames(self: *WM, g: *Graph) void {
@@ -1325,8 +1356,9 @@ pub const WM = struct {
         try self.workspace_stack.append(self.allocator, old);
 
         // switch
-        self.current_graph = new;
-        self.visible_graph = self.current_graph;
+        try self.stack_push(old);
+        self.journal.set(self, "current_graph", new);
+        self.journal.set(self, "visible_graph", new);
 
         // re-layout and paint the new graph into place first
         try self.resolve(new);
@@ -1361,12 +1393,10 @@ pub const WM = struct {
 
         self.clear_focus();
 
-        while (self.workspace_stack.items.len > target_idx + 1) {
-            _ = self.workspace_stack.pop();
-        }
-
-        self.current_graph = self.workspace_stack.pop().?;
-        self.visible_graph = self.current_graph;
+        while (self.workspace_stack.items.len > target_idx + 1) _ = self.stack_pop();
+        const back = self.stack_pop().?;
+        self.journal.set(self, "current_graph", back);
+        self.journal.set(self, "visible_graph", back);
 
         try self.resolve(self.current_graph);
         try self.rebuild_focus_edges();
@@ -1381,31 +1411,16 @@ pub const WM = struct {
     }
 
     pub fn send_to_workspace(self: *WM, node_id: u32, target_graph: *graph_mod.Graph) !void {
-        const node = self.node_registry.get(node_id) orelse return error.InvalidNode;
+        const node = self.get_node_by_id(node_id) orelse return error.InvalidNode;
         const src_graph = node.owner_graph orelse return error.InvalidNode;
         if (src_graph == target_graph) return;
 
-        // Remove from source graph
-        for (src_graph.nodes.items, 0..) |n, i| {
-            if (n == node) {
-                _ = src_graph.nodes.swapRemove(i);
-                break;
-            }
-        }
-        for (src_graph.nodes.items) |n| {
-            var i: usize = 0;
-            while (i < n.constraints.items.len) {
-                if (graph_mod.Graph.constraint_involves_node(n.constraints.items[i], node)) {
-                    _ = n.constraints.swapRemove(i);
-                } else i += 1;
-            }
-        }
-        node.constraints.clearRetainingCapacity();
-        node.owner_graph = target_graph;
-        try target_graph.nodes.append(self.allocator, node);
+        src_graph.detach_node(node);
+        try src_graph.replace_constraints(node, &.{});
+        try target_graph.attach_node(node);
 
         if (self.focused == node) {
-            if (src_graph.fullscreen_node == node) src_graph.fullscreen_node = null;
+            if (src_graph.fullscreen_node == node) src_graph.set(src_graph, "fullscreen_node", null);
             self.clear_focus();
         }
 
@@ -1709,10 +1724,12 @@ pub const WM = struct {
     }
 
     pub fn sync_constraints_from_geometry(self: *WM) void {
-        for (self.current_graph.nodes.items) |node| {
+        const g = self.current_graph;
+        for (g.nodes.items) |node| {
             if (node.floating) continue;
-            for (node.constraints.items) |*con| {
-                switch (con.*) {
+            for (node.constraints.items, 0..) |con, i| {
+                var new = con;
+                switch (new) {
                     .fixed_x => |*v| v.* = node.x,
                     .fixed_y => |*v| v.* = node.y,
                     .fixed_width => |*v| v.* = node.width,
@@ -1721,23 +1738,22 @@ pub const WM = struct {
                         const cont = s.container;
                         if (cont.width == 0 and cont.height == 0) continue;
                         var ratio_sum: f32 = 0;
-                        for (0..s.count) |i| {
-                            const child = s.children[i];
+                        for (0..s.count) |k| {
+                            const child = s.children[k];
                             const ratio: f32 = if (s.axis == .horizontal)
-                                @as(f32, @floatFromInt(child.width)) /
-                                    @as(f32, @floatFromInt(cont.width))
+                                @as(f32, @floatFromInt(child.width)) / @as(f32, @floatFromInt(cont.width))
                             else
-                                @as(f32, @floatFromInt(child.height)) /
-                                    @as(f32, @floatFromInt(cont.height));
-                            s.ratios[i] = @max(0.01, ratio);
-                            ratio_sum += s.ratios[i];
+                                @as(f32, @floatFromInt(child.height)) / @as(f32, @floatFromInt(cont.height));
+                            s.ratios[k] = @max(0.01, ratio);
+                            ratio_sum += s.ratios[k];
                         }
                         if (ratio_sum > 0) {
-                            for (0..s.count) |i| s.ratios[i] /= ratio_sum;
+                            for (0..s.count) |k| s.ratios[k] /= ratio_sum;
                         }
                     },
-                    else => {},
+                    else => continue,
                 }
+                if (!std.meta.eql(new, con)) g.change_constraint_at(node, i, new);
             }
         }
     }
