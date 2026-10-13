@@ -547,6 +547,7 @@ const registrations = [_]Registration{
     .{ .func = ziglua.wrap(l_set_keyboard_layout), .name = "set_keyboard_layout" },
     .{ .func = ziglua.wrap(l_set_keyboard_layout_index), .name = "set_keyboard_layout_index" },
     .{ .func = ziglua.wrap(l_set_animation), .name = "set_animation" },
+    .{ .func = ziglua.wrap(l_transaction), .name = "transaction" },
 };
 
 fn l_set_keyboard_layout(lua: *Lua) i32 {
@@ -3283,6 +3284,22 @@ fn l_set_animation(lua: *Lua) i32 {
 fn luaL_error_str(lua: *Lua, msg: []const u8) noreturn {
     _ = lua.pushString(msg);
     lua.raiseError();
+}
+
+fn l_transaction(lua: *Lua) i32 {
+    lua.checkType(1, .function);
+    const m = global_wm.tx_begin();
+    lua.pushValue(1);
+    lua.protectedCall(.{ .args = 0, .results = 1 }) catch {
+        global_wm.tx_end(m, false);
+        lua.raiseError(); // re-raise the original error, already on the stack
+    };
+    // Returning false rolls back without being an error.
+    const ok = !(lua.typeOf(-1) == .boolean and !lua.toBoolean(-1));
+    lua.pop(1);
+    global_wm.tx_end(m, ok);
+    lua.pushBoolean(ok);
+    return 1;
 }
 
 fn setup_lua(wm: *WM, lua: *Lua) void {

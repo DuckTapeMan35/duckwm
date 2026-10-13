@@ -168,6 +168,140 @@ pub fn get_container(node: *Node) ?*Node {
     return null;
 }
 
+/// Undo log for the graph's inputs (constraints, membership, flags, float
+/// geometry). Solver output isn't logged: a rollback re-solves instead.
+/// The same entries are what an incremental solver will read as its dirty set.
+pub const Journal = struct {
+    allocator: std.mem.Allocator,
+    /// > 0 while inside a transaction; mutations are only logged then.
+    depth: u32 = 0,
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    /// Removed nodes, kept alive until commit so a rollback can reinsert them.
+    graveyard: std.ArrayListUnmanaged(*Node) = .empty,
+    /// An entry couldn't be recorded (out of memory): rollback isn't safe.
+    incomplete: bool = false,
+
+    pub const Mark = struct { entries: usize, graveyard: usize };
+
+    pub const Entry = union(enum) {
+        node_added: struct { graph: *Graph, node: *Node },
+        node_removed: struct { graph: *Graph, node: *Node, index: usize },
+        constraint_added: *Node,
+        constraint_removed: struct { node: *Node, index: usize, value: Constraint },
+        constraint_changed: struct { node: *Node, index: usize, old: Constraint },
+        /// The old list itself, moved in rather than copied.
+        constraints_replaced: struct { node: *Node, old: std.ArrayListUnmanaged(Constraint) },
+        /// Any small field of a Node or Graph, by offset.
+        field: struct { base: *anyopaque, offset: u16, len: u8, old: [16]u8 },
+        /// State outside the graph (core's registry): undone by a callback.
+        external: struct { undo: *const fn (*anyopaque, u64) void, ctx: *anyopaque, arg: u64 },
+    };
+
+    pub fn init(allocator: std.mem.Allocator) Journal {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Journal) void {
+        self.depth = 0;
+        self.finish();
+        self.entries.deinit(self.allocator);
+        self.graveyard.deinit(self.allocator);
+    }
+
+    pub fn active(self: *const Journal) bool {
+        return self.depth > 0;
+    }
+
+    pub fn push(self: *Journal, e: Entry) void {
+        self.entries.append(self.allocator, e) catch {
+            self.incomplete = true;
+        };
+    }
+
+    pub fn begin(self: *Journal) Mark {
+        self.depth += 1;
+        return .{ .entries = self.entries.items.len, .graveyard = self.graveyard.items.len };
+    }
+
+    /// Keep everything since m. The outermost release commits.
+    pub fn release(self: *Journal, m: Mark) void {
+        _ = m;
+        self.depth -= 1;
+        if (self.depth == 0) self.finish();
+    }
+
+    /// Undo everything since m. Returns false if the log was incomplete.
+    pub fn rollback(self: *Journal, m: Mark) bool {
+        defer {
+            self.depth -= 1;
+            if (self.depth == 0) self.finish();
+        }
+        if (self.incomplete) return false;
+        while (self.entries.items.len > m.entries) undo(self.allocator, self.entries.pop().?);
+        // Everything removed after the mark has just been reinserted.
+        self.graveyard.shrinkRetainingCapacity(m.graveyard);
+        return true;
+    }
+
+    pub fn record_field(self: *Journal, obj: anytype, comptime field: []const u8) void {
+        const T = @TypeOf(@field(obj.*, field));
+        if (@sizeOf(T) > 16) @compileError("journal: field '" ++ field ++ "' is too large; give it a dedicated entry");
+        var e: Entry = .{ .field = .{
+            .base = @as(*anyopaque, @ptrCast(obj)),
+            .offset = @offsetOf(@TypeOf(obj.*), field),
+            .len = @sizeOf(T),
+            .old = undefined,
+        } };
+        @memcpy(e.field.old[0..@sizeOf(T)], std.mem.asBytes(&@field(obj.*, field)));
+        self.push(e);
+    }
+
+    pub fn external(self: *Journal, undo_fn: *const fn (*anyopaque, u64) void, ctx: *anyopaque, arg: u64) void {
+        if (self.active()) self.push(.{ .external = .{ .undo = undo_fn, .ctx = ctx, .arg = arg } });
+    }
+
+    fn undo(allocator: std.mem.Allocator, e: Entry) void {
+        switch (e) {
+            .node_added => |a| {
+                for (a.graph.nodes.items, 0..) |n, i| {
+                    if (n == a.node) {
+                        _ = a.graph.nodes.orderedRemove(i);
+                        break;
+                    }
+                }
+                a.node.deinit(allocator);
+                allocator.destroy(a.node);
+            },
+            .node_removed => |r| r.graph.nodes.insert(allocator, r.index, r.node) catch {},
+            .constraint_added => |node| _ = node.constraints.pop(),
+            .constraint_removed => |r| r.node.constraints.insert(allocator, r.index, r.value) catch {},
+            .constraint_changed => |c| c.node.constraints.items[c.index] = c.old,
+            .constraints_replaced => |r| {
+                var cur = r.node.constraints;
+                cur.deinit(allocator);
+                r.node.constraints = r.old;
+            },
+            .field => |f| {
+                const dst: [*]u8 = @ptrCast(f.base);
+                @memcpy(dst[f.offset..][0..f.len], f.old[0..f.len]);
+            },
+            .external => |x| x.undo(x.ctx, x.arg),
+        }
+    }
+
+    /// Commit: free what the transaction removed or replaced.
+    fn finish(self: *Journal) void {
+        for (self.entries.items) |*e| switch (e.*) {
+            .constraints_replaced => |*r| r.old.deinit(self.allocator),
+            else => {},
+        };
+        self.entries.clearRetainingCapacity();
+        for (self.graveyard.items) |node| node.owner_graph.?.destroy_node(node);
+        self.graveyard.clearRetainingCapacity();
+        self.incomplete = false;
+    }
+};
+
 pub const Graph = struct {
     id: GraphId,
     nodes: std.ArrayListUnmanaged(*Node),
@@ -203,6 +337,7 @@ pub const Graph = struct {
     preview_font_len: ?usize,
     on_node_free: ?*const fn (*anyopaque, *Node) void,
     on_node_free_ctx: *anyopaque,
+    journal: ?*Journal,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -241,6 +376,7 @@ pub const Graph = struct {
             .preview_font_len = null,
             .on_node_free = null,
             .on_node_free_ctx = undefined,
+            .journal = null,
             .allocator = allocator,
         };
     }
@@ -252,14 +388,6 @@ pub const Graph = struct {
         }
         self.nodes.deinit(self.allocator);
         self.focus_edges.deinit(self.allocator);
-    }
-
-    pub fn add_node(self: *Graph, content: NodeContent) !*Node {
-        const node = try self.allocator.create(Node);
-        node.* = try Node.init(content, self.allocator);
-        node.owner_graph = self;
-        try self.nodes.append(self.allocator, node);
-        return node;
     }
 
     fn free_subgraph(self: *Graph, sub: *Graph) void {
@@ -275,124 +403,152 @@ pub const Graph = struct {
         sub.focus_edges.deinit(self.allocator);
     }
 
+    fn jr(self: *Graph) ?*Journal {
+        const j = self.journal orelse return null;
+        return if (j.active()) j else null;
+    }
+
+    /// Set any field of a Node or Graph, recording the old value.
+    pub fn set(self: *Graph, obj: anytype, comptime field: []const u8, value: @TypeOf(@field(obj.*, field))) void {
+        if (self.jr()) |j| j.record_field(obj, field);
+        @field(obj.*, field) = value;
+    }
+
+    pub fn add_constraint(self: *Graph, node: *Node, constraint: Constraint) !void {
+        try node.constraints.append(self.allocator, constraint);
+        if (self.jr()) |j| j.push(.{ .constraint_added = node });
+    }
+
+    pub fn remove_constraint(self: *Graph, node: *Node, constraint: Constraint) void {
+        for (node.constraints.items, 0..) |con, i| {
+            if (std.meta.eql(con, constraint)) return self.remove_constraint_at(node, i);
+        }
+    }
+
+    pub fn remove_constraint_at(self: *Graph, node: *Node, i: usize) void {
+        const old = node.constraints.orderedRemove(i);
+        if (self.jr()) |j| j.push(.{ .constraint_removed = .{ .node = node, .index = i, .value = old } });
+    }
+
+    pub fn change_constraint_at(self: *Graph, node: *Node, i: usize, new: Constraint) void {
+        if (self.jr()) |j| j.push(.{ .constraint_changed = .{ .node = node, .index = i, .old = node.constraints.items[i] } });
+        node.constraints.items[i] = new;
+    }
+
+    /// Bulk rewrite: the old list is moved into the log, not copied.
+    pub fn replace_constraints(self: *Graph, node: *Node, new: []const Constraint) !void {
+        var list = try std.ArrayListUnmanaged(Constraint).initCapacity(self.allocator, new.len);
+        list.appendSliceAssumeCapacity(new);
+        var old = node.constraints;
+        node.constraints = list;
+        if (self.jr()) |j| j.push(.{ .constraints_replaced = .{ .node = node, .old = old } }) else old.deinit(self.allocator);
+    }
+
+    pub fn add_node(self: *Graph, content: NodeContent) !*Node {
+        const node = try self.allocator.create(Node);
+        node.* = try Node.init(content, self.allocator);
+        node.owner_graph = self;
+        try self.nodes.append(self.allocator, node);
+        if (self.jr()) |j| j.push(.{ .node_added = .{ .graph = self, .node = node } });
+        return node;
+    }
+
     pub fn remove_node(self: *Graph, node: *Node) void {
         std.debug.assert(node.owner_graph == self);
         if (node.dead) return;
-        node.dead = true;
+        self.set(node, "dead", true);
 
-        if (node.on_remove) |strategy| {
-            switch (strategy) {
-                .promote => {
-                    var container: ?*Node = null;
-                    for (node.constraints.items) |con| {
-                        if (con == .grid_cell) {
-                            container = con.grid_cell.container;
-                            break;
-                        }
-                    }
-                    if (container) |cont| {
-                        var sibling: ?*Node = null;
-                        for (self.nodes.items) |n| {
-                            if (n == node) continue;
-                            for (n.constraints.items) |con| {
-                                if (con == .grid_cell and con.grid_cell.container == cont) {
-                                    sibling = n;
-                                    break;
-                                }
-                            }
-                            if (sibling != null) break;
-                        }
-                        if (sibling) |sib| {
-                            var grandparent: ?*Node = null;
-                            var gp_col: u32 = 0;
-                            var gp_row: u32 = 0;
-                            var gp_cols: u32 = 1;
-                            var gp_rows: u32 = 1;
-                            for (cont.constraints.items) |con| {
-                                if (con == .grid_cell) {
-                                    grandparent = con.grid_cell.container;
-                                    gp_col = con.grid_cell.col;
-                                    gp_row = con.grid_cell.row;
-                                    gp_cols = con.grid_cell.cols;
-                                    gp_rows = con.grid_cell.rows;
-                                    break;
-                                }
-                            }
-                            var i: usize = 0;
-                            while (i < sib.constraints.items.len) {
-                                if (sib.constraints.items[i] == .grid_cell and
-                                    sib.constraints.items[i].grid_cell.container == cont)
-                                {
-                                    _ = sib.constraints.swapRemove(i);
-                                } else {
-                                    i += 1;
-                                }
-                            }
-                            if (grandparent) |gp| {
-                                sib.constraints.append(self.allocator, .{ .grid_cell = .{
-                                    .col = gp_col,
-                                    .row = gp_row,
-                                    .cols = gp_cols,
-                                    .rows = gp_rows,
-                                    .container = gp,
-                                } }) catch {};
-                            } else {}
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
+        if (node.on_remove) |strategy| switch (strategy) {
+            .promote => self.promote_sibling(node),
+            else => {},
+        };
 
+        // Drop or shrink every constraint that refers to the node.
         for (self.nodes.items) |n| {
             var i: usize = 0;
             while (i < n.constraints.items.len) {
                 const con = n.constraints.items[i];
-                if (constraint_involves_node(con, node)) {
-                    if (con == .split) {
-                        var s = con.split;
-                        var new_count: u8 = 0;
-                        for (0..s.count) |k| {
-                            if (s.children[k] == node) continue;
-                            s.children[new_count] = s.children[k];
-                            s.ratios[new_count] = s.ratios[k];
-                            new_count += 1;
+                if (!constraint_involves_node(con, node)) {
+                    i += 1;
+                    continue;
+                }
+                if (con == .split) {
+                    var s = con.split;
+                    var new_count: u8 = 0;
+                    for (0..s.count) |k| {
+                        if (s.children[k] == node) continue;
+                        s.children[new_count] = s.children[k];
+                        s.ratios[new_count] = s.ratios[k];
+                        new_count += 1;
+                    }
+                    if (new_count > 1) {
+                        s.count = new_count;
+                        var sum: f32 = 0;
+                        for (0..new_count) |k| sum += s.ratios[k];
+                        if (sum > 0) {
+                            for (0..new_count) |k| s.ratios[k] /= sum;
                         }
-                        if (new_count <= 1) {
-                            _ = n.constraints.swapRemove(i);
-                        } else {
-                            var ratio_sum: f32 = 0;
-                            for (0..new_count) |k| ratio_sum += s.ratios[k];
-                            if (ratio_sum > 0) {
-                                for (0..new_count) |k| s.ratios[k] /= ratio_sum;
-                            }
-                            n.constraints.items[i].split.count = new_count;
-                            n.constraints.items[i].split.children = s.children;
-                            n.constraints.items[i].split.ratios = s.ratios;
-                            i += 1;
-                        }
+                        self.change_constraint_at(n, i, .{ .split = s });
+                        i += 1;
                         continue;
                     }
-                    _ = n.constraints.swapRemove(i);
-                } else {
-                    i += 1;
                 }
+                self.remove_constraint_at(n, i);
             }
         }
 
         for (self.nodes.items, 0..) |n, idx| {
-            if (n == node) {
-                _ = self.nodes.swapRemove(idx);
-                break;
-            }
+            if (n != node) continue;
+            _ = self.nodes.orderedRemove(idx);
+            if (self.jr()) |j| j.push(.{ .node_removed = .{ .graph = self, .node = node, .index = idx } });
+            break;
         }
 
-        if (node.content == .workspace) {
-            self.free_subgraph(node.content.workspace);
+        if (self.jr()) |j| {
+            j.graveyard.append(j.allocator, node) catch {
+                j.incomplete = true;
+                self.destroy_node(node);
+            };
+        } else {
+            self.destroy_node(node);
         }
+    }
+
+    /// Final teardown of a removed node (immediately, or at commit).
+    pub fn destroy_node(self: *Graph, node: *Node) void {
+        if (node.content == .workspace) self.free_subgraph(node.content.workspace);
         if (self.on_node_free) |cb| cb(self.on_node_free_ctx, node);
         node.deinit(self.allocator);
         self.allocator.destroy(node);
+    }
+
+    /// on_remove = .promote: the sibling sharing node's grid cell takes over
+    /// the container's own cell in the grandparent.
+    fn promote_sibling(self: *Graph, node: *Node) void {
+        const cont = for (node.constraints.items) |con| {
+            if (con == .grid_cell) break con.grid_cell.container;
+        } else return;
+
+        const sib = for (self.nodes.items) |n| {
+            if (n == node) continue;
+            const shares = for (n.constraints.items) |con| {
+                if (con == .grid_cell and con.grid_cell.container == cont) break true;
+            } else false;
+            if (shares) break n;
+        } else return;
+
+        const gp_cell = for (cont.constraints.items) |con| {
+            if (con == .grid_cell) break con.grid_cell;
+        } else null;
+
+        var i: usize = 0;
+        while (i < sib.constraints.items.len) {
+            const con = sib.constraints.items[i];
+            if (con == .grid_cell and con.grid_cell.container == cont) {
+                self.remove_constraint_at(sib, i);
+            } else i += 1;
+        }
+        if (gp_cell) |g| self.add_constraint(sib, .{ .grid_cell = g }) catch {};
     }
 
     pub fn constraint_involves_node(con: Constraint, node: *Node) bool {
@@ -433,19 +589,6 @@ pub const Graph = struct {
         @memcpy(self.preview_font_buf[0..len], name[0..len]);
         self.preview_font_buf[len] = 0;
         self.preview_font_len = len;
-    }
-
-    pub fn add_constraint(self: *Graph, node: *Node, constraint: Constraint) !void {
-        try node.constraints.append(self.allocator, constraint);
-    }
-
-    pub fn remove_constraint(_: *Graph, node: *Node, constraint: Constraint) void {
-        for (node.constraints.items, 0..) |con, i| {
-            if (con == constraint) {
-                _ = node.constraints.swapRemove(i);
-                break;
-            }
-        }
     }
 
     pub fn add_focus_edge(self: *Graph, from: *Node, to: *Node, dir: Direction) !void {

@@ -139,6 +139,15 @@ pub const entries = [_]ApiEntry{
         .params = &.{},
         .ret = "integer, integer, integer, integer",
     },
+    .{
+        .category = "Core",
+        .name = "transaction",
+        .desc = "Run fn atomically. If fn raises an error or returns false, every change it made is undone; an error is re-raised after the rollback. Returns true if the changes were kept, false if fn returned false.",
+        .params = &.{
+            .{ .name = "fn", .typ = "fun(): boolean?" },
+        },
+        .ret = "boolean",
+    },
 
     // =========================================================
     // Keybindings

@@ -105,8 +105,7 @@ fn handle_client(wm: *WM, fd: i32) bool {
     if (msg.len == 0) return false;
 
     const response = execute_command(wm, msg) catch |err| blk: {
-        break :blk std.fmt.allocPrint(wm.allocator,
-            "{{\"ok\":false,\"error\":\"{s}\"}}\n", .{@errorName(err)}) catch return false;
+        break :blk std.fmt.allocPrint(wm.allocator, "{{\"ok\":false,\"error\":\"{s}\"}}\n", .{@errorName(err)}) catch return false;
     };
     defer wm.allocator.free(response);
 
@@ -164,14 +163,16 @@ fn execute_command(wm: *WM, msg: []const u8) ![]u8 {
     }
 
     const top_before = lua.getTop() - argc - 1;
+    const m = wm.tx_begin();
     lua.protectedCall(.{ .args = argc, .results = ziglua.mult_return }) catch |err| {
+        wm.tx_end(m, false);
         const lua_msg = lua.toString(-1) catch null;
         const emsg = lua_msg orelse @errorName(err);
-        const owned = try std.fmt.allocPrint(wm.allocator,
-            "{{\"ok\":false,\"error\":\"{s}\"}}\n", .{emsg});
+        const owned = try std.fmt.allocPrint(wm.allocator, "{{\"ok\":false,\"error\":\"{s}\"}}\n", .{emsg});
         lua.setTop(top_before);
         return owned;
     };
+    wm.tx_end(m, true);
 
     const nresults = lua.getTop() - top_before;
     var out: std.ArrayListUnmanaged(u8) = .empty;
@@ -213,7 +214,7 @@ fn lua_value_to_json(allocator: std.mem.Allocator, lua: *ziglua.Lua, idx: i32, o
             try out.append(allocator, '"');
             for (s) |ch| {
                 switch (ch) {
-                    '"'  => try out.appendSlice(allocator, "\\\""),
+                    '"' => try out.appendSlice(allocator, "\\\""),
                     '\\' => try out.appendSlice(allocator, "\\\\"),
                     '\n' => try out.appendSlice(allocator, "\\n"),
                     '\r' => try out.appendSlice(allocator, "\\r"),

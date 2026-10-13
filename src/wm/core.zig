@@ -86,6 +86,7 @@ pub const WM = struct {
     default_gap_inner_v: u32,
     default_gap_outer_h: u32,
     default_gap_outer_v: u32,
+    journal: graph_mod.Journal,
 
     // misc state fields
     flushing: bool,
@@ -200,6 +201,7 @@ pub const WM = struct {
             .default_gap_inner_v = 0,
             .default_gap_outer_h = 0,
             .default_gap_outer_v = 0,
+            .journal = graph_mod.Journal.init(allocator),
 
             .resize_modifier = null,
             .edge_resizing = false,
@@ -352,6 +354,7 @@ pub const WM = struct {
         self.preview_items.deinit(self.allocator);
         self.swallow_pairs.deinit(self.allocator);
         self.next_workspace_number.deinit();
+        self.journal.deinit();
         self.free_graph(&self.graph);
         self.workspace_stack.deinit(self.allocator);
         self.node_registry.deinit();
@@ -389,6 +392,25 @@ pub const WM = struct {
                 self.reset_arranger_refs(node.content.workspace);
             }
         }
+    }
+
+    pub fn tx_begin(self: *WM) graph_mod.Journal.Mark {
+        return self.journal.begin();
+    }
+
+    /// Commit (ok) or roll back everything since m, then re-solve so derived
+    /// geometry matches the restored inputs.
+    pub fn tx_end(self: *WM, m: graph_mod.Journal.Mark, ok: bool) void {
+        if (ok) return self.journal.release(m);
+        if (!self.journal.rollback(m)) {
+            std.debug.print("duckwm: could not roll back (out of memory); state may be partial\n", .{});
+            return;
+        }
+        // A node created in the rolled-back part may have been focused.
+        if (self.focused) |f| if (self.get_id_for_node(f) == null) {
+            self.focused = null;
+        };
+        self.relayout();
     }
 
     pub fn watch_file(self: *WM, path: [:0]const u8) void {
@@ -510,6 +532,7 @@ pub const WM = struct {
         const lua = self.lua orelse return;
         for (self.rules.items) |ref| {
             const top = lua.getTop();
+            const m = self.tx_begin();
             _ = lua.getIndexRaw(ziglua.registry_index, ref);
             _ = lua.pushString(event_str);
             lua.pushInteger(@intCast(node_id));
@@ -517,11 +540,14 @@ pub const WM = struct {
                 const msg = lua.toString(-1) catch null;
                 std.debug.print("rule error: {} {s}\n", .{ err, msg orelse "" });
                 lua.setTop(top);
+                self.tx_end(m, false);
+                continue;
             };
+            self.tx_end(m, true);
         }
     }
 
-    // Call the arranger for `graph` (or the default) with the given event.
+    // Call the arranger for graph (or the default) with the given event.
     pub fn call_arranger(
         self: *WM,
         graph: *graph_mod.Graph,
@@ -530,20 +556,21 @@ pub const WM = struct {
         prev_id: ?u32,
     ) void {
         const lua = self.lua orelse return;
+        if (graph.arranger_ref == 0 and self.default_arranger_ref == 0) return;
         const top_before = lua.getTop();
+        const m = self.tx_begin();
 
         if (graph.arranger_ref == 0) {
-            if (self.default_arranger_ref == 0) return;
             _ = lua.getIndexRaw(ziglua.registry_index, self.default_arranger_ref);
             lua.protectedCall(.{ .args = 0, .results = 1 }) catch |err| {
                 std.debug.print("arranger factory error: {}\n", .{err});
                 lua.setTop(top_before);
-                return;
+                return self.tx_end(m, false);
             };
             if (lua.typeOf(-1) != .function) {
                 std.debug.print("arranger factory did not return a function (got {})\n", .{lua.typeOf(-1)});
                 lua.setTop(top_before);
-                return;
+                return self.tx_end(m, false);
             }
             graph.arranger_ref = lua.ref(ziglua.registry_index);
         }
@@ -556,7 +583,9 @@ pub const WM = struct {
             const lua_msg = lua.toString(-1) catch null;
             std.debug.print("arranger callback error: {} msg={s}\n", .{ err, lua_msg orelse "none" });
             lua.setTop(top_before);
+            return self.tx_end(m, false);
         };
+        self.tx_end(m, true);
     }
 
     pub fn register_node(self: *WM, win: ?types.WindowHandle, node: *Node) !u32 {
@@ -565,12 +594,26 @@ pub const WM = struct {
         if (win) |w| {
             try self.window_to_node_id.put(w, id);
         }
+        self.journal.external(undo_register, self, id);
         self.next_node_id += 1;
         return id;
     }
 
+    fn undo_register(ctx: *anyopaque, id: u64) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        const kv = self.node_registry.fetchRemove(@intCast(id)) orelse return;
+        var it = self.window_to_node_id.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.* == kv.key) {
+                _ = self.window_to_node_id.remove(e.key_ptr.*);
+                break;
+            }
+        }
+    }
+
     pub fn get_node_by_id(self: *WM, id: u32) ?*Node {
-        return self.node_registry.get(id);
+        const node = self.node_registry.get(id) orelse return null;
+        return if (node.dead) null else node;
     }
 
     pub fn set_node_empty(self: *WM, node_id: u32) void {
@@ -1386,12 +1429,15 @@ pub const WM = struct {
             .lua => |ref| {
                 const lua = self.lua orelse return;
                 const top = lua.getTop();
+                const m = self.tx_begin();
                 _ = lua.getIndexRaw(ziglua.registry_index, ref);
                 lua.protectedCall(.{ .args = 0, .results = 0 }) catch |err| {
                     const msg = lua.toString(-1) catch null;
                     std.debug.print("Lua keybinding error: {} {s}\n", .{ err, msg orelse "" });
                     lua.setTop(top);
+                    return self.tx_end(m, false);
                 };
+                self.tx_end(m, true);
             },
         }
     }
@@ -1589,6 +1635,7 @@ pub const WM = struct {
         sub.gap_inner_v = self.default_gap_inner_v;
         sub.gap_outer_h = self.default_gap_outer_h;
         sub.gap_outer_v = self.default_gap_outer_v;
+        sub.journal = &self.journal;
         if (self.default_arranger_name.len > 0 and sub.arranger_name.len == 0) {
             sub.arranger_name = try self.allocator.dupe(u8, self.default_arranger_name);
         }
@@ -1607,7 +1654,7 @@ pub const WM = struct {
     }
 
     /// Create the very first workspace node in the top-level graph.
-    /// This is called once in `run` so that Super+Ctrl+1 always works
+    /// This is called once in run so that Super+Ctrl+1 always works
     /// and the screen is never empty.
     pub fn create_initial_workspace(self: *WM) !void {
         // Root container
@@ -1647,6 +1694,11 @@ pub const WM = struct {
     }
 
     pub fn handle_event(self: *WM, ev: types.Event) void {
+        const m = self.tx_begin();
+        self.tx_end(m, self.dispatch(ev));
+    }
+
+    fn dispatch(self: *WM, ev: types.Event) bool {
         switch (ev) {
             .key => |k| self.handle_key(k),
             .expose => |h| self.window_exposed(h),
@@ -1657,23 +1709,32 @@ pub const WM = struct {
                 self.screen_height = size.height;
                 self.relayout();
             },
-            .map_request => |req| lifecycle.window_mapped(self, req) catch |err|
-                std.debug.print("map_request: {}\n", .{err}),
-            .window_gone => |h| lifecycle.window_gone(self, h) catch |err|
-                std.debug.print("window_gone: {}\n", .{err}),
+            .map_request => |req| lifecycle.window_mapped(self, req) catch |err| {
+                std.debug.print("map_request: {}\n", .{err});
+                return false;
+            },
+            .window_gone => |h| lifecycle.window_gone(self, h) catch |err| {
+                std.debug.print("window_gone: {}\n", .{err});
+                return false;
+            },
             .refocus => if (self.focused) |n| self.focus(n),
             .info_changed => |h| requests.info_changed(self, h),
             .urgency_hint => |hint| requests.urgency_hint(self, hint),
-            .became_dock => |h| self.unmanage_as_dock(h) catch |err|
-                std.debug.print("became_dock: {}\n", .{err}),
+            .became_dock => |h| self.unmanage_as_dock(h) catch |err| {
+                std.debug.print("became_dock: {}\n", .{err});
+                return false;
+            },
             .activate_request => |h| requests.activate(self, h),
-            .state_request => |r| requests.state_request(self, r) catch |err|
-                std.debug.print("state_request: {}\n", .{err}),
+            .state_request => |r| requests.state_request(self, r) catch |err| {
+                std.debug.print("state_request: {}\n", .{err});
+                return false;
+            },
             .button_press => |b| pointer.button_press(self, b),
             .button_release => pointer.button_release(self),
             .pointer_motion => |p| pointer.motion(self, p),
             .pointer_enter => |h| pointer.enter(self, h),
         }
+        return true;
     }
 
     fn window_exposed(self: *WM, h: types.WindowHandle) void {
@@ -1691,6 +1752,7 @@ pub const WM = struct {
             std.debug.print("duckwm: backend failed to start: {}\n", .{err});
             return;
         };
+        self.graph.journal = &self.journal;
         try self.create_initial_workspace();
         self.scratch_graph = try self.create_workspace_graph(1);
         self.visible_graph = self.current_graph;
