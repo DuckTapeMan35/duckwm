@@ -50,6 +50,16 @@ pub const SwallowPair = struct {
 
 pub const WorkspaceSwitchMode = enum { none, previous };
 
+pub const Effect = union(enum) {
+    spawn: [][:0]u8,
+    close_window: types.WindowHandle,
+    bind: struct { key: KeybindKey, action: Keybind },
+    sync_pointer_grabs,
+};
+
+/// A transaction: the journal position plus the effect queue position.
+pub const Tx = struct { mark: graph_mod.Journal.Mark, effects: usize };
+
 pub const WM = struct {
     backend: Backend,
     screen_width: u32,
@@ -66,6 +76,7 @@ pub const WM = struct {
     scene_dirty: bool,
     focus_dirty: bool,
     sync_on_commit: bool,
+    effects: std.ArrayListUnmanaged(Effect),
 
     // user defined keybindings
     keybinds: std.AutoHashMap(KeybindKey, Keybind),
@@ -183,6 +194,7 @@ pub const WM = struct {
             .scene_dirty = false,
             .focus_dirty = false,
             .sync_on_commit = false,
+            .effects = .empty,
 
             .keybinds = std.AutoHashMap(KeybindKey, Keybind).init(allocator),
 
@@ -315,6 +327,20 @@ pub const WM = struct {
         g.focus_edges.deinit(self.allocator);
     }
 
+    fn undo_free_graph(ctx: *anyopaque, arg: u64) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        const g: *graph_mod.Graph = @ptrFromInt(@as(usize, @intCast(arg)));
+        g.nodes.deinit(self.allocator);
+        g.focus_edges.deinit(self.allocator);
+        if (g.arranger_name.len > 0) self.allocator.free(g.arranger_name);
+        self.allocator.destroy(g);
+    }
+
+    fn undo_destroy_preview(ctx: *anyopaque, arg: u64) void {
+        const self: *WM = @ptrCast(@alignCast(ctx));
+        self.backend.destroy_preview_window(arg);
+    }
+
     fn on_node_freed(ctx: *anyopaque, node: *Node) void {
         const self: *WM = @ptrCast(@alignCast(ctx));
         if (node.parked_term) |term| {
@@ -354,6 +380,8 @@ pub const WM = struct {
         self.preview_items.deinit(self.allocator);
         self.swallow_pairs.deinit(self.allocator);
         self.next_workspace_number.deinit();
+        for (self.effects.items) |e| self.drop_effect(e);
+        self.effects.deinit(self.allocator);
         self.journal.deinit();
         self.free_graph(&self.graph);
         self.workspace_stack.deinit(self.allocator);
@@ -393,24 +421,92 @@ pub const WM = struct {
             }
         }
     }
-
-    pub fn tx_begin(self: *WM) graph_mod.Journal.Mark {
-        return self.journal.begin();
+    pub fn tx_begin(self: *WM) Tx {
+        return .{ .mark = self.journal.begin(), .effects = self.effects.items.len };
     }
 
-    /// Commit (ok) or roll back everything since m, then re-solve so derived
-    /// geometry matches the restored inputs.
-    pub fn tx_end(self: *WM, m: graph_mod.Journal.Mark, ok: bool) void {
-        if (ok) return self.journal.release(m);
-        if (!self.journal.rollback(m)) {
-            std.debug.print("duckwm: could not roll back (out of memory); state may be partial\n", .{});
-            return;
+    pub fn tx_end(self: *WM, tx: Tx, ok: bool) void {
+        var keep = ok;
+        if (keep and self.journal.depth == 1) {
+            self.validate() catch |err| {
+                std.debug.print("duckwm: transaction rejected: {}\n", .{err});
+                keep = false;
+            };
         }
-        // A node created in the rolled-back part may have been focused.
-        if (self.focused) |f| if (self.get_id_for_node(f) == null) {
-            self.focused = null;
-        };
-        self.relayout();
+
+        if (keep) {
+            self.journal.release(tx.mark);
+        } else {
+            while (self.effects.items.len > tx.effects) self.drop_effect(self.effects.pop().?);
+            if (self.journal.rollback(tx.mark)) {
+                if (self.focused) |f| if (self.get_id_for_node(f) == null) {
+                    self.focused = null;
+                };
+                self.relayout();
+            } else {
+                std.debug.print("duckwm: could not roll back (out of memory); state may be partial\n", .{});
+            }
+        }
+
+        if (!self.journal.active()) {
+            // Index loop: running one effect can't invalidate the slice, but keep it simple.
+            var i: usize = 0;
+            while (i < self.effects.items.len) : (i += 1) self.run_effect(self.effects.items[i]);
+            self.effects.clearRetainingCapacity();
+        }
+    }
+
+    fn validate(self: *WM) !void {
+        if (self.journal.entries.items.len == 0) return; // nothing changed
+        for (self.journal.entries.items) |e| {
+            const node = switch (e) {
+                .constraint_added => |n| n,
+                .constraint_changed => |ch| ch.node,
+                .constraints_replaced => |r| r.node,
+                else => continue,
+            };
+            if (node.dead) continue;
+            for (node.constraints.items) |con| try graph_mod.Graph.check_constraint(node, con);
+        }
+        try self.resolve(self.current_graph);
+    }
+
+    /// Run now outside a transaction; otherwise at the outermost commit.
+    pub fn effect(self: *WM, e: Effect) void {
+        if (!self.journal.active()) return self.run_effect(e);
+        // Out of memory: doing it now beats losing it.
+        self.effects.append(self.allocator, e) catch self.run_effect(e);
+    }
+
+    fn run_effect(self: *WM, e: Effect) void {
+        switch (e) {
+            .spawn => |argv| {
+                self.spawn_now(argv) catch |err| std.debug.print("spawn: {}\n", .{err});
+                free_argv(self.allocator, argv);
+            },
+            .close_window => |h| self.backend.close_window(h),
+            .bind => |b| {
+                self.keybinds.put(b.key, b.action) catch return;
+                self.backend.grab_key(b.key);
+            },
+            .sync_pointer_grabs => self.apply_pointer_grabs(),
+        }
+    }
+
+    fn drop_effect(self: *WM, e: Effect) void {
+        switch (e) {
+            .spawn => |argv| free_argv(self.allocator, argv),
+            .bind => |b| switch (b.action) {
+                .lua => |ref| if (self.lua) |lua| lua.unref(ziglua.registry_index, ref),
+                .zig => {},
+            },
+            .close_window, .sync_pointer_grabs => {},
+        }
+    }
+
+    fn free_argv(allocator: std.mem.Allocator, argv: [][:0]u8) void {
+        for (argv) |a| allocator.free(a);
+        allocator.free(argv);
     }
 
     pub fn watch_file(self: *WM, path: [:0]const u8) void {
@@ -659,15 +755,19 @@ pub const WM = struct {
     }
 
     pub fn bind_lua(self: *WM, mods: types.Mods, keysym: types.Keysym, ref: i32) !void {
-        const k: KeybindKey = .{ .mods = mods, .keysym = keysym };
-        try self.keybinds.put(k, .{ .lua = ref });
-        self.backend.grab_key(k);
+        self.effect(.{ .bind = .{
+            .key = .{ .mods = mods, .keysym = keysym },
+            .action = .{ .lua = ref },
+        } });
     }
 
     pub fn bind(self: *WM, mods: types.Mods, keysym: types.Keysym, action: *const fn (*WM) anyerror!void) !void {
-        const k: KeybindKey = .{ .mods = mods, .keysym = keysym };
-        try self.keybinds.put(k, .{ .zig = action });
-        self.backend.grab_key(k);
+        self.effect(.{
+            .bind = .{
+                .key = .{ .mods = mods, .keysym = keysym },
+                .action = .{ .zig = action },
+            },
+        });
     }
 
     pub fn ungrab_keys(self: *WM) void {
@@ -958,6 +1058,10 @@ pub const WM = struct {
 
     /// Derive the root pointer grabs from the current modifier/button settings.
     pub fn sync_pointer_grabs(self: *WM) void {
+        self.effect(.sync_pointer_grabs);
+    }
+
+    fn apply_pointer_grabs(self: *WM) void {
         var grabs: [3]types.PointerGrab = undefined;
         var n: usize = 0;
         if (self.resize_modifier) |m| {
@@ -1443,19 +1547,32 @@ pub const WM = struct {
     }
 
     pub fn spawn(self: *WM, argv: []const []const u8) !void {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        const a = arena.allocator();
+        const owned = try self.allocator.alloc([:0]u8, argv.len);
+        var n: usize = 0;
+        errdefer {
+            for (owned[0..n]) |a| self.allocator.free(a);
+            self.allocator.free(owned);
+        }
+        for (argv) |arg| {
+            owned[n] = try self.allocator.dupeZ(u8, arg);
+            n += 1;
+        }
+        self.effect(.{ .spawn = owned });
+    }
 
-        const argv_buf = try a.allocSentinel(?[*:0]const u8, argv.len, null);
-        for (argv, 0..) |arg, i| argv_buf[i] = (try a.dupeZ(u8, arg)).ptr;
+    fn spawn_now(self: *WM, argv: []const [:0]u8) !void {
+        _ = self;
+        var argv_buf: [64:null]?[*:0]const u8 = undefined;
+        if (argv.len >= argv_buf.len) return error.TooManyArguments;
+        for (argv, 0..) |arg, i| argv_buf[i] = arg.ptr;
+        argv_buf[argv.len] = null;
 
         const pid = c.fork();
         if (pid == 0) {
             _ = c.setsid();
             const pid2 = c.fork();
             if (pid2 == 0) {
-                _ = c.execvp(argv_buf[0], @ptrCast(argv_buf.ptr));
+                _ = c.execvp(argv_buf[0].?, @ptrCast(&argv_buf));
                 c.exit(1);
             }
             c.exit(0);
@@ -1471,7 +1588,7 @@ pub const WM = struct {
             switch (node.content) {
                 .window => |win| {
                     self.backend.unframe(win, true);
-                    self.backend.close_window(win);
+                    self.effect(.{ .close_window = win });
                     if (self.window_to_node_id.get(win)) |id| {
                         _ = self.node_registry.remove(id);
                         _ = self.window_to_node_id.remove(win);
@@ -1507,7 +1624,7 @@ pub const WM = struct {
     pub fn kill_client(self: *WM) !void {
         const node = self.focused orelse return;
         switch (node.content) {
-            .window => |win| self.backend.close_window(win),
+            .window => |win| self.effect(.{ .close_window = win }),
             .workspace => {
                 if (node.content.workspace == self.current_graph) {
                     try self.leave_workspace();
@@ -1644,11 +1761,13 @@ pub const WM = struct {
 
     pub fn create_workspace_node_with_preview(self: *WM, owner_graph: *graph_mod.Graph) !*Node {
         const sub = try self.create_workspace_graph(owner_graph.id.level + 1);
+        self.journal.external(undo_free_graph, self, @intFromPtr(sub));
         const node = try owner_graph.add_node(.{ .workspace = sub });
         sub.parent_node = node;
         node.floating = false;
         node.hidden = true;
         node.preview_window = try self.backend.create_preview_window(self.frame_options(node));
+        self.journal.external(undo_destroy_preview, self, node.preview_window.?);
         self.repaint_preview(node);
         return node;
     }

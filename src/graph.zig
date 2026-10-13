@@ -435,6 +435,35 @@ pub const Graph = struct {
         node.constraints.items[i] = new;
     }
 
+    pub fn check_constraint(node: *const Node, con: Constraint) !void {
+        const ok = struct {
+            fn f(n: *const Node, other: *const Node) bool {
+                return !other.dead and other.owner_graph == n.owner_graph and other != n;
+            }
+        }.f;
+        switch (con) {
+            .left_of, .right_of, .above, .below, .align_left, .align_top, .align_right, .align_bottom, .equal_width, .equal_height => |o| {
+                if (!ok(node, o)) return error.InvalidConstraint;
+            },
+            .grid_cell => |g| {
+                if (!ok(node, g.container)) return error.InvalidConstraint;
+                if (g.cols == 0 or g.rows == 0 or g.col >= g.cols or g.row >= g.rows) return error.InvalidConstraint;
+            },
+            .grid_cell_abs => |g| if (!ok(node, g.container)) return error.InvalidConstraint,
+            .split => |s| {
+                // A container holds its own split, so the container may be the node itself.
+                if (s.container.dead or s.container.owner_graph != node.owner_graph) return error.InvalidConstraint;
+                if (s.count == 0 or s.count > s.children.len) return error.InvalidConstraint;
+                for (0..s.count) |k| {
+                    if (!ok(node, s.children[k])) return error.InvalidConstraint;
+                    if (!std.math.isFinite(s.ratios[k]) or s.ratios[k] < 0) return error.InvalidConstraint;
+                }
+            },
+            .fixed_ratio => |r| if (!std.math.isFinite(r) or r <= 0) return error.InvalidConstraint,
+            else => {},
+        }
+    }
+
     /// Bulk rewrite: the old list is moved into the log, not copied.
     pub fn replace_constraints(self: *Graph, node: *Node, new: []const Constraint) !void {
         var list = try std.ArrayListUnmanaged(Constraint).initCapacity(self.allocator, new.len);
@@ -934,6 +963,9 @@ pub const Graph = struct {
         }
 
         try solver.solve();
+        for (solver.vals) |v| {
+            if (!std.math.isFinite(v)) return error.Unsolvable;
+        }
 
         // Write results back, clamping to valid pixel ranges.
         // We clamp AFTER solving so the solver itself sees unclamped
