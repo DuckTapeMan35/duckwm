@@ -4,6 +4,11 @@ const graph_mod = @import("graph");
 const types = @import("types");
 const WM = @import("core.zig").WM;
 
+pub const SwallowPair = struct {
+    terminal: []const u8,
+    child: []const u8,
+};
+
 /// A swallow rule name matches a window by class or by instance.
 fn matches(name: []const u8, info: *const types.WindowInfo) bool {
     return std.mem.eql(u8, name, info.class()) or std.mem.eql(u8, name, info.instance());
@@ -34,6 +39,15 @@ fn is_ancestor(ancestor_pid: u32, child_pid: u32) bool {
         cur = p;
     }
     return false;
+}
+
+/// Free and forget every swallow pair (on reload, the config registers them again).
+pub fn clear_pairs(wm: *WM) void {
+    for (wm.swallow_pairs.items) |p| {
+        wm.allocator.free(p.terminal);
+        wm.allocator.free(p.child);
+    }
+    wm.swallow_pairs.clearRetainingCapacity();
 }
 
 pub fn try_terminal_died(wm: *WM, win: types.WindowHandle) bool {
@@ -147,7 +161,7 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
     wm.resolve(g) catch {};
     wm.rebuild_focus_edges() catch {};
     wm.flush(g) catch {};
-    wm.focus(child_node);
+    wm.set_focus(child_node);
 }
 
 pub fn try_unswallow(wm: *WM, child_id: u32) bool {
@@ -196,7 +210,7 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     wm.resolve(g) catch {};
     wm.rebuild_focus_edges() catch {};
     wm.flush(g) catch {};
-    wm.focus(term_node);
+    wm.set_focus(term_node);
 
     return true;
 }

@@ -6,6 +6,18 @@ const core = @import("core.zig");
 const WM = core.WM;
 const swallow_mod = @import("swallow.zig");
 
+fn apply_initial_hints(node: *Node, h: types.InitialHints) void {
+    if (h.fullscreen) node.wants_fullscreen = true;
+    if (h.urgent) node.urgent = true;
+    if (h.keep_above) node.floating = true;
+    if (h.fixed_size) |s| {
+        node.floating = true;
+        node.width = s.width;
+        node.height = s.height;
+    }
+    if (h.fixed_aspect) node.floating = true;
+}
+
 pub fn sweep_dead_containers(wm: *WM) void {
     const g = wm.current_graph;
     var i: usize = 0;
@@ -80,7 +92,7 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
     if (is_transient) node.floating = true;
     node.hidden = true;
     const was_floating = node.floating;
-    core.apply_initial_hints(node, wm.backend.window_hints(h));
+    apply_initial_hints(node, wm.backend.window_hints(h));
     if (node.floating and !was_floating) wm.center_node(node);
 
     wm.frame(h, node) catch |err| {
@@ -112,7 +124,7 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
                 else => {},
             }
         }
-        if (wm.focused) |f| wm.focus(f);
+        if (wm.focused) |f| wm.set_focus(f);
     }
 
     try wm.rebuild_focus_edges();
@@ -125,7 +137,7 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
         node.hidden = false;
         try wm.rebuild_focus_edges();
         try wm.flush(wm.current_graph);
-        if (wm.node_registry.get(id)) |n| wm.focus(n);
+        if (wm.node_registry.get(id)) |n| wm.set_focus(n);
         return;
     }
 
@@ -202,7 +214,7 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
         try wm.flush(wm.current_graph);
         if (focused_is_dying) {
             wm.focused = next_focus;
-            if (next_focus) |n| wm.focus(n) else wm.clear_focus();
+            if (next_focus) |n| wm.set_focus(n) else wm.clear_focus();
         }
         wm.sync_workspace_state();
     } else {

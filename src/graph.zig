@@ -154,6 +154,15 @@ pub const Node = struct {
     pub fn deinit(self: *Node, allocator: std.mem.Allocator) void {
         self.constraints.deinit(allocator);
     }
+
+    /// The window shown for this node: its own, or a workspace's preview.
+    pub fn window(self: *const Node) ?types.WindowHandle {
+        return switch (self.content) {
+            .window => |w| w,
+            .workspace => self.preview_window,
+            .empty => null,
+        };
+    }
 };
 
 pub fn get_container(node: *Node) ?*Node {

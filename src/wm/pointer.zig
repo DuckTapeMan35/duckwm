@@ -29,7 +29,7 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
     if (!has_float_mod and !has_resize_mod and wm.click_to_focus) {
         if (node_of(wm, ev.window)) |node| {
             if (wm.focused != node) {
-                wm.focus(node);
+                wm.set_focus(node);
                 wm.flush(wm.current_graph) catch {};
             }
         }
@@ -299,7 +299,7 @@ pub fn enter(wm: *WM, h: types.WindowHandle) void {
     const node = node_of(wm, h) orelse return;
     if (wm.focused == node) return;
     if (wm.current_graph != node.owner_graph) return;
-    wm.focus(node);
+    wm.set_focus(node);
     wm.flush(wm.current_graph) catch {};
 }
 

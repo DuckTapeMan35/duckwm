@@ -56,14 +56,6 @@ fn clear_all_node_colors(wm: *WM, g: *graph_mod.Graph) void {
     }
 }
 
-fn clear_swallow_pairs(wm: *WM) void {
-    for (wm.swallow_pairs.items) |p| {
-        wm.allocator.free(p.terminal);
-        wm.allocator.free(p.child);
-    }
-    wm.swallow_pairs.clearRetainingCapacity();
-}
-
 /// Re-run the config in the current VM, after dropping everything a run adds
 /// (bindings, rules, swallow pairs, RGB-frame classes, node colors), so the
 /// re-run doesn't duplicate them.
@@ -87,7 +79,7 @@ pub fn reload_persistent(lua: *Lua) void {
     for (wm.rules.items) |ref| lua.unref(ziglua.registry_index, ref);
     wm.rules.clearRetainingCapacity();
     wm.clear_rgb_frame_classes();
-    clear_swallow_pairs(wm);
+    wm.clear_swallow_pairs();
 
     lua.doFile(path_z) catch lua.pop(1);
 }
@@ -244,7 +236,7 @@ pub fn reload(wm: *WM) void {
         const owned = wm.allocator.dupe(u8, msg) catch null;
         old_lua.pop(1);
         if (owned) |m| {
-            wm_mod.notify_error(wm, m);
+            wm.show_error(m);
             wm.allocator.free(m);
         }
         return;
@@ -260,7 +252,7 @@ pub fn reload(wm: *WM) void {
         const raw = lua.toString(-1) catch null;
         const owned: ?[]u8 = if (raw) |m| wm.allocator.dupe(u8, m) catch null else null;
         lua.pop(1);
-        wm_mod.notify_error(wm, owned orelse @errorName(err));
+        wm.show_error(owned orelse @errorName(err));
         if (owned) |m| wm.allocator.free(m);
 
         lua = vm.reset_vm(wm) catch return;

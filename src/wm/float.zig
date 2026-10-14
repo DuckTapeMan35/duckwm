@@ -67,7 +67,7 @@ pub fn raise_floating_windows(wm: *WM) void {
     var moving: ?types.WindowHandle = null;
     for (wm.current_graph.nodes.items) |node| {
         if (!node.floating or node.hidden) continue;
-        const h = WM.node_window(node) orelse continue;
+        const h = node.window() orelse continue;
         // The window being dragged goes last, so it ends up on top.
         if (wm.float_moving and h == wm.float_move_window) {
             moving = h;

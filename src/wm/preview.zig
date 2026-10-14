@@ -1,7 +1,10 @@
 const std = @import("std");
 const types = @import("types");
+const core = @import("core.zig");
 const graph_mod = @import("graph");
 const Graph = graph_mod.Graph;
+const Node = graph_mod.Node;
+const WM = core.WM;
 
 /// Global preview settings; individual workspaces can override them.
 pub const Defaults = struct {
@@ -103,4 +106,22 @@ fn first_codepoint(s: []const u8) []const u8 {
     if (s.len == 0) return s;
     const n = std.unicode.utf8ByteSequenceLength(s[0]) catch 1;
     return s[0..@min(n, s.len)];
+}
+
+pub fn repaint_preview(wm: *WM, node: *Node) void {
+    if (node.content != .workspace) return;
+    const pw = node.preview_window orelse return;
+    const sub = node.content.workspace;
+    layout(
+        wm.allocator,
+        sub,
+        node.width,
+        node.height,
+        wm.preview_defaults.max_icon_size,
+        &wm.preview_items,
+    ) catch return;
+    wm.backend.draw_preview(pw, .{ .width = node.width, .height = node.height }, style(
+        &wm.preview_defaults,
+        sub,
+    ), wm.preview_items.items);
 }

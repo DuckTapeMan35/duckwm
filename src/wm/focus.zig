@@ -203,3 +203,8 @@ pub fn top_left_window(wm: *WM) ?*Node {
     }
     return best;
 }
+
+pub fn clear_focus(wm: *WM) void {
+    wm.journal.set(wm, "focused", null);
+    wm.focus_dirty = true;
+}

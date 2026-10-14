@@ -1,13 +1,17 @@
 const std = @import("std");
+const core = @import("../core.zig");
+const command = @import("../command.zig");
 const graph_mod = @import("graph");
-const core = @import("core.zig");
-const command = @import("command.zig");
+const util = @import("util.zig");
 const WM = core.WM;
+
+const Allocator = std.mem.Allocator;
 const Node = graph_mod.Node;
 const Graph = graph_mod.Graph;
 const Constraint = graph_mod.Constraint;
-const Value = command.Value;
 const NodeId = command.NodeId;
+const Value = command.Value;
+const Args = util.Args;
 
 // ---- the schema ----
 pub const Other = struct { other: NodeId };
@@ -72,7 +76,17 @@ pub fn make_split(wm: *WM, container: NodeId, axis: command.Axis, ratios: []cons
 
 fn resolve(wm: *WM, spec: ConstraintSpec) !Constraint {
     return switch (spec) {
-        inline .left_of, .right_of, .above, .below, .align_left, .align_top, .align_right, .align_bottom, .equal_width, .equal_height => |o, tag| @unionInit(Constraint, @tagName(tag), try get(wm, o.other)),
+        inline .left_of,
+        .right_of,
+        .above,
+        .below,
+        .align_left,
+        .align_top,
+        .align_right,
+        .align_bottom,
+        .equal_width,
+        .equal_height,
+        => |o, tag| @unionInit(Constraint, @tagName(tag), try get(wm, o.other)),
         .fixed_x => |v| .{ .fixed_x = v.value },
         .fixed_y => |v| .{ .fixed_y = v.value },
         .fixed_width => |v| .{ .fixed_width = v.value },
@@ -351,4 +365,17 @@ pub fn print(wm: *WM, a: std.mem.Allocator) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     try print_graph_to_buf(wm, &buf, a, wm.current_graph, 0);
     return buf.items;
+}
+
+pub fn get_layout(wm: *WM, _: void, arena: Allocator) !Value {
+    return describe(wm, arena);
+}
+
+pub fn set_layout(wm: *WM, args: Args(.set_layout), arena: Allocator) !Value {
+    try apply(wm, args.layout, arena);
+    return .nil;
+}
+
+pub fn print_graph(wm: *WM, _: void, arena: Allocator) !Value {
+    return .{ .string = try print(wm, arena) };
 }

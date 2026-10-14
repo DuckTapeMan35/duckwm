@@ -95,3 +95,38 @@ pub fn resize_corner(wm: *WM, node: *Node, delta_x: i32, delta_y: i32) !void {
     if (delta_x != 0) _ = try wm.resize_vertical_edge(node.x + @as(i32, @intCast(node.width)), delta_x, f);
     if (delta_y != 0) _ = try wm.resize_horizontal_edge(node.y + @as(i32, @intCast(node.height)), delta_y, f);
 }
+
+pub fn sync_constraints_from_geometry(wm: *WM) void {
+    const g = wm.current_graph;
+    for (g.nodes.items) |node| {
+        if (node.floating) continue;
+        for (node.constraints.items, 0..) |con, i| {
+            var new = con;
+            switch (new) {
+                .fixed_x => |*v| v.* = node.x,
+                .fixed_y => |*v| v.* = node.y,
+                .fixed_width => |*v| v.* = node.width,
+                .fixed_height => |*v| v.* = node.height,
+                .split => |*s| {
+                    const cont = s.container;
+                    if (cont.width == 0 and cont.height == 0) continue;
+                    var ratio_sum: f32 = 0;
+                    for (0..s.count) |k| {
+                        const child = s.children[k];
+                        const ratio: f32 = if (s.axis == .horizontal)
+                            @as(f32, @floatFromInt(child.width)) / @as(f32, @floatFromInt(cont.width))
+                        else
+                            @as(f32, @floatFromInt(child.height)) / @as(f32, @floatFromInt(cont.height));
+                        s.ratios[k] = @max(0.01, ratio);
+                        ratio_sum += s.ratios[k];
+                    }
+                    if (ratio_sum > 0) {
+                        for (0..s.count) |k| s.ratios[k] /= ratio_sum;
+                    }
+                },
+                else => continue,
+            }
+            if (!std.meta.eql(new, con)) g.change_constraint_at(node, i, new);
+        }
+    }
+}

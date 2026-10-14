@@ -59,6 +59,7 @@ pub fn reset_vm(wm: *WM) !*Lua {
     setup_lua(wm, lua);
     wm.ungrab_keys();
     wm.keybinds.clearRetainingCapacity();
+    wm.clear_swallow_pairs();
     wm.default_arranger_ref = 0;
     wm.reset_arranger_refs(&wm.graph);
     wm.clear_rgb_frame_classes();

@@ -1,0 +1,28 @@
+const std = @import("std");
+const c = @import("libc");
+const core = @import("../core.zig");
+const command = @import("../command.zig");
+const util = @import("util.zig");
+const WM = core.WM;
+const Value = command.Value;
+const Args = util.Args;
+const Allocator = std.mem.Allocator;
+
+pub fn spawn(wm: *WM, args: Args(.spawn), _: Allocator) !Value {
+    if (args.argv.len == 0) return error.EmptyArgv;
+    try wm.spawn(args.argv); // queued: runs at commit, dropped on rollback
+    return .nil;
+}
+
+pub fn setenv(_: *WM, args: Args(.setenv), arena: Allocator) !Value {
+    // setenv needs NUL-terminated strings; Lua's are, but the slices don't say so.
+    const key = try arena.dupeZ(u8, args.key);
+    const value = try arena.dupeZ(u8, args.value);
+    if (c.setenv(key.ptr, value.ptr, 1) != 0) return error.SetenvFailed;
+    return .nil;
+}
+
+pub fn quit(wm: *WM, _: void, _: Allocator) !Value {
+    wm.end_session();
+    std.process.exit(0);
+}
