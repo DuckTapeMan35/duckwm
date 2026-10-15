@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("core.zig");
 const settings = @import("settings.zig");
 const registry = @import("registry.zig");
+const ipc = @import("ipc.zig");
 const WM = core.WM;
 
 pub fn run(wm: *WM) !void {
@@ -29,24 +30,22 @@ pub fn run(wm: *WM) !void {
     try wm.init_ipc();
     const event_fd = wm.backend.event_fd();
 
+    var fds: std.ArrayListUnmanaged(std.posix.pollfd) = .empty;
+    defer fds.deinit(wm.allocator);
+
     while (true) {
-        // Backend events, IPC connections and, when watching, config changes.
-        var fds: [3]std.posix.pollfd = undefined;
-        var nfds: usize = 2;
-        fds[0] = .{ .fd = event_fd, .events = std.posix.POLL.IN, .revents = 0 };
-        fds[1] = .{ .fd = wm.ipc_fd, .events = std.posix.POLL.IN, .revents = 0 };
-        if (wm.inotify_fd >= 0) {
-            fds[2] = .{ .fd = wm.inotify_fd, .events = std.posix.POLL.IN, .revents = 0 };
-            nfds = 3;
-        }
+        fds.clearRetainingCapacity();
+        try fds.append(wm.allocator, .{ .fd = event_fd, .events = std.posix.POLL.IN, .revents = 0 });
+        const watching = wm.inotify_fd >= 0;
+        if (watching) try fds.append(wm.allocator, .{ .fd = wm.inotify_fd, .events = std.posix.POLL.IN, .revents = 0 });
+        const ipc_first = fds.items.len;
+        try ipc.add_poll_fds(wm, &fds);
 
         // The timeout wakes the loop for the next animation frame, if any.
-        _ = std.posix.poll(fds[0..nfds], wm.backend.poll_timeout()) catch continue;
+        _ = std.posix.poll(fds.items, wm.backend.poll_timeout()) catch continue;
 
-        if (fds[1].revents & std.posix.POLL.IN != 0) wm.accept_ipc_clients();
-        wm.handle_ipc_clients();
-
-        if (nfds == 3 and fds[2].revents & std.posix.POLL.IN != 0) settings.handle_config_events(wm);
+        ipc.handle(wm, fds.items[ipc_first..]);
+        if (watching and fds.items[1].revents & std.posix.POLL.IN != 0) settings.handle_config_events(wm);
 
         while (wm.backend.next_event()) |ev| wm.handle_event(ev);
 

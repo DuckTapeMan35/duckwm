@@ -75,6 +75,24 @@ pub fn execute(wm: *WM, cmd: Command, arena: std.mem.Allocator) !Value {
 
 pub const RunError = error{Rejected};
 
+pub fn error_text(err: anyerror) []const u8 {
+    return switch (err) {
+        error.Rejected => "the result was invalid, so nothing was changed",
+        error.InvalidNode => "no such node",
+        error.NotFloating => "node is not floating",
+        error.NotInGraph => "node is not in a graph",
+        error.InvalidGridCell => "cols and rows must be positive and the cell inside the grid",
+        error.InvalidSplit => "split needs 1-16 children, one positive ratio each",
+        error.NotAContainer => "node is not a container",
+        error.InvalidButton => "button must be between 1 and 255",
+        error.InvalidKeymap => "invalid layout, variant, options or model",
+        error.NotAWorkspace => "node is not a workspace",
+        error.EmptyArgv => "argv must contain at least the program name",
+        error.SetenvFailed => "invalid variable name",
+        else => @errorName(err),
+    };
+}
+
 /// Run commands as one transaction: all of them take effect, or none do.
 /// results must be at least as long as cmds.
 pub fn run(wm: *WM, cmds: []const Command, arena: std.mem.Allocator, results: []Value) !void {

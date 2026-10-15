@@ -33,7 +33,7 @@ pub fn run_and_push(
     var results: [1]command.Value = undefined;
     command.run(util.global_wm, &.{@unionInit(Command, name, args)}, arena.allocator(), &results) catch |err| {
         arena.deinit();
-        util.raise_with(lua, name ++ " failed: ", run_error_text(err));
+        util.raise_with(lua, name ++ " failed: ", command.error_text(err));
     };
     const n = push_value(lua, results[0]);
     arena.deinit(); // pushed values were copied into Lua
@@ -145,24 +145,6 @@ fn arg_error_text(err: anyerror) []const u8 {
         error.InvalidChoice => "argument is not one of the allowed names",
         error.ExpectedTable => "expected a table argument",
         else => "invalid argument",
-    };
-}
-
-fn run_error_text(err: anyerror) []const u8 {
-    return switch (err) {
-        error.Rejected => "the result was invalid, so nothing was changed",
-        error.InvalidNode => "no such node",
-        error.NotFloating => "node is not floating",
-        error.NotInGraph => "node is not in a graph",
-        error.InvalidGridCell => "cols and rows must be positive and the cell inside the grid",
-        error.InvalidSplit => "split needs 1-16 children, one positive ratio each",
-        error.NotAContainer => "node is not a container",
-        error.InvalidButton => "button must be between 1 and 255",
-        error.InvalidKeymap => "invalid layout, variant, options or model",
-        error.NotAWorkspace => "node is not a workspace",
-        error.EmptyArgv => "argv must contain at least the program name",
-        error.SetenvFailed => "invalid variable name",
-        else => @errorName(err),
     };
 }
 

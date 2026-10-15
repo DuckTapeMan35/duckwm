@@ -1,9 +1,38 @@
 const std = @import("std");
-const ziglua = @import("ziglua");
-const WM = @import("core.zig").WM;
+const linux = std.os.linux;
+const POLL = std.posix.POLL;
+const protocol = @import("protocol");
+const wire = protocol.wire;
+const core = @import("core.zig");
+const command = @import("command.zig");
+const WM = core.WM;
 
+/// A frame longer than this closes the connection: no request is legitimately this big.
+const max_frame = 16 * 1024 * 1024;
+
+pub const Client = struct {
+    fd: i32,
+    /// Bytes received that don't yet form a complete frame.
+    in: std.ArrayListUnmanaged(u8) = .empty,
+    /// Encoded responses the socket hasn't accepted yet.
+    out: std.ArrayListUnmanaged(u8) = .empty,
+
+    fn deinit(c: *Client, a: std.mem.Allocator) void {
+        close_fd(c.fd);
+        c.in.deinit(a);
+        c.out.deinit(a);
+    }
+};
+
+pub const State = struct {
+    /// The listening socket (-1 until init).
+    fd: i32 = -1,
+    clients: std.ArrayListUnmanaged(Client) = .empty,
+};
+
+// ---- setup and teardown ----
 fn close_fd(fd: i32) void {
-    _ = std.os.linux.close(fd);
+    _ = linux.close(fd);
 }
 
 fn delete_socket(path: []const u8) void {
@@ -11,7 +40,14 @@ fn delete_socket(path: []const u8) void {
     if (path.len >= buf.len) return;
     @memcpy(buf[0..path.len], path);
     buf[path.len] = 0;
-    _ = std.os.linux.unlink(&buf);
+    _ = linux.unlink(&buf);
+}
+
+pub fn get_path(allocator: std.mem.Allocator) ![]u8 {
+    if (std.c.getenv("XDG_RUNTIME_DIR")) |dir| {
+        return std.fmt.allocPrint(allocator, "{s}/duckwm.sock", .{std.mem.span(dir)});
+    }
+    return std.fmt.allocPrint(allocator, "/tmp/duckwm-{d}.sock", .{linux.getuid()});
 }
 
 pub fn init(wm: *WM) !void {
@@ -20,247 +56,175 @@ pub fn init(wm: *WM) !void {
 
     delete_socket(path);
 
-    const fd: i32 = @intCast(std.os.linux.socket(
-        std.os.linux.AF.UNIX,
-        std.os.linux.SOCK.STREAM | std.os.linux.SOCK.NONBLOCK | std.os.linux.SOCK.CLOEXEC,
-        0,
-    ));
-    if (fd < 0) return error.SocketFailed;
+    const rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC, 0);
+    if (linux.errno(rc) != .SUCCESS) return error.SocketFailed;
+    const fd: i32 = @intCast(rc);
     errdefer close_fd(fd);
 
-    var addr = std.mem.zeroes(std.os.linux.sockaddr.un);
-    addr.family = std.os.linux.AF.UNIX;
+    var addr = std.mem.zeroes(linux.sockaddr.un);
+    addr.family = linux.AF.UNIX;
     if (path.len >= addr.path.len) return error.PathTooLong;
     @memcpy(addr.path[0..path.len], path);
 
-    const bind_rc = std.os.linux.bind(fd, @ptrCast(&addr), @sizeOf(std.os.linux.sockaddr.un));
-    if (bind_rc != 0) return error.BindFailed;
+    if (linux.errno(linux.bind(fd, @ptrCast(&addr), @sizeOf(linux.sockaddr.un))) != .SUCCESS) return error.BindFailed;
+    if (linux.errno(linux.listen(fd, 8)) != .SUCCESS) return error.ListenFailed;
 
-    const listen_rc = std.os.linux.listen(fd, 8);
-    if (listen_rc != 0) return error.ListenFailed;
-
-    wm.ipc_fd = fd;
+    wm.ipc_state.fd = fd;
     std.debug.print("IPC socket at {s}\n", .{path});
 }
 
 pub fn deinit(wm: *WM) void {
-    if (wm.ipc_fd >= 0) {
-        close_fd(wm.ipc_fd);
-        wm.ipc_fd = -1;
+    for (wm.ipc_state.clients.items) |*c| c.deinit(wm.allocator);
+    wm.ipc_state.clients.deinit(wm.allocator);
+    wm.ipc_state.clients = .empty;
+    if (wm.ipc_state.fd >= 0) {
+        close_fd(wm.ipc_state.fd);
+        wm.ipc_state.fd = -1;
+        const path = get_path(wm.allocator) catch return;
+        defer wm.allocator.free(path);
+        delete_socket(path);
     }
-    for (wm.ipc_clients.items) |fd| close_fd(fd);
-    wm.ipc_clients.deinit(wm.allocator);
-
-    const path = get_path(wm.allocator) catch return;
-    defer wm.allocator.free(path);
-    delete_socket(path);
 }
 
-pub fn get_path(allocator: std.mem.Allocator) ![]u8 {
-    if (std.c.getenv("XDG_RUNTIME_DIR")) |dir| {
-        return std.fmt.allocPrint(allocator, "{s}/duckwm.sock", .{std.mem.span(dir)});
+// ---- polling ----
+const PollFd = std.posix.pollfd;
+const PollEvents = @FieldType(PollFd, "events");
+
+/// Append the listening socket, then every client, to the poll set.
+/// handle expects exactly these entries, in this order.
+pub fn add_poll_fds(wm: *WM, fds: *std.ArrayListUnmanaged(PollFd)) !void {
+    try fds.append(wm.allocator, .{ .fd = wm.ipc_state.fd, .events = POLL.IN, .revents = 0 });
+    for (wm.ipc_state.clients.items) |c| {
+        var events: PollEvents = POLL.IN;
+        if (c.out.items.len > 0) events |= POLL.OUT;
+        try fds.append(wm.allocator, .{ .fd = c.fd, .events = events, .revents = 0 });
     }
-    return std.fmt.allocPrint(allocator, "/tmp/duckwm-{d}.sock", .{std.os.linux.getuid()});
 }
 
-pub fn accept_clients(wm: *WM) void {
+/// Act on what poll reported, for the entries add_poll_fds appended.
+pub fn handle(wm: *WM, fds: []const PollFd) void {
+    // Backwards: a closed client is removed from the list.
+    var i = wm.ipc_state.clients.items.len;
+    while (i > 0) {
+        i -= 1;
+        const revents = fds[1 + i].revents;
+        if (revents == 0) continue;
+        if (!service(wm, &wm.ipc_state.clients.items[i], revents)) {
+            wm.ipc_state.clients.items[i].deinit(wm.allocator);
+            _ = wm.ipc_state.clients.orderedRemove(i);
+        }
+    }
+    // After the clients, so the indices above still match the poll set.
+    if (fds[0].revents & POLL.IN != 0) accept_all(wm);
+}
+
+fn accept_all(wm: *WM) void {
     while (true) {
-        const rc: isize = @bitCast(std.os.linux.accept(wm.ipc_fd, null, null));
-        if (rc < 0) return;
-        const fd: i32 = @intCast(rc);
-        wm.ipc_clients.append(wm.allocator, fd) catch {
-            close_fd(fd);
+        const rc = linux.accept4(wm.ipc_state.fd, null, null, linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC);
+        switch (linux.errno(rc)) {
+            .SUCCESS => {
+                const fd: i32 = @intCast(rc);
+                wm.ipc_state.clients.append(wm.allocator, .{ .fd = fd }) catch close_fd(fd);
+            },
+            .INTR => continue,
+            else => return, // AGAIN: nothing more pending
+        }
+    }
+}
+
+// ---- one client ----
+/// false: the client is gone or misbehaved, close it.
+fn service(wm: *WM, c: *Client, revents: PollEvents) bool {
+    if (revents & (POLL.IN | POLL.HUP) != 0) {
+        const r = read_available(wm, c);
+        if (r == .failed) return false;
+        handle_frames(wm, c) catch return false;
+        if (r == .eof) {
+            // The client closed its side; answer what it sent, then close ours.
+            _ = flush_out(c);
+            return false;
+        }
+    }
+    if (revents & POLL.ERR != 0) return false;
+    if (c.out.items.len > 0) return flush_out(c);
+    return true;
+}
+
+const Read = enum { more, eof, failed };
+
+fn read_available(wm: *WM, c: *Client) Read {
+    var buf: [16 * 1024]u8 = undefined;
+    while (true) {
+        const rc = linux.read(c.fd, &buf, buf.len);
+        switch (linux.errno(rc)) {
+            .SUCCESS => {
+                if (rc == 0) return .eof;
+                c.in.appendSlice(wm.allocator, buf[0..rc]) catch return .failed;
+            },
+            .AGAIN => return .more,
+            .INTR => continue,
+            else => return .failed,
+        }
+    }
+}
+
+/// Answer every complete frame in the input buffer; keep the incomplete tail.
+fn handle_frames(wm: *WM, c: *Client) !void {
+    var start: usize = 0;
+    while (c.in.items.len - start >= 4) {
+        const len = std.mem.readInt(u32, c.in.items[start..][0..4], .little);
+        if (len > max_frame) return error.FrameTooLarge;
+        if (c.in.items.len - start - 4 < len) break;
+        try answer(wm, c, c.in.items[start + 4 ..][0..len]);
+        start += 4 + len;
+    }
+    const rest = c.in.items.len - start;
+    std.mem.copyForwards(u8, c.in.items[0..rest], c.in.items[start..]);
+    c.in.shrinkRetainingCapacity(rest);
+}
+
+/// Run one request as a transaction and queue its response.
+fn answer(wm: *WM, c: *Client, frame: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(wm.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const body = blk: {
+        const cmds = wire.decode_request(frame, a) catch |err| {
+            const msg = try std.fmt.allocPrint(a, "malformed request: {s}", .{@errorName(err)});
+            break :blk try wire.encode_response(a, &.{}, msg);
         };
-    }
-}
-
-pub fn handle_clients(wm: *WM) void {
-    var i: usize = 0;
-    while (i < wm.ipc_clients.items.len) {
-        const fd = wm.ipc_clients.items[i];
-        const keep = handle_client(wm, fd);
-        if (keep) {
-            i += 1;
-        } else {
-            close_fd(fd);
-            _ = wm.ipc_clients.swapRemove(i);
-        }
-    }
-}
-
-fn read_fd(fd: i32, buf: []u8) isize {
-    return @bitCast(std.os.linux.read(fd, buf.ptr, buf.len));
-}
-
-fn write_fd(fd: i32, buf: []const u8) void {
-    _ = std.os.linux.sendto(fd, buf.ptr, buf.len, std.os.linux.MSG.NOSIGNAL, null, 0);
-}
-
-fn handle_client(wm: *WM, fd: i32) bool {
-    var buf: [4096]u8 = undefined;
-    const n = read_fd(fd, &buf);
-    if (n <= 0) return false;
-
-    const msg = std.mem.trim(u8, buf[0..@intCast(n)], "\n\r ");
-    if (msg.len == 0) return false;
-
-    const response = execute_command(wm, msg) catch |err| blk: {
-        break :blk std.fmt.allocPrint(wm.allocator, "{{\"ok\":false,\"error\":\"{s}\"}}\n", .{@errorName(err)}) catch return false;
+        const results = try a.alloc(protocol.Value, cmds.len);
+        command.run(wm, cmds, a, results) catch |err| {
+            break :blk try wire.encode_response(a, &.{}, command.error_text(err));
+        };
+        break :blk try wire.encode_response(a, results, null);
     };
-    defer wm.allocator.free(response);
 
-    write_fd(fd, response);
-    return false;
+    var len: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len, @intCast(body.len), .little);
+    try c.out.appendSlice(wm.allocator, &len);
+    try c.out.appendSlice(wm.allocator, body);
 }
 
-fn execute_command(wm: *WM, msg: []const u8) ![]u8 {
-    const lua = wm.lua orelse return error.LuaNotInitialized;
-
-    var it = std.mem.tokenizeScalar(u8, msg, ' ');
-    const fn_name = it.next() orelse return error.EmptyCommand;
-
-    var fn_name_buf: [256:0]u8 = undefined;
-    if (fn_name.len >= fn_name_buf.len) return error.CommandTooLong;
-    @memcpy(fn_name_buf[0..fn_name.len], fn_name);
-    fn_name_buf[fn_name.len] = 0;
-    const fn_name_z: [:0]const u8 = fn_name_buf[0..fn_name.len :0];
-
-    _ = lua.getGlobal("wm");
-    const field_type = lua.getField(-1, fn_name_z);
-    if (field_type != .function) {
-        lua.pop(2);
-        return error.UnknownCommand;
+/// Write as much queued output as the socket accepts. false: the client is gone.
+fn flush_out(c: *Client) bool {
+    var sent: usize = 0;
+    defer {
+        const rest = c.out.items.len - sent;
+        std.mem.copyForwards(u8, c.out.items[0..rest], c.out.items[sent..]);
+        c.out.shrinkRetainingCapacity(rest);
     }
-    lua.remove(-2);
-
-    var argc: i32 = 0;
-    const is_table_cmd = std.mem.eql(u8, fn_name, "spawn") or std.mem.eql(u8, fn_name, "exec_once");
-
-    if (is_table_cmd) {
-        lua.newTable();
-        var table_idx: i32 = 1;
-        while (it.next()) |arg| {
-            _ = lua.pushString(arg);
-            lua.setIndexRaw(-2, table_idx);
-            table_idx += 1;
-        }
-        argc = 1;
-    } else {
-        while (it.next()) |arg| {
-            if (std.fmt.parseInt(i64, arg, 10)) |n| {
-                lua.pushInteger(n);
-            } else |_| {
-                if (std.mem.eql(u8, arg, "true")) {
-                    lua.pushBoolean(true);
-                } else if (std.mem.eql(u8, arg, "false")) {
-                    lua.pushBoolean(false);
-                } else {
-                    _ = lua.pushString(arg);
-                }
-            }
-            argc += 1;
+    while (sent < c.out.items.len) {
+        const pending = c.out.items[sent..];
+        // NOSIGNAL: a client that hung up must not SIGPIPE the WM.
+        const rc = linux.sendto(c.fd, pending.ptr, pending.len, linux.MSG.NOSIGNAL, null, 0);
+        switch (linux.errno(rc)) {
+            .SUCCESS => sent += rc,
+            .AGAIN => return true, // the rest goes out on the next POLLOUT
+            .INTR => continue,
+            else => return false,
         }
     }
-
-    const top_before = lua.getTop() - argc - 1;
-    const m = wm.tx_begin();
-    lua.protectedCall(.{ .args = argc, .results = ziglua.mult_return }) catch |err| {
-        wm.tx_end(m, false);
-        const lua_msg = lua.toString(-1) catch null;
-        const emsg = lua_msg orelse @errorName(err);
-        const owned = try std.fmt.allocPrint(wm.allocator, "{{\"ok\":false,\"error\":\"{s}\"}}\n", .{emsg});
-        lua.setTop(top_before);
-        return owned;
-    };
-    wm.tx_end(m, true);
-
-    const nresults = lua.getTop() - top_before;
-    var out: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer out.deinit(wm.allocator);
-
-    try out.appendSlice(wm.allocator, "{\"ok\":true,\"result\":");
-    if (nresults == 0) {
-        try out.appendSlice(wm.allocator, "null");
-    } else if (nresults == 1) {
-        try lua_value_to_json(wm.allocator, lua, -1, &out);
-    } else {
-        try out.append(wm.allocator, '[');
-        for (0..@intCast(nresults)) |i| {
-            if (i > 0) try out.append(wm.allocator, ',');
-            try lua_value_to_json(wm.allocator, lua, @intCast(@as(i32, @intCast(i)) - nresults), &out);
-        }
-        try out.append(wm.allocator, ']');
-    }
-    try out.appendSlice(wm.allocator, "}\n");
-    lua.setTop(top_before);
-
-    return out.toOwnedSlice(wm.allocator);
-}
-
-fn lua_value_to_json(allocator: std.mem.Allocator, lua: *ziglua.Lua, idx: i32, out: *std.ArrayListUnmanaged(u8)) !void {
-    switch (lua.typeOf(idx)) {
-        .nil => try out.appendSlice(allocator, "null"),
-        .boolean => try out.appendSlice(allocator, if (lua.toBoolean(idx)) "true" else "false"),
-        .number => {
-            if (lua.toInteger(idx)) |n| {
-                try out.print(allocator, "{d}", .{n});
-            } else |_| {
-                const f = lua.toNumber(idx) catch 0.0;
-                try out.print(allocator, "{d}", .{f});
-            }
-        },
-        .string => {
-            const s = lua.toString(idx) catch "";
-            try out.append(allocator, '"');
-            for (s) |ch| {
-                switch (ch) {
-                    '"' => try out.appendSlice(allocator, "\\\""),
-                    '\\' => try out.appendSlice(allocator, "\\\\"),
-                    '\n' => try out.appendSlice(allocator, "\\n"),
-                    '\r' => try out.appendSlice(allocator, "\\r"),
-                    '\t' => try out.appendSlice(allocator, "\\t"),
-                    else => try out.append(allocator, ch),
-                }
-            }
-            try out.append(allocator, '"');
-        },
-        .table => {
-            const len = lua.lenRaw(idx);
-            if (len > 0) {
-                try out.append(allocator, '[');
-                for (1..len + 1) |i| {
-                    if (i > 1) try out.append(allocator, ',');
-                    _ = lua.getIndexRaw(idx, @intCast(i));
-                    try lua_value_to_json(allocator, lua, -1, out);
-                    lua.pop(1);
-                }
-                try out.append(allocator, ']');
-            } else {
-                // Check if it has any string keys — if not, treat as empty array
-                lua.pushNil();
-                const has_keys = lua.next(if (idx < 0) idx - 1 else idx);
-                if (has_keys) {
-                    lua.pop(2); // pop key and value
-                    // re-serialize as object
-                    try out.append(allocator, '{');
-                    var first = true;
-                    lua.pushNil();
-                    while (lua.next(if (idx < 0) idx - 1 else idx)) {
-                        if (!first) try out.append(allocator, ',');
-                        first = false;
-                        try out.append(allocator, '"');
-                        const key = lua.toString(-2) catch "?";
-                        try out.appendSlice(allocator, key);
-                        try out.appendSlice(allocator, "\":");
-                        try lua_value_to_json(allocator, lua, -1, out);
-                        lua.pop(1);
-                    }
-                    try out.append(allocator, '}');
-                } else {
-                    try out.appendSlice(allocator, "[]");
-                }
-            }
-        },
-        else => try out.appendSlice(allocator, "null"),
-    }
+    return true;
 }

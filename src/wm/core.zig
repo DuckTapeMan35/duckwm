@@ -173,9 +173,7 @@ pub const WM = struct {
     pan_drag_start_pan_y: i32 = 0,
 
     // ---- IPC ----
-    /// Listening socket (-1 until init_ipc).
-    ipc_fd: i32 = -1,
-    ipc_clients: std.ArrayListUnmanaged(i32) = .empty,
+    ipc_state: ipc.State = .{},
 
     // ---- config loading and reloading ----
     /// Watches the config directory (-1: not watching).
@@ -231,7 +229,6 @@ pub const WM = struct {
         self.node_registry.deinit(self.allocator);
         self.window_to_node_id.deinit(self.allocator);
         ipc.deinit(self);
-        self.ipc_clients.deinit(self.allocator);
         self.unwatch_file();
         self.backend.deinit();
         self.clear_rgb_frame_classes();
@@ -290,12 +287,6 @@ pub const WM = struct {
     // ipc.zig
     pub fn init_ipc(self: *WM) !void {
         try ipc.init(self);
-    }
-    pub fn accept_ipc_clients(self: *WM) void {
-        ipc.accept_clients(self);
-    }
-    pub fn handle_ipc_clients(self: *WM) void {
-        ipc.handle_clients(self);
     }
 
     // tx.zig
