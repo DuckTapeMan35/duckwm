@@ -128,6 +128,7 @@ fn unzigzag(raw: u64) i64 {
     return @bitCast((raw >> 1) ^ (0 -% (raw & 1)));
 }
 
+// ---- decoding ----
 /// The enum value with this number, if T declares one.
 fn to_enum(comptime T: type, raw: u64) ?T {
     inline for (@typeInfo(T).@"enum".fields) |f| {
@@ -136,7 +137,6 @@ fn to_enum(comptime T: type, raw: u64) ?T {
     return null;
 }
 
-// ---- decoding ----
 fn read_scalar(comptime T: type, r: *Reader, wt: WireType) Error!T {
     if (wt != wire_type(T)) return error.WireTypeMismatch;
     return switch (@typeInfo(T)) {
@@ -354,7 +354,7 @@ fn encode_value(a: Allocator, v: Value) Error![]u8 {
             try w.tag(4, .fixed64);
             try w.fixed(f);
         },
-        .string => |s| try w.bytes(5, s),
+        .str => |s| try w.bytes(5, s),
         .list => |items| try w.bytes(6, try encode_list(a, items)),
         .map => |fields| {
             var m: Writer = .{ .a = a };
@@ -377,6 +377,101 @@ pub fn encode_response(a: Allocator, results: []const Value, err: ?[]const u8) E
     for (results) |v| try w.bytes(1, try encode_value(a, v));
     if (err) |e| try w.bytes(2, e);
     return w.out.items;
+}
+
+// ---- decoding responses (for clients) ----
+/// What a Response decodes to: the results if the batch committed, otherwise the error.
+pub const Response = struct {
+    results: []const Value,
+    err: ?[]const u8,
+};
+
+/// A len-delimited field's contents, checking it is one.
+fn len_field(r: *Reader, wt: WireType) Error![]const u8 {
+    if (wt != .len) return error.WireTypeMismatch;
+    return r.bytes();
+}
+
+/// A ValueList: repeated Value values = 1.
+fn decode_list(buf: []const u8, a: Allocator) Error![]const Value {
+    var r: Reader = .{ .buf = buf };
+    var items: std.ArrayListUnmanaged(Value) = .empty;
+    while (!r.done()) {
+        const num, const wt = try r.tag();
+        if (num == 1) try items.append(a, try decode_value(try len_field(&r, wt), a)) else try r.skip(wt);
+    }
+    return items.items;
+}
+
+/// A ValueField: string key = 1; Value value = 2.
+fn decode_field(buf: []const u8, a: Allocator) Error!Value.Field {
+    var r: Reader = .{ .buf = buf };
+    var f: Value.Field = .{ .key = "", .value = .nil };
+    while (!r.done()) {
+        const num, const wt = try r.tag();
+        switch (num) {
+            1 => f.key = try a.dupe(u8, try len_field(&r, wt)),
+            2 => f.value = try decode_value(try len_field(&r, wt), a),
+            else => try r.skip(wt),
+        }
+    }
+    return f;
+}
+
+/// A ValueMap: repeated ValueField fields = 1.
+fn decode_map(buf: []const u8, a: Allocator) Error![]const Value.Field {
+    var r: Reader = .{ .buf = buf };
+    var fields: std.ArrayListUnmanaged(Value.Field) = .empty;
+    while (!r.done()) {
+        const num, const wt = try r.tag();
+        if (num == 1) try fields.append(a, try decode_field(try len_field(&r, wt), a)) else try r.skip(wt);
+    }
+    return fields.items;
+}
+
+/// A Value: a oneof, so the last variant on the wire wins; none at all is nil.
+pub fn decode_value(buf: []const u8, a: Allocator) Error!Value {
+    var r: Reader = .{ .buf = buf };
+    var v: Value = .nil;
+    while (!r.done()) {
+        const num, const wt = try r.tag();
+        switch (num) {
+            1 => {
+                _ = try len_field(&r, wt); // Empty
+                v = .nil;
+            },
+            2 => v = .{ .boolean = try read_scalar(bool, &r, wt) },
+            3 => v = .{ .integer = try read_scalar(i64, &r, wt) },
+            4 => v = .{ .number = try read_scalar(f64, &r, wt) },
+            5 => v = .{ .str = try a.dupe(u8, try len_field(&r, wt)) },
+            6 => v = .{ .list = try decode_list(try len_field(&r, wt), a) },
+            7 => v = .{ .map = try decode_map(try len_field(&r, wt), a) },
+            8 => v = .{ .multi = try decode_list(try len_field(&r, wt), a) },
+            else => try r.skip(wt),
+        }
+    }
+    return v;
+}
+
+/// Decode a Response. Everything it points to is allocated in a.
+pub fn decode_response(buf: []const u8, a: Allocator) Error!Response {
+    var r: Reader = .{ .buf = buf };
+    var results: std.ArrayListUnmanaged(Value) = .empty;
+    var err: ?[]const u8 = null;
+    while (!r.done()) {
+        const num, const wt = try r.tag();
+        switch (num) {
+            1 => try results.append(a, try decode_value(try len_field(&r, wt), a)),
+            2 => err = try a.dupe(u8, try len_field(&r, wt)),
+            else => try r.skip(wt),
+        }
+    }
+    return .{ .results = results.items, .err = err };
+}
+
+/// Encode a Request: one batch of commands, run as one transaction.
+pub fn encode_request(a: Allocator, commands: []const Command) Error![]u8 {
+    return encode_message(Request, .{ .commands = commands }, a);
 }
 
 // ---- tests ----
@@ -426,4 +521,37 @@ test "packed and unknown fields" {
     try std.testing.expectEqual(@as(u32, 7), s.container);
     try std.testing.expectEqual(@as(usize, 2), s.ratios.len);
     try std.testing.expectEqualSlices(u32, &.{ 1, 2 }, s.children);
+}
+
+test "response round trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const fields = [_]Value.Field{
+        .{ .key = "x", .value = .{ .integer = -3 } },
+        .{ .key = "name", .value = .{ .str = "kitty" } },
+    };
+    const results = [_]Value{
+        .nil,
+        .{ .boolean = true },
+        .{ .number = 0.5 },
+        .{ .list = &.{ .{ .integer = 1 }, .{ .integer = 2 } } },
+        .{ .map = &fields },
+        .{ .multi = &.{ .{ .integer = 7 }, .nil } },
+    };
+    const ok = try decode_response(try encode_response(a, &results, null), a);
+    try std.testing.expect(ok.err == null);
+    try std.testing.expectEqual(results.len, ok.results.len);
+    try std.testing.expect(ok.results[0] == .nil);
+    try std.testing.expect(ok.results[1].boolean);
+    try std.testing.expectEqual(@as(f64, 0.5), ok.results[2].number);
+    try std.testing.expectEqual(@as(i64, 2), ok.results[3].list[1].integer);
+    try std.testing.expectEqual(@as(i64, -3), ok.results[4].map[0].value.integer);
+    try std.testing.expectEqualStrings("kitty", ok.results[4].map[1].value.str);
+    try std.testing.expect(ok.results[5].multi[1] == .nil);
+
+    const failed = try decode_response(try encode_response(a, &.{}, "no such node"), a);
+    try std.testing.expectEqual(@as(usize, 0), failed.results.len);
+    try std.testing.expectEqualStrings("no such node", failed.err.?);
 }

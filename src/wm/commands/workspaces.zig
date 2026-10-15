@@ -245,7 +245,7 @@ pub fn get_workspace_states(wm: *WM, _: void, arena: Allocator) !Value {
     for (st, out, 1..) |s, *v, pos| {
         v.* = .{ .map = try arena.dupe(Value.Field, &.{
             .{ .key = "position", .value = .{ .integer = @intCast(pos) } },
-            .{ .key = "state", .value = .{ .string = @tagName(s) } },
+            .{ .key = "state", .value = .{ .str = @tagName(s) } },
         }) };
     }
     return .{ .list = out };

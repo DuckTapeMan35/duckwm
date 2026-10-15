@@ -136,19 +136,19 @@ fn constraint_value(wm: *WM, a: std.mem.Allocator, con: Constraint) !Value {
         .equal_width,
         .equal_height,
         => |o, tag| try a.dupe(Value.Field, &.{
-            .{ .key = "type", .value = .{ .string = @tagName(tag) } },
+            .{ .key = "type", .value = .{ .str = @tagName(tag) } },
             .{ .key = "other", .value = id_of(wm, o) },
         }),
         inline .fixed_x, .fixed_y, .fixed_width, .fixed_height => |v, tag| try a.dupe(Value.Field, &.{
-            .{ .key = "type", .value = .{ .string = @tagName(tag) } },
+            .{ .key = "type", .value = .{ .str = @tagName(tag) } },
             .{ .key = "value", .value = .{ .integer = v } },
         }),
         .fixed_ratio => |v| try a.dupe(Value.Field, &.{
-            .{ .key = "type", .value = .{ .string = "fixed_ratio" } },
+            .{ .key = "type", .value = .{ .str = "fixed_ratio" } },
             .{ .key = "value", .value = .{ .number = v } },
         }),
         .grid_cell => |g| try a.dupe(Value.Field, &.{
-            .{ .key = "type", .value = .{ .string = "grid_cell" } },
+            .{ .key = "type", .value = .{ .str = "grid_cell" } },
             .{ .key = "col", .value = .{ .integer = g.col } },
             .{ .key = "row", .value = .{ .integer = g.row } },
             .{ .key = "cols", .value = .{ .integer = g.cols } },
@@ -156,7 +156,7 @@ fn constraint_value(wm: *WM, a: std.mem.Allocator, con: Constraint) !Value {
             .{ .key = "container", .value = id_of(wm, g.container) },
         }),
         .grid_cell_abs => |g| try a.dupe(Value.Field, &.{
-            .{ .key = "type", .value = .{ .string = "grid_cell_abs" } },
+            .{ .key = "type", .value = .{ .str = "grid_cell_abs" } },
             .{ .key = "x", .value = .{ .integer = g.x } },
             .{ .key = "y", .value = .{ .integer = g.y } },
             .{ .key = "w", .value = .{ .integer = g.w } },
@@ -171,8 +171,8 @@ fn constraint_value(wm: *WM, a: std.mem.Allocator, con: Constraint) !Value {
                 children[k] = id_of(wm, s.children[k]);
             }
             break :blk try a.dupe(Value.Field, &.{
-                .{ .key = "type", .value = .{ .string = "split" } },
-                .{ .key = "axis", .value = .{ .string = if (s.axis == .horizontal) "h" else "v" } },
+                .{ .key = "type", .value = .{ .str = "split" } },
+                .{ .key = "axis", .value = .{ .str = if (s.axis == .horizontal) "h" else "v" } },
                 .{ .key = "count", .value = .{ .integer = s.count } },
                 .{ .key = "container", .value = id_of(wm, s.container) },
                 .{ .key = "ratios", .value = .{ .list = ratios } },
@@ -212,7 +212,7 @@ pub fn describe(wm: *WM, a: std.mem.Allocator) !Value {
 
         try nodes.append(a, .{ .map = try a.dupe(Value.Field, &.{
             .{ .key = "id", .value = .{ .integer = id } },
-            .{ .key = "type", .value = .{ .string = type_name(n) } },
+            .{ .key = "type", .value = .{ .str = type_name(n) } },
             .{ .key = "x", .value = .{ .integer = n.x } },
             .{ .key = "y", .value = .{ .integer = n.y } },
             .{ .key = "width", .value = .{ .integer = n.width } },
@@ -353,5 +353,5 @@ pub fn set_layout(wm: *WM, args: Args(.set_layout), arena: Allocator) !Value {
 }
 
 pub fn print_graph(wm: *WM, _: void, arena: Allocator) !Value {
-    return .{ .string = try print(wm, arena) };
+    return .{ .str = try print(wm, arena) };
 }

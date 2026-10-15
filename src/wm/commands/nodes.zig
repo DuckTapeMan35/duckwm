@@ -99,7 +99,7 @@ pub fn get_container_of(wm: *WM, args: Args(.get_container_of), _: Allocator) !V
 
 pub fn get_node_type(wm: *WM, args: Args(.get_node_type), _: Allocator) !Value {
     const n = wm.get_node_by_id(args.id) orelse return .nil;
-    return .{ .string = util.type_name(n) };
+    return .{ .str = util.type_name(n) };
 }
 
 pub fn get_node_geometry(wm: *WM, args: Args(.get_node_geometry), arena: Allocator) !Value {
@@ -120,7 +120,7 @@ pub fn get_node_info(wm: *WM, args: Args(.get_node_info), arena: Allocator) !Val
         .{ .key = "width", .value = .{ .integer = n.width } },
         .{ .key = "height", .value = .{ .integer = n.height } },
         .{ .key = "floating", .value = .{ .boolean = n.floating } },
-        .{ .key = "type", .value = .{ .string = util.type_name(n) } },
+        .{ .key = "type", .value = .{ .str = util.type_name(n) } },
     }) };
 }
 

@@ -42,7 +42,7 @@ pub fn type_name(n: *const Node) []const u8 {
 /// A copy in the arena: results must not point into nodes the batch may free at commit.
 pub fn text(arena: std.mem.Allocator, s: []const u8) !Value {
     if (s.len == 0) return .nil;
-    return .{ .string = try arena.dupe(u8, s) };
+    return .{ .str = try arena.dupe(u8, s) };
 }
 
 pub fn center(n: *const Node) types.Point {

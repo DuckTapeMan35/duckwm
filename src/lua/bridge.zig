@@ -110,7 +110,7 @@ fn push_value(lua: *Lua, v: command.Value) i32 {
         .boolean => |b| lua.pushBoolean(b),
         .integer => |n| lua.pushInteger(n),
         .number => |f| lua.pushNumber(f),
-        .string => |s| _ = lua.pushString(s),
+        .str => |s| _ = lua.pushString(s),
         .list => |items| {
             lua.createTable(@intCast(items.len), 0);
             for (items, 1..) |item, k| {

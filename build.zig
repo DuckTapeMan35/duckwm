@@ -205,7 +205,6 @@ pub fn build(b: *std.Build) void {
     const platform = b.option(Platform, "platform", "Display server backend (default: x11)") orelse .x11;
 
     // ---- C headers ----
-
     // Xlib, Xcursor, Xft: only the x11 backend sees these.
     const xlib_tc = b.addTranslateC(.{
         .root_source_file = b.path("src/x11/xlib.h"),
@@ -224,7 +223,6 @@ pub fn build(b: *std.Build) void {
     const libc_mod = libc_tc.createModule();
 
     // ---- Modules ----
-
     const ziglua = b.dependency("ziglua", .{
         .target = target,
         .optimize = optimize,
@@ -347,7 +345,6 @@ pub fn build(b: *std.Build) void {
     wm_mod.addImport("protocol", protocol_mod);
 
     // ---- duckwm ----
-
     const exe = b.addExecutable(.{
         .name = "duckwm",
         .root_module = b.createModule(.{
@@ -369,7 +366,6 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     // ---- quack (IPC client) ----
-
     const quack = b.addExecutable(.{
         .name = "quack",
         .root_module = b.createModule(.{
@@ -379,10 +375,10 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+    quack.root_module.addImport("protocol", protocol_mod);
     b.installArtifact(quack);
 
     // ---- Steps ----
-
     const install_config = b.addInstallFile(
         b.path("config/default.lua"),
         "../etc/duckwm/config.lua", // relative to prefix: /etc/duckwm/config.lua when prefix=/usr

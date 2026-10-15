@@ -78,7 +78,7 @@ pub const Value = union(enum) {
     boolean: bool,
     integer: i64,
     number: f64,
-    string: []const u8,
+    str: []const u8,
     list: []const Value,
     map: []const Field,
     /// Several return values: separate results in Lua, a list elsewhere.
