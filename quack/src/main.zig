@@ -15,17 +15,19 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(if (args.len < 2) 1 else 0);
     }
 
-    const cmd = parse_command(a, args[1], args[2..]) catch |err| {
-        fail(a, switch (err) {
-            error.OutOfMemory => "out of memory",
-            else => parse_error,
-        });
+    const batch = std.mem.eql(u8, args[1], "-");
+    const cmds: []const Command = if (batch)
+        parse_batch(a, try read_stdin(a)) catch |err| fail(a, if (err == error.OutOfMemory) "out of memory" else parse_error)
+    else blk: {
+        const one = try a.alloc(Command, 1);
+        one[0] = parse_command(a, args[1], args[2..]) catch |err| fail(a, if (err == error.OutOfMemory) "out of memory" else parse_error);
+        break :blk one;
     };
 
     const fd = connect(a);
     defer _ = linux.close(fd);
 
-    const body = try wire.encode_request(a, &.{cmd});
+    const body = try wire.encode_request(a, cmds);
     var len: [4]u8 = undefined;
     std.mem.writeInt(u32, &len, @intCast(body.len), .little);
     write_all(fd, &len) catch die("quack: failed to send request\n");
@@ -40,8 +42,13 @@ pub fn main(init: std.process.Init) !void {
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     try out.appendSlice(a, "{\"ok\":true,\"result\":");
-    // One command, one result; a multi result prints as an array.
-    try write_json(a, &out, if (resp.results.len > 0) resp.results[0] else .nil);
+    if (batch) {
+        // A batch: every command's result, in order.
+        try write_json(a, &out, .{ .list = resp.results });
+    } else {
+        // One command, one result; a multi result prints as an array.
+        try write_json(a, &out, if (resp.results.len > 0) resp.results[0] else .nil);
+    }
     try out.appendSlice(a, "}\n");
     try write_all(1, out.items);
 }
@@ -112,6 +119,73 @@ fn parse_payload(comptime T: type, a: Allocator, comptime cmd: []const u8, args:
     }
     if (i < args.len) return bad("{s}: too many arguments (usage: quack {s})", .{ cmd, signature(T, cmd) });
     return out;
+}
+
+/// One command per line; see the top of the file.
+fn parse_batch(a: Allocator, text: []const u8) ![]const Command {
+    var cmds: std.ArrayListUnmanaged(Command) = .empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var line_no: usize = 0;
+    while (lines.next()) |line| {
+        line_no += 1;
+        const words = split_words(a, line) catch |err| switch (err) {
+            error.UnterminatedQuote => return bad("line {d}: unterminated quote", .{line_no}),
+            else => |e| return e,
+        };
+        if (words.len == 0 or words[0][0] == '#') continue;
+        const cmd = parse_command(a, words[0], words[1..]) catch |err| {
+            if (err == error.InvalidArgument) parse_error = try std.fmt.allocPrint(a, "line {d}: {s}", .{ line_no, parse_error });
+            return err;
+        };
+        try cmds.append(a, cmd);
+    }
+    if (cmds.items.len == 0) return bad("no commands on stdin", .{});
+    return cmds.items;
+}
+
+/// Whitespace-separated words; '...' and "..." group (no escapes inside).
+fn split_words(a: Allocator, line: []const u8) ![]const []const u8 {
+    var words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var word: std.ArrayListUnmanaged(u8) = .empty;
+    var in_word = false;
+    var quote: ?u8 = null;
+    for (line) |ch| {
+        if (quote) |q| {
+            if (ch == q) quote = null else try word.append(a, ch);
+        } else switch (ch) {
+            ' ', '\t', '\r' => if (in_word) {
+                try words.append(a, try word.toOwnedSlice(a));
+                in_word = false;
+            },
+            '\'', '"' => {
+                quote = ch;
+                in_word = true;
+            },
+            else => {
+                try word.append(a, ch);
+                in_word = true;
+            },
+        }
+    }
+    if (quote != null) return error.UnterminatedQuote;
+    if (in_word) try words.append(a, try word.toOwnedSlice(a));
+    return words.items;
+}
+
+fn read_stdin(a: Allocator) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        const rc = linux.read(0, &buf, buf.len);
+        switch (linux.errno(rc)) {
+            .SUCCESS => {
+                if (rc == 0) return out.items;
+                try out.appendSlice(a, buf[0..rc]);
+            },
+            .INTR => continue,
+            else => die("quack: failed to read stdin\n"),
+        }
+    }
 }
 
 fn unwrap(comptime T: type) type {
@@ -296,22 +370,10 @@ test "arguments" {
     const a = arena.allocator();
 
     try std.testing.expect(try parse_command(a, "cleanup_left_behind", &.{}) == .cleanup_left_behind);
-    try std.testing.expectEqual(
-        @as(u32, 42),
-        (try parse_command(a, "focus", &.{"42"})).focus.id,
-    );
-    try std.testing.expectEqual(
-        @as(i32, -5),
-        (try parse_command(a, "pan_by", &.{ "-5", "3" })).pan_by.dx,
-    );
-    try std.testing.expectEqual(
-        @as(u32, 0x1e1e2e),
-        (try parse_command(a, "set_border_width", &.{"#1e1e2e"})).set_border_width.width,
-    );
-    try std.testing.expectEqual(
-        protocol.Dir.up,
-        (try parse_command(a, "resize_focused_edge", &.{ "up", "10" })).resize_focused_edge.direction,
-    );
+    try std.testing.expectEqual(@as(u32, 42), (try parse_command(a, "focus", &.{"42"})).focus.id);
+    try std.testing.expectEqual(@as(i32, -5), (try parse_command(a, "pan_by", &.{ "-5", "3" })).pan_by.dx);
+    try std.testing.expectEqual(@as(u32, 0x1e1e2e), (try parse_command(a, "set_border_width", &.{"#1e1e2e"})).set_border_width.width);
+    try std.testing.expectEqual(protocol.Dir.up, (try parse_command(a, "resize_focused_edge", &.{ "up", "10" })).resize_focused_edge.direction);
 
     const spawn = (try parse_command(a, "spawn", &.{ "ghostty", "-e", "htop" })).spawn;
     try std.testing.expectEqual(@as(usize, 3), spawn.argv.len);
@@ -339,6 +401,29 @@ test "arguments" {
     try std.testing.expectError(error.InvalidArgument, parse_command(a, "focus", &.{ "1", "2" }));
     try std.testing.expectError(error.InvalidArgument, parse_command(a, "set_floating", &.{ "1", "maybe" }));
     try std.testing.expectError(error.InvalidArgument, parse_command(a, "quit", &.{"now"}));
+}
+
+test "batch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const cmds = try parse_batch(a,
+        \\# theme
+        \\set_default_focused_border_color #89b4fa
+        \\
+        \\  set_preview_font 'FiraCode Nerd Font:pixelsize=25'
+        \\spawn notify-send "theme applied"
+    );
+    try std.testing.expectEqual(@as(usize, 3), cmds.len);
+    try std.testing.expectEqual(@as(u32, 0x89b4fa), cmds[0].set_default_focused_border_color.color);
+    try std.testing.expectEqualStrings("FiraCode Nerd Font:pixelsize=25", cmds[1].set_preview_font.name);
+    try std.testing.expectEqualStrings("theme applied", cmds[2].spawn.argv[1]);
+
+    try std.testing.expectError(error.InvalidArgument, parse_batch(a, "focus 1\nfocus"));
+    try std.testing.expectEqualStrings("line 2: focus: missing argument <id> (usage: quack focus <id>)", parse_error);
+    try std.testing.expectError(error.InvalidArgument, parse_batch(a, "spawn 'oops"));
+    try std.testing.expectError(error.InvalidArgument, parse_batch(a, "# nothing\n"));
 }
 
 test "json" {

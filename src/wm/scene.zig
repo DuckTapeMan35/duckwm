@@ -115,11 +115,12 @@ pub fn border_colors(wm: *WM, node: *Node) types.BorderColors {
         node.border_color_unfocused orelse wm.default_border_color_unfocused;
 
     const sides = !wm.border_side_colors_focused_only or focused;
+    const ind: ?types.Side = if (sides) node.indicator_side else null;
     return .{
-        .top = if (sides) node.border_color_top orelse base else base,
-        .bottom = if (sides) node.border_color_bottom orelse base else base,
-        .left = if (sides) node.border_color_left orelse base else base,
-        .right = if (sides) node.border_color_right orelse base else base,
+        .top = if (ind == .top) wm.indicator_color else if (sides) node.border_color_top orelse base else base,
+        .bottom = if (ind == .bottom) wm.indicator_color else if (sides) node.border_color_bottom orelse base else base,
+        .left = if (ind == .left) wm.indicator_color else if (sides) node.border_color_left orelse base else base,
+        .right = if (ind == .right) wm.indicator_color else if (sides) node.border_color_right orelse base else base,
     };
 }
 

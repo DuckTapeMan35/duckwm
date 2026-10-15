@@ -3,6 +3,7 @@ const graph_mod = @import("graph");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
 const util = @import("util.zig");
+const types = @import("types");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -112,6 +113,28 @@ pub fn get_node_border_side_colors(wm: *WM, args: Args(.get_node_border_side_col
 
 pub fn set_border_side_colors_focused_only(wm: *WM, args: Args(.set_border_side_colors_focused_only), _: Allocator) !Value {
     wm.border_side_colors_focused_only = args.enabled;
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_indicator_color(wm: *WM, args: Args(.set_indicator_color), _: Allocator) !Value {
+    wm.indicator_color = args.color;
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_node_indicator(wm: *WM, args: Args(.set_node_indicator), _: Allocator) !Value {
+    const n = try util.node(wm, args.id);
+    const side: types.Side = switch (args.side) {
+        inline else => |s| @field(types.Side, @tagName(s)),
+    };
+    wm.journal.set(n, "indicator_side", side);
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn clear_node_indicator(wm: *WM, args: Args(.clear_node_indicator), _: Allocator) !Value {
+    wm.journal.set(try util.node(wm, args.id), "indicator_side", null);
     try repaint(wm);
     return .nil;
 }

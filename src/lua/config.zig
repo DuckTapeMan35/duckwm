@@ -5,7 +5,6 @@ const graph_mod = @import("graph");
 const c = @import("libc");
 const util = @import("util.zig");
 const vm = @import("vm.zig");
-const registrations = @import("registrations.zig");
 const Lua = ziglua.Lua;
 const WM = wm_mod.WM;
 
@@ -52,6 +51,7 @@ fn clear_all_node_colors(wm: *WM, g: *graph_mod.Graph) void {
         wm.journal.set(node, "border_color_bottom", null);
         wm.journal.set(node, "border_color_left", null);
         wm.journal.set(node, "border_color_right", null);
+        wm.journal.set(node, "indicator_side", null);
         if (node.content == .workspace) clear_all_node_colors(wm, node.content.workspace);
     }
 }
@@ -93,72 +93,6 @@ pub fn l_reload_config(lua: *Lua) i32 {
 
 pub fn l_reload_persistent(lua: *Lua) i32 {
     reload_persistent(lua);
-    return 0;
-}
-
-/// Functions that still run during a visuals-only reload; everything else is
-/// temporarily replaced with a no-op.
-const visual_functions = [_][]const u8{
-    "set_default_focused_border_color",
-    "set_default_unfocused_border_color",
-    "set_default_urgent_border_color",
-    "set_border_width",
-    "set_gaps",
-    "set_gaps_workspace",
-    "set_preview_colors",
-    "set_preview_colors_workspace",
-    "set_preview_font",
-    "set_preview_font_workspace",
-    "set_preview_max_icon_size",
-    "set_node_focused_border_color",
-    "set_node_unfocused_border_color",
-    "set_node_border_side_color",
-    "clear_node_focused_border_color",
-    "clear_node_unfocused_border_color",
-    "clear_node_border_side_colors",
-    "set_border_side_colors_focused_only",
-    "set_cursor_theme",
-};
-
-fn is_visual(name: []const u8) bool {
-    for (visual_functions) |v| {
-        if (std.mem.eql(u8, name, v)) return true;
-    }
-    return false;
-}
-
-fn restore_functions(lua: *Lua) void {
-    _ = lua.getGlobal("wm");
-    for (registrations.all) |reg| {
-        lua.pushFunction(reg.func);
-        lua.setField(-2, reg.name);
-    }
-    lua.pop(1);
-}
-
-fn noop(_: *Lua) i32 {
-    return 0;
-}
-
-/// Re-run the config with only the visual functions active: colors, gaps,
-/// fonts and the like update without re-binding keys or re-arranging.
-pub fn l_reload_visuals(lua: *Lua) i32 {
-    const wm = util.global_wm;
-    const path_z = user_path_z(wm) orelse return 0;
-    defer wm.allocator.free(path_z);
-
-    _ = lua.getGlobal("wm");
-    for (registrations.all) |reg| {
-        if (is_visual(reg.name)) continue;
-        lua.pushFunction(ziglua.wrap(noop));
-        lua.setField(-2, reg.name);
-    }
-    lua.pop(1);
-
-    lua.doFile(path_z) catch lua.pop(1);
-    restore_functions(lua);
-
-    wm.relayout();
     return 0;
 }
 

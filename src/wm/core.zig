@@ -92,6 +92,8 @@ pub const WM = struct {
     default_border_color_focused: u32 = 0x5294e2,
     default_border_color_unfocused: u32 = 0x333333,
     default_border_color_urgent: u32 = 0xe53935,
+    /// Color of every node's indicator side.
+    indicator_color: u32 = 0xf9e2af,
     /// Per-side border colors only on the focused window.
     border_side_colors_focused_only: bool = true,
     /// Gaps given to new workspaces.

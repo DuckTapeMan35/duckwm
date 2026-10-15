@@ -397,6 +397,7 @@ pub fn build(b: *std.Build) void {
     meta_step.dependOn(&meta_gen.step);
     const proto_step = b.step("proto", "Regenerate proto/duckwm.proto from src/protocol.zig");
     proto_step.dependOn(&ProtoStep.create(b).step);
+    b.getInstallStep().dependOn(&b.addInstallFile(b.path("proto/duckwm.proto"), "share/duckwm/duckwm.proto").step);
 
     // Type-checks every backend hook, including ones nothing calls yet.
     const x11_check = b.addTest(.{ .root_module = x11_mod });

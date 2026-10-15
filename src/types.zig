@@ -260,3 +260,5 @@ pub const WindowHandle = u64;
 pub const Point = struct { x: i32, y: i32 };
 
 pub const BorderColors = struct { top: u32, bottom: u32, left: u32, right: u32 };
+
+pub const Side = enum { top, bottom, left, right };

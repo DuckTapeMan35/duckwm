@@ -79,13 +79,6 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Core",
-        .name = "reload_visuals",
-        .desc = "Re-run the config with only visual setters active. Faster than a full reload — use for live theming.",
-        .params = &.{},
-        .ret = "nil",
-    },
-    .{
-        .category = "Core",
         .name = "setenv",
         .desc = "Set an environment variable in the WM process. All subsequently spawned windows inherit it.",
         .params = &.{
@@ -1275,6 +1268,34 @@ pub const entries = [_]ApiEntry{
         .params = &.{
             .{ .name = "duration_ms", .typ = "integer" },
             .{ .name = "curve", .typ = "string|number[]|fun(t: number): number" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name = "set_indicator_color",
+        .category = "Appearance",
+        .desc = "Set the indicator color shared by every node. Indicators already shown are recolored immediately.",
+        .params = &.{
+            .{ .name = "color", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name = "set_node_indicator",
+        .category = "Appearance",
+        .desc = "Draw one side of a node's border in the indicator color, replacing its previous indicator side. Takes precedence over that side's own color, and shows only when side colors do (see set_border_side_colors_focused_only).",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "side", .typ = "'top'|'bottom'|'left'|'right'" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .name = "clear_node_indicator",
+        .category = "Appearance",
+        .desc = "Remove a node's indicator.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
         },
         .ret = "nil",
     },

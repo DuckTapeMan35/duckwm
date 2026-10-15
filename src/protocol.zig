@@ -228,6 +228,9 @@ pub const CommandId = enum(u32) {
     set_preview_max_icon_size = 618,
     set_argb_frames = 619,
     force_rgb_frames = 620,
+    set_indicator_color = 621,
+    set_node_indicator = 622,
+    clear_node_indicator = 623,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -437,6 +440,9 @@ pub const Command = union(CommandId) {
     // frames
     set_argb_frames: struct { enabled: bool },
     force_rgb_frames: struct { class_name: []const u8 },
+    set_indicator_color: struct { color: u32 },
+    set_node_indicator: struct { id: NodeId, side: Side },
+    clear_node_indicator: One,
 
     // workspaces
     switch_to_workspace: struct { index: u32 },

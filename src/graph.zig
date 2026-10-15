@@ -110,6 +110,8 @@ pub const Node = struct {
     border_color_bottom: ?u32,
     border_color_left: ?u32,
     border_color_right: ?u32,
+    /// The border side drawn in the WM's indicator color, if any.
+    indicator_side: ?types.Side,
 
     on_remove: ?ReparentStrategy,
     dead: bool,
@@ -139,6 +141,7 @@ pub const Node = struct {
             .border_color_bottom = null,
             .border_color_left = null,
             .border_color_right = null,
+            .indicator_side = null,
 
             .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4),
 
