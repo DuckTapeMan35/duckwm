@@ -160,9 +160,10 @@ pub fn clear_constraints(wm: *WM, args: Args(.clear_constraints), _: Allocator) 
 pub fn remove_constraint(wm: *WM, args: Args(.remove_constraint), _: Allocator) !Value {
     const n = wm.get_node_by_id(args.id) orelse return .nil;
     const g = n.owner_graph orelse return .nil;
+    const tag = std.meta.stringToEnum(std.meta.Tag(Constraint), @tagName(args.kind)).?;
     var i: usize = 0;
     while (i < n.constraints.items.len) {
-        if (n.constraints.items[i] == args.kind) g.remove_constraint_at(n, i) else i += 1;
+        if (n.constraints.items[i] == tag) g.remove_constraint_at(n, i) else i += 1;
     }
     return .nil;
 }

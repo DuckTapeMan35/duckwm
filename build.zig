@@ -1,6 +1,7 @@
 const std = @import("std");
 const api = @import("src/api_docs.zig");
 const Scanner = @import("wayland").Scanner;
+const protogen = @import("src/protogen.zig");
 
 const MetaStep = struct {
     step: std.Build.Step,
@@ -167,6 +168,35 @@ const MetaStep = struct {
     }
 };
 
+const ProtoStep = struct {
+    step: std.Build.Step,
+
+    const out_path = "proto/duckwm.proto";
+
+    fn create(b: *std.Build) *ProtoStep {
+        const self = b.allocator.create(ProtoStep) catch @panic("OOM");
+        self.* = .{ .step = .init(.{
+            .id = .custom,
+            .name = "generate " ++ out_path,
+            .owner = b,
+            .makeFn = make,
+        }) };
+        return self;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
+        _ = options;
+        const b = step.owner;
+        const io = b.graph.io;
+
+        // The build allocator is an arena: no need to free the text.
+        const text = try protogen.generate(b.allocator);
+
+        const path = b.pathFromRoot(out_path);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text });
+    }
+};
+
 const Platform = enum { x11, river };
 
 pub fn build(b: *std.Build) void {
@@ -310,6 +340,12 @@ pub fn build(b: *std.Build) void {
     mod.addImport("wm", wm_mod);
     mod.addImport("config", lua_mod);
 
+    const protocol_mod = b.addModule("protocol", .{
+        .root_source_file = b.path("src/protocol.zig"),
+        .target = target,
+    });
+    wm_mod.addImport("protocol", protocol_mod);
+
     // ---- duckwm ----
 
     const exe = b.addExecutable(.{
@@ -363,6 +399,8 @@ pub fn build(b: *std.Build) void {
     const meta_gen = MetaStep.create(b);
     const meta_step = b.step("meta", "Regenerate LuaLS meta and API docs");
     meta_step.dependOn(&meta_gen.step);
+    const proto_step = b.step("proto", "Regenerate proto/duckwm.proto from src/protocol.zig");
+    proto_step.dependOn(&ProtoStep.create(b).step);
 
     // Type-checks every backend hook, including ones nothing calls yet.
     const x11_check = b.addTest(.{ .root_module = x11_mod });
@@ -376,4 +414,6 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&b.addRunArtifact(mod_tests).step);
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
+    const protocol_tests = b.addTest(.{ .root_module = protocol_mod });
+    test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
 }

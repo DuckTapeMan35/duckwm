@@ -4,7 +4,12 @@ const command = @import("../command.zig");
 const graph_mod = @import("graph");
 const util = @import("util.zig");
 const WM = core.WM;
+const protocol = @import("protocol");
 
+pub const Other = protocol.Other;
+pub const ConstraintSpec = protocol.ConstraintSpec;
+pub const NodeSpec = protocol.NodeSpec;
+pub const LayoutSpec = protocol.LayoutSpec;
 const Allocator = std.mem.Allocator;
 const Node = graph_mod.Node;
 const Graph = graph_mod.Graph;
@@ -12,32 +17,6 @@ const Constraint = graph_mod.Constraint;
 const NodeId = command.NodeId;
 const Value = command.Value;
 const Args = util.Args;
-
-// ---- the schema ----
-pub const Other = struct { other: NodeId };
-
-/// Constraint, with ids instead of pointers. Variant names are the API's
-/// constraint type names, and must stay identical to Constraint's.
-pub const ConstraintSpec = union(enum) {
-    left_of: Other,
-    right_of: Other,
-    above: Other,
-    below: Other,
-    align_left: Other,
-    align_top: Other,
-    align_right: Other,
-    align_bottom: Other,
-    equal_width: Other,
-    equal_height: Other,
-    fixed_x: struct { value: i32 },
-    fixed_y: struct { value: i32 },
-    fixed_width: struct { value: u32 },
-    fixed_height: struct { value: u32 },
-    fixed_ratio: struct { value: f64 },
-    grid_cell: struct { col: u32, row: u32, cols: u32, rows: u32, container: NodeId },
-    grid_cell_abs: struct { x: i32, y: i32, w: u32, h: u32, container: NodeId },
-    split: struct { container: NodeId, axis: command.Axis, ratios: []const f64, children: []const NodeId },
-};
 
 comptime {
     for (std.meta.fields(ConstraintSpec)) |f| {
@@ -47,9 +26,6 @@ comptime {
         if (!@hasField(ConstraintSpec, f.name)) @compileError("Constraint." ++ f.name ++ " is missing from ConstraintSpec");
     }
 }
-
-pub const NodeSpec = struct { id: NodeId, constraints: ?[]const ConstraintSpec };
-pub const LayoutSpec = struct { nodes: []const NodeSpec };
 
 // ---- set_layout ----
 fn get(wm: *WM, id: NodeId) !*Node {

@@ -4,11 +4,10 @@ const types = @import("types");
 const core = @import("core.zig");
 const focus = @import("focus.zig");
 const registry = @import("registry.zig");
+pub const WorkspaceSwitchMode = @import("protocol").WorkspaceSwitchMode;
 const WM = core.WM;
 const Graph = graph.Graph;
 const Node = graph.Node;
-
-pub const WorkspaceSwitchMode = enum { none, previous };
 
 pub fn free_graph(wm: *WM, g: *Graph) void {
     if (g.arranger_name.len > 0) {

@@ -25,6 +25,7 @@
           pkg-config
           river
           foot
+          protobuf
         ];
         buildInputs = with pkgs; [
           #x11 backend

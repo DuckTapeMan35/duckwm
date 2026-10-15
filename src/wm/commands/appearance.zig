@@ -201,7 +201,7 @@ pub fn set_argb_frames(wm: *WM, args: Args(.set_argb_frames), _: Allocator) !Val
 }
 
 pub fn force_rgb_frames(wm: *WM, args: Args(.force_rgb_frames), _: Allocator) !Value {
-    const owned = try wm.allocator.dupe(u8, args.class);
+    const owned = try wm.allocator.dupe(u8, args.class_name);
     errdefer wm.allocator.free(owned);
     try wm.rgb_frame_classes.append(wm.allocator, owned);
     return .nil;
