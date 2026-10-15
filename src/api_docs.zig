@@ -156,6 +156,16 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .name = "unbind",
+        .category = "Input",
+        .desc = "Remove a key's bind, whether it was made by bind or bind_commands.",
+        .params = &.{
+            .{ .name = "mods", .typ = "integer" },
+            .{ .name = "key", .typ = "string" },
+        },
+        .ret = "nil",
+    },
 
     // =========================================================
     // Window Management

@@ -47,18 +47,15 @@ pub fn setup_lua(wm: *WM, lua: *Lua) void {
 }
 
 pub fn reset_vm(wm: *WM) !*Lua {
+    wm.clear_config_binds();
     if (wm.lua) |old| {
-        for (wm.rules.items) |ref| {
-            old.unref(ziglua.registry_index, ref);
-        }
+        for (wm.rules.items) |ref| old.unref(ziglua.registry_index, ref);
         wm.rules.clearRetainingCapacity();
         old.deinit();
     }
     const lua = try Lua.init(wm.allocator);
     wm.lua = lua;
     setup_lua(wm, lua);
-    wm.ungrab_keys();
-    wm.keybinds.clearRetainingCapacity();
     wm.clear_swallow_pairs();
     wm.default_arranger_ref = 0;
     wm.reset_arranger_refs(&wm.graph);

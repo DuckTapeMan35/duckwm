@@ -3,6 +3,7 @@ const types = @import("types");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
 const util = @import("util.zig");
+const wire = @import("protocol").wire;
 const WM = core.WM;
 const Value = command.Value;
 const Args = util.Args;
@@ -105,5 +106,19 @@ pub fn set_keyboard_layout(wm: *WM, args: Args(.set_keyboard_layout), _: Allocat
 
 pub fn set_keyboard_layout_index(wm: *WM, args: Args(.set_keyboard_layout_index), _: Allocator) !Value {
     wm.set_keyboard_layout_index(args.index);
+    return .nil;
+}
+
+pub fn bind(wm: *WM, args: Args(.bind), arena: Allocator) !Value {
+    if (args.commands.len == 0) return error.EmptyBind;
+    const keysym = wm.backend.keysym_from_name(args.key) orelse return error.UnknownKey;
+    const encoded = try wm.allocator.dupe(u8, try wire.encode_request(arena, args.commands));
+    wm.bind_commands(.{ .mods = args.mods, .keysym = keysym }, encoded);
+    return .nil;
+}
+
+pub fn unbind(wm: *WM, args: Args(.unbind), _: Allocator) !Value {
+    const keysym = wm.backend.keysym_from_name(args.key) orelse return error.UnknownKey;
+    wm.unbind(.{ .mods = args.mods, .keysym = keysym });
     return .nil;
 }

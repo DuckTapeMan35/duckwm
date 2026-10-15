@@ -3,19 +3,40 @@ const duckwm = @import("duckwm");
 const WM = duckwm.WM;
 const Config = duckwm.Config;
 
-var global_display_ptr: usize = 0; // store as usize to avoid X11 type dependency
+const usage =
+    \\Usage: duckwm [--commands <file>]
+    \\
+    \\  --commands <file>  an encoded duckwm.Request (proto/duckwm.proto),
+    \\                     run after the Lua config and after every reload
+    \\
+;
 
 fn signal_handler(sig: i32) callconv(.c) void {
     _ = sig;
     std.process.exit(1);
 }
 
-fn mainImpl() !void {
+fn mainImpl(init: std.process.Init) !void {
+    // Arguments live in the process arena, so commands_path stays valid for the WM's lifetime.
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    var commands_path: ?[]const u8 = null;
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--commands") and i + 1 < args.len) {
+            i += 1;
+            commands_path = args[i];
+        } else {
+            std.debug.print("{s}", .{usage});
+            std.process.exit(if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) 0 else 2);
+        }
+    }
+
     var da = std.heap.DebugAllocator(.{}){};
     defer _ = da.deinit();
 
     var wm = try WM.create(da.allocator());
     wm.current_graph = &wm.graph;
+    wm.commands_path = commands_path;
     defer wm.deinit();
 
     const handler = std.os.linux.Sigaction{
@@ -26,16 +47,16 @@ fn mainImpl() !void {
 
     _ = std.os.linux.sigaction(std.os.linux.SIG.SEGV, &handler, null);
     _ = std.os.linux.sigaction(std.os.linux.SIG.ABRT, &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.FPE,  &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.ILL,  &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.BUS,  &handler, null);
+    _ = std.os.linux.sigaction(std.os.linux.SIG.FPE, &handler, null);
+    _ = std.os.linux.sigaction(std.os.linux.SIG.ILL, &handler, null);
+    _ = std.os.linux.sigaction(std.os.linux.SIG.BUS, &handler, null);
 
     try Config.load(&wm);
     try wm.run();
 }
 
-pub fn main() void {
-    mainImpl() catch |err| {
+pub fn main(init: std.process.Init) void {
+    mainImpl(init) catch |err| {
         std.debug.print("Fatal error: {}\n", .{err});
         std.process.exit(1);
     };

@@ -18,6 +18,7 @@ const settings = @import("settings.zig");
 const events = @import("events.zig");
 const loop = @import("loop.zig");
 const swallow = @import("swallow.zig");
+const startup = @import("startup.zig");
 
 const Graph = graph.Graph;
 const Node = graph.Node;
@@ -55,6 +56,8 @@ pub const WM = struct {
     scratch_graph: *Graph = undefined,
     /// Undo log for transactions.
     journal: graph.Journal,
+    /// an encoded Request run after the Lua config.
+    commands_path: ?[]const u8 = null,
 
     // ---- node ids ----
     /// The ids the APIs use. Entries are removed when a node is freed at commit.
@@ -210,6 +213,9 @@ pub const WM = struct {
     pub fn deinit(self: *WM) void {
         self.rules.deinit(self.allocator);
         for (self.effects.items) |e| tx.drop_effect(self, e);
+        var kb_it = self.keybinds.valueIterator();
+        while (kb_it.next()) |kb| self.free_keybind(kb.*);
+        self.keybinds.deinit(self.allocator);
         if (self.lua) |lua| lua.deinit();
         self.lua = null;
         self.keybinds.deinit(self.allocator);
@@ -518,6 +524,29 @@ pub const WM = struct {
     }
     pub fn hide_error(self: *WM) void {
         settings.hide_error(self);
+    }
+    pub fn put_keybind(self: *WM, key: types.KeyCombo, kb: settings.Keybind) void {
+        settings.put_keybind(self, key, kb);
+    }
+    pub fn remove_keybind(self: *WM, key: types.KeyCombo) void {
+        settings.remove_keybind(self, key);
+    }
+    pub fn free_keybind(self: *WM, kb: settings.Keybind) void {
+        settings.free_keybind(self, kb);
+    }
+    pub fn clear_config_binds(self: *WM) void {
+        settings.clear_config_binds(self);
+    }
+    pub fn bind_commands(self: *WM, key: types.KeyCombo, encoded: []const u8) void {
+        settings.bind_commands(self, key, encoded);
+    }
+    pub fn unbind(self: *WM, key: types.KeyCombo) void {
+        settings.unbind(self, key);
+    }
+
+    // startup.zig
+    pub fn run_commands_file(self: *WM) void {
+        startup.run_commands_file(self);
     }
 
     // swallow.zig

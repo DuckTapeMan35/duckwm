@@ -11,6 +11,7 @@ pub const Effect = union(enum) {
     spawn: [][:0]u8,
     close_window: types.WindowHandle,
     bind: struct { key: types.KeyCombo, action: settings.Keybind },
+    unbind: types.KeyCombo,
     sync_pointer_grabs,
 };
 
@@ -90,10 +91,8 @@ fn run_effect(wm: *WM, e: Effect) void {
             free_argv(wm.allocator, argv);
         },
         .close_window => |h| wm.backend.close_window(h),
-        .bind => |b| {
-            wm.keybinds.put(wm.allocator, b.key, b.action) catch return;
-            wm.backend.grab_key(b.key);
-        },
+        .bind => |b| wm.put_keybind(b.key, b.action),
+        .unbind => |key| wm.remove_keybind(key),
         .sync_pointer_grabs => settings.apply_pointer_grabs(wm),
     }
 }
@@ -102,10 +101,8 @@ fn run_effect(wm: *WM, e: Effect) void {
 pub fn drop_effect(wm: *WM, e: Effect) void {
     switch (e) {
         .spawn => |argv| free_argv(wm.allocator, argv),
-        .bind => |b| switch (b.action) {
-            .lua => |ref| if (wm.lua) |lua| lua.unref(ziglua.registry_index, ref),
-            .zig => {},
-        },
+        .bind => |b| wm.free_keybind(b.action),
+        .unbind => {},
         .close_window, .sync_pointer_grabs => {},
     }
 }

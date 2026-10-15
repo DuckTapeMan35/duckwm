@@ -1,4 +1,5 @@
 const std = @import("std");
+const ziglua = @import("ziglua");
 const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("core.zig");
@@ -8,7 +9,61 @@ const Node = graph_mod.Node;
 pub const Keybind = union(enum) {
     zig: *const fn (*WM) anyerror!void,
     lua: i32,
+    /// An encoded Request: the commands a bind_commands command gave, run as
+    /// one transaction on each press. Owned (wm.allocator).
+    commands: []const u8,
+
+    /// Made by the Lua config, so cleared when it reloads. Binds made by
+    /// commands (the socket, the commands file) outlive config reloads.
+    pub fn from_config(kb: Keybind) bool {
+        return kb != .commands;
+    }
 };
+
+/// Release what a bind owns.
+pub fn free_keybind(wm: *WM, kb: Keybind) void {
+    switch (kb) {
+        .zig => {},
+        .lua => |ref| if (wm.lua) |lua| lua.unref(ziglua.registry_index, ref),
+        .commands => |bytes| wm.allocator.free(bytes),
+    }
+}
+
+/// Store a bind, replacing (and freeing) whatever the key had.
+pub fn put_keybind(wm: *WM, key: types.KeyCombo, kb: Keybind) void {
+    const old = wm.keybinds.fetchPut(wm.allocator, key, kb) catch {
+        free_keybind(wm, kb);
+        return;
+    };
+    if (old) |o| free_keybind(wm, o.value);
+    wm.backend.grab_key(key);
+}
+
+/// Remove a key's bind, whoever made it.
+pub fn remove_keybind(wm: *WM, key: types.KeyCombo) void {
+    const old = wm.keybinds.fetchRemove(key) orelse return;
+    free_keybind(wm, old.value);
+    // The backend can only drop every grab, so grab the remaining keys again.
+    wm.ungrab_keys();
+    wm.regrab_keys();
+}
+
+/// Drop the binds the Lua config made, before it is re-run or its VM is
+/// replaced. Call while the old VM still exists, so Lua refs are released.
+pub fn clear_config_binds(wm: *WM) void {
+    var doomed: std.ArrayListUnmanaged(types.KeyCombo) = .empty;
+    defer doomed.deinit(wm.allocator);
+    var it = wm.keybinds.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.from_config()) doomed.append(wm.allocator, e.key_ptr.*) catch {};
+    }
+    for (doomed.items) |key| {
+        const old = wm.keybinds.fetchRemove(key) orelse continue;
+        free_keybind(wm, old.value);
+    }
+    wm.ungrab_keys();
+    wm.regrab_keys();
+}
 
 pub fn set_preview_max_icon_size(wm: *WM, size: u32) void {
     wm.preview_defaults.max_icon_size = if (size == 0) null else size;
@@ -126,6 +181,15 @@ pub fn bind_lua(wm: *WM, mods: types.Mods, keysym: types.Keysym, ref: i32) !void
         .key = .{ .mods = mods, .keysym = keysym },
         .action = .{ .lua = ref },
     } });
+}
+
+/// Bind a key to commands, encoded as a Request (taking ownership of encoded).
+pub fn bind_commands(wm: *WM, key: types.KeyCombo, encoded: []const u8) void {
+    wm.effect(.{ .bind = .{ .key = key, .action = .{ .commands = encoded } } });
+}
+
+pub fn unbind(wm: *WM, key: types.KeyCombo) void {
+    wm.effect(.{ .unbind = key });
 }
 
 pub fn ungrab_keys(wm: *WM) void {

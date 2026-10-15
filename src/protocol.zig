@@ -205,6 +205,8 @@ pub const CommandId = enum(u32) {
     set_cursor_theme = 513,
     set_keyboard_layout = 514,
     set_keyboard_layout_index = 515,
+    bind = 516,
+    unbind = 517,
 
     // appearance: 600-699
     set_default_focused_border_color = 600,
@@ -411,6 +413,10 @@ pub const Command = union(CommandId) {
     // keyboard layout
     set_keyboard_layout: struct { layout: []const u8, variant: ?[]const u8, options: ?[]const u8, model: ?[]const u8 },
     set_keyboard_layout_index: struct { index: u32 },
+    // keybinds: the commands run as one transaction on each press;
+    // unbind removes any bind, whoever made it
+    bind: struct { mods: Mods, key: []const u8, commands: []const Command },
+    unbind: struct { mods: Mods, key: []const u8 },
 
     // border colors and width
     set_default_focused_border_color: struct { color: u32 },

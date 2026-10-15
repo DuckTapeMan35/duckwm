@@ -301,6 +301,17 @@ message SetKeyboardLayoutIndex {
   uint32 index = 1;
 }
 
+message Bind {
+  uint32 mods = 1;
+  string key = 2;
+  repeated Command commands = 3;
+}
+
+message Unbind {
+  uint32 mods = 1;
+  string key = 2;
+}
+
 message SetDefaultFocusedBorderColor {
   uint32 color = 1;
 }
@@ -629,6 +640,8 @@ message Command {
     SetCursorTheme set_cursor_theme = 513;
     SetKeyboardLayout set_keyboard_layout = 514;
     SetKeyboardLayoutIndex set_keyboard_layout_index = 515;
+    Bind bind = 516;
+    Unbind unbind = 517;
     SetDefaultFocusedBorderColor set_default_focused_border_color = 600;
     SetDefaultUnfocusedBorderColor set_default_unfocused_border_color = 601;
     SetDefaultUrgentBorderColor set_default_urgent_border_color = 602;

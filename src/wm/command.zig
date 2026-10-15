@@ -89,6 +89,8 @@ pub fn error_text(err: anyerror) []const u8 {
         error.NotAWorkspace => "node is not a workspace",
         error.EmptyArgv => "argv must contain at least the program name",
         error.SetenvFailed => "invalid variable name",
+        error.UnknownKey => "unknown key name",
+        error.EmptyBind => "a bind needs at least one command",
         else => @errorName(err),
     };
 }

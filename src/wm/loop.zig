@@ -26,6 +26,8 @@ pub fn run(wm: *WM) !void {
 
     wm.startup_done = true;
     wm.commit();
+    wm.run_commands_file();
+    wm.commit();
 
     try wm.init_ipc();
     const event_fd = wm.backend.event_fd();

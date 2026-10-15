@@ -3,7 +3,10 @@ const ziglua = @import("ziglua");
 const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("core.zig");
+const protocol = @import("protocol");
+const command = @import("command.zig");
 
+const wire = protocol.wire;
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 
@@ -86,6 +89,17 @@ pub fn handle_key(self: *WM, combo: types.KeyCombo) void {
                 return self.tx_end(m, false);
             };
             self.tx_end(m, true);
+        },
+        .commands => |bytes| {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const a = arena.allocator();
+            // Our own encoding, so it decodes; the decode copies, so a command
+            // in the list may replace this very bind.
+            const cmds = wire.decode_request(bytes, a) catch return;
+            const results = a.alloc(protocol.Value, cmds.len) catch return;
+            command.run(self, cmds, a, results) catch |err|
+                std.debug.print("keybind: {s}\n", .{command.error_text(err)});
         },
     }
 }

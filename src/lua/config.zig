@@ -66,15 +66,7 @@ pub fn reload_persistent(lua: *Lua) void {
 
     clear_all_node_colors(wm, wm.current_graph);
 
-    var kb_it = wm.keybinds.iterator();
-    while (kb_it.next()) |entry| {
-        switch (entry.value_ptr.*) {
-            .lua => |ref| lua.unref(ziglua.registry_index, ref),
-            else => {},
-        }
-    }
-    wm.ungrab_keys();
-    wm.keybinds.clearRetainingCapacity();
+    wm.clear_config_binds();
 
     for (wm.rules.items) |ref| lua.unref(ziglua.registry_index, ref);
     wm.rules.clearRetainingCapacity();
@@ -82,6 +74,7 @@ pub fn reload_persistent(lua: *Lua) void {
     wm.clear_swallow_pairs();
 
     lua.doFile(path_z) catch lua.pop(1);
+    wm.run_commands_file();
 }
 
 // ---- Lua functions ----
@@ -198,6 +191,7 @@ pub fn reload(wm: *WM) void {
     };
     remap_all_graphs(wm, &wm.graph);
     wm.hide_error();
+    wm.run_commands_file();
     std.debug.print("config reloaded successfully\n", .{});
 }
 

@@ -22,7 +22,7 @@ fn lua_command(comptime tag: std.meta.Tag(Command)) fn (*Lua) i32 {
     }.call;
 }
 
-/// Run one command and push its result. Frees `arena` on every path.
+/// Run one command and push its result. Frees arena on every path.
 pub fn run_and_push(
     lua: *Lua,
     comptime tag: std.meta.Tag(Command),
@@ -148,21 +148,27 @@ fn arg_error_text(err: anyerror) []const u8 {
     };
 }
 
-/// Commands whose Lua function is a hand-written wrapper
+/// Commands whose Lua function is a hand-written wrapper.
 const wrapped_in_lua = [_][]const u8{"get_layout"};
 
+/// Commands with no wm.<name> in Lua, because Lua has a better way to do them:
+/// wm.bind takes a function (lua/input.zig), not a list of commands.
+const not_in_lua = [_]std.meta.Tag(Command){.bind};
+
+fn skipped(comptime name: []const u8) bool {
+    for (wrapped_in_lua) |w| if (std.mem.eql(u8, w, name)) return true;
+    for (not_in_lua) |t| if (std.mem.eql(u8, @tagName(t), name)) return true;
+    return false;
+}
+
+/// One wm.<name> per Command variant, except the skipped ones.
 pub const registrations = blk: {
     @setEvalBranchQuota(100000);
     var regs: []const Registration = &.{};
     for (std.meta.fields(Command)) |f| {
-        const wrapped = for (wrapped_in_lua) |w| {
-            if (std.mem.eql(u8, w, f.name)) break true;
-        } else false;
-        if (wrapped) continue;
-        regs = regs ++ [_]Registration{.{
-            .func = ziglua.wrap(lua_command(@field(std.meta.Tag(Command), f.name))),
-            .name = f.name,
-        }};
+        if (skipped(f.name)) continue;
+        const tag = @field(std.meta.Tag(Command), f.name);
+        regs = regs ++ [_]Registration{.{ .func = ziglua.wrap(lua_command(tag)), .name = f.name }};
     }
     break :blk regs;
 };
