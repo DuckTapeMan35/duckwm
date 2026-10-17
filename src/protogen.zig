@@ -99,7 +99,7 @@ fn collect(comptime T: type, comptime ctx: []const u8, comptime acc: []const Nam
         .@"enum", .@"struct", .@"union" => {},
         else => return acc,
     }
-    if (T == Command) return acc;
+    if (T == Command or T == protocol.Value) return acc;
     for (acc) |n| if (n.T == T) return acc;
     const name = type_name(T, ctx);
     var out = acc;

@@ -6,19 +6,26 @@ const command = @import("../command.zig");
 const util = @import("util.zig");
 const WM = core.WM;
 const Node = graph_mod.Node;
+const Graph = graph_mod.Graph;
 const Value = command.Value;
 const Args = util.Args;
 const Allocator = std.mem.Allocator;
 
 // ---- creation and removal ----
+/// A new empty node in g, with an id. Inside a transaction a rollback removes both.
+pub fn add_empty(wm: *WM, g: *Graph) !struct { node: *Node, id: u32 } {
+    const n = try g.add_node(.empty);
+    return .{ .node = n, .id = try wm.register_node(null, n) };
+}
+
 fn new_empty(wm: *WM, fill_screen: bool) !Value {
-    const n = try wm.current_graph.add_node(.empty);
+    const e = try add_empty(wm, wm.current_graph);
     if (fill_screen) {
         // A new node: no journal entries needed for its own fields.
-        n.width = wm.screen_width;
-        n.height = wm.screen_height;
+        e.node.width = wm.screen_width;
+        e.node.height = wm.screen_height;
     }
-    return .{ .integer = try wm.register_node(null, n) };
+    return .{ .integer = e.id };
 }
 
 pub fn create_root_node(wm: *WM, _: void, _: Allocator) !Value {

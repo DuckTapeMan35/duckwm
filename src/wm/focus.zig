@@ -183,7 +183,7 @@ pub fn set_focus(wm: *WM, node: *Node) void {
 
     // Focus changes border colors (and which window counts as fullscreen-focused).
     wm.flush(g) catch {};
-    if (wm.get_id_for_node(node)) |id| wm.call_arranger(g, "focus", id, null);
+    if (wm.get_id_for_node(node)) |id| wm.call_arranger(g, .focus, id, null);
 }
 
 pub fn top_left_window(wm: *WM) ?*Node {

@@ -287,7 +287,7 @@ fn finish_resize(wm: *WM) void {
         if (n.floating) continue;
         switch (n.content) {
             .window, .workspace => if (wm.get_id_for_node(n)) |id| {
-                wm.call_arranger(wm.current_graph, "resize", id, null);
+                wm.call_arranger(wm.current_graph, .resize, id, null);
             },
             .empty => {},
         }

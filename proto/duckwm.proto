@@ -507,8 +507,15 @@ message ExecOnce {
   repeated string argv = 1;
 }
 
+message Ref {
+  oneof kind {
+    uint32 id = 1;
+    uint32 key = 2;
+  }
+}
+
 message Other {
-  uint32 other = 1;
+  Ref other = 1;
 }
 
 message ConstraintSpecFixedX {
@@ -536,7 +543,7 @@ message ConstraintSpecGridCell {
   uint32 row = 2;
   uint32 cols = 3;
   uint32 rows = 4;
-  uint32 container = 5;
+  Ref container = 5;
 }
 
 message ConstraintSpecGridCellAbs {
@@ -544,14 +551,14 @@ message ConstraintSpecGridCellAbs {
   sint32 y = 2;
   uint32 w = 3;
   uint32 h = 4;
-  uint32 container = 5;
+  Ref container = 5;
 }
 
 message ConstraintSpecSplit {
-  uint32 container = 1;
+  Ref container = 1;
   Axis axis = 2;
   repeated double ratios = 3;
-  repeated uint32 children = 4;
+  repeated Ref children = 4;
 }
 
 message ConstraintSpec {
@@ -578,7 +585,7 @@ message ConstraintSpec {
 }
 
 message NodeSpec {
-  uint32 id = 1;
+  Ref id = 1;
   repeated ConstraintSpec constraints = 2;
 }
 
@@ -618,6 +625,8 @@ message Return {
   repeated Command commands = 1;
   optional string err = 2;
   optional uint64 callback = 3;
+  optional LayoutSpec layout = 4;
+  optional Value state = 5;
 }
 
 message ClientMessage {
@@ -632,17 +641,44 @@ message CallArgsRule {
   uint32 id = 2;
 }
 
-message CallArgsArranger {
-  string event = 1;
+enum ArrangerEvent {
+  ARRANGER_EVENT_PRE_MAP = 0;
+  ARRANGER_EVENT_MAP = 1;
+  ARRANGER_EVENT_UNMAP = 2;
+  ARRANGER_EVENT_FOCUS = 3;
+  ARRANGER_EVENT_RESIZE = 4;
+}
+
+message Rect {
+  sint32 x = 1;
+  sint32 y = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+}
+
+message WindowInfo {
+  uint32 id = 1;
+  Rect geometry = 2;
+}
+
+message Snapshot {
+  ArrangerEvent event = 1;
   uint32 id = 2;
   optional uint32 prev_id = 3;
+  Rect work_area = 4;
+  sint32 cursor_dx = 5;
+  sint32 cursor_dy = 6;
+  optional uint32 focused = 7;
+  repeated WindowInfo windows = 8;
+  LayoutSpec layout = 9;
+  optional Value state = 10;
 }
 
 message CallArgs {
   oneof kind {
     Empty key = 1;
     CallArgsRule rule = 2;
-    CallArgsArranger arranger = 3;
+    Snapshot arranger = 3;
     Empty factory = 4;
   }
 }

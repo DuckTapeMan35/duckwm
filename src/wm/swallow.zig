@@ -156,7 +156,7 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
     if (g.fullscreen_node == term_node) g.fullscreen_node = null;
 
     // Notify arranger the terminal unmapped so its internal list is correct
-    wm.call_arranger(g, "unmap", term_id, null);
+    wm.call_arranger(g, .unmap, term_id, null);
 
     wm.resolve(g) catch {};
     wm.rebuild_focus_edges() catch {};

@@ -117,6 +117,9 @@ pub const Node = struct {
     dead: bool,
     parked_term: ?*Node,
     focus_serial: u64,
+    /// A container named by a layout (protocol.Ref.key): duckwm creates it
+    /// when a layout first mentions the key, and destroys it once one doesn't.
+    key: ?u32 = null,
 
     info: types.WindowInfo,
 
@@ -497,7 +500,9 @@ pub const Graph = struct {
         list.appendSliceAssumeCapacity(new);
         var old = node.constraints;
         node.constraints = list;
-        if (self.jr()) |j| j.push(.{ .constraints_replaced = .{ .node = node, .old = old } }) else old.deinit(self.allocator);
+        if (self.jr()) |j| j.push(.{
+            .constraints_replaced = .{ .node = node, .old = old },
+        }) else old.deinit(self.allocator);
     }
 
     pub fn add_node(self: *Graph, content: NodeContent) !*Node {
@@ -659,6 +664,14 @@ pub const Graph = struct {
                 break :blk false;
             },
         };
+    }
+
+    /// This workspace's container named key, if it has one.
+    pub fn keyed(self: *Graph, key: u32) ?*Node {
+        for (self.nodes.items) |n| {
+            if (n.key == key and !n.dead) return n;
+        }
+        return null;
     }
 
     pub fn set_preview_font(self: *Graph, name: []const u8) void {

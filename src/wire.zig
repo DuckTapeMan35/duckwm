@@ -152,6 +152,10 @@ fn read_scalar(comptime T: type, r: *Reader, wt: WireType) Error!T {
 }
 
 fn read_value(comptime T: type, r: *Reader, wt: WireType, a: Allocator) Error!T {
+    if (T == Value) {
+        if (wt != .len) return error.WireTypeMismatch;
+        return decode_value(try r.bytes(), a);
+    }
     switch (@typeInfo(T)) {
         .optional => |o| return try read_value(o.child, r, wt, a),
         .pointer => {
@@ -289,6 +293,7 @@ const Writer = struct {
 };
 
 fn write_field(w: *Writer, num: u32, comptime F: type, v: F, a: Allocator) Error!void {
+    if (F == Value) return w.bytes(num, try encode_value(a, v));
     switch (@typeInfo(F)) {
         .optional => |o| if (v) |x| try write_field(w, num, o.child, x, a),
         .pointer => |p| if (F == []const u8)
@@ -614,16 +619,33 @@ test "client and server messages" {
         .commands = &.{.{ .focus = .{ .id = 3 } }},
         .err = null,
         .callback = 9,
+        .layout = null,
+        .state = null,
     } }), a);
     try std.testing.expectEqual(@as(u32, 3), ret.ret.commands[0].focus.id);
     try std.testing.expectEqual(@as(?u64, 9), ret.ret.callback);
 
     const call = try decode_server_message(try encode_server_call(a, .{
         .callback = 17,
-        .args = .{ .arranger = .{ .event = "map", .id = 42, .prev_id = null } },
+        .args = .{ .arranger = .{
+            .event = .map,
+            .id = 42,
+            .prev_id = null,
+            .work_area = .{ .x = 0, .y = 30, .width = 1920, .height = 1050 },
+            .cursor_dx = -5,
+            .cursor_dy = 3,
+            .focused = 7,
+            .windows = &.{.{ .id = 7, .geometry = .{ .x = 0, .y = 30, .width = 1920, .height = 1050 } }},
+            .layout = .{ .nodes = &.{} },
+            .state = .{ .integer = 1 },
+        } },
     }), a);
-    try std.testing.expectEqual(@as(u64, 17), call.call.callback);
-    try std.testing.expectEqualStrings("map", call.call.args.arranger.event);
+    const args = call.call.args.arranger;
+    try std.testing.expectEqual(protocol.ArrangerEvent.map, args.event);
+    try std.testing.expectEqual(@as(i32, -5), args.cursor_dx);
+    try std.testing.expectEqual(@as(?u32, 7), args.focused);
+    try std.testing.expectEqual(@as(u32, 1050), args.windows[0].geometry.height);
+    try std.testing.expectEqual(@as(i64, 1), args.state.?.integer);
 
     // A Call without its args is rejected rather than decoded with garbage.
     var w: Writer = .{ .a = a };
@@ -633,4 +655,35 @@ test "client and server messages" {
 
     const resp = try decode_server_message(try encode_server_response(a, &.{.{ .integer = 5 }}, null), a);
     try std.testing.expectEqual(@as(i64, 5), resp.response.results[0].integer);
+}
+
+test "return with layout and state" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const fields = [_]Value.Field{.{ .key = "next_h", .value = .{ .boolean = true } }};
+    const children = [_]protocol.Ref{ .{ .id = 5 }, .{ .key = 1 } };
+    const cons = [_]protocol.ConstraintSpec{.{ .split = .{
+        .container = .{ .key = 0 },
+        .axis = .h,
+        .ratios = &.{ 0.5, 0.5 },
+        .children = &children,
+    } }};
+    const nodes = [_]protocol.NodeSpec{.{ .id = .{ .key = 0 }, .constraints = &cons }};
+    const msg: protocol.ClientMessage = .{ .ret = .{
+        .commands = &.{},
+        .err = null,
+        .callback = null,
+        .layout = .{ .nodes = &nodes },
+        .state = .{ .map = &fields },
+    } };
+
+    const back = try decode_client_message(try encode_client_message(a, msg), a);
+    const r = back.ret;
+    try std.testing.expect(r.state.?.map[0].value.boolean);
+    const s = r.layout.?.nodes[0].constraints.?[0].split;
+    try std.testing.expectEqual(@as(u32, 0), s.container.key);
+    try std.testing.expectEqual(@as(u32, 5), s.children[0].id);
+    try std.testing.expectEqual(@as(u32, 1), s.children[1].key);
 }

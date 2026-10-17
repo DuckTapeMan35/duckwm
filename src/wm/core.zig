@@ -1,6 +1,7 @@
 const std = @import("std");
 const ziglua = @import("ziglua");
 const graph = @import("graph");
+const protocol = @import("protocol");
 const focus = @import("focus.zig");
 const resize = @import("resize.zig");
 const float = @import("float.zig");
@@ -463,8 +464,8 @@ pub const WM = struct {
     pub fn call_rules(self: *WM, event_str: [:0]const u8, node_id: u32) void {
         callbacks.call_rules(self, event_str, node_id);
     }
-    pub fn call_arranger(self: *WM, g: *Graph, event_str: [:0]const u8, node_id: u32, prev_id: ?u32) void {
-        callbacks.call_arranger(self, g, event_str, node_id, prev_id);
+    pub fn call_arranger(self: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, prev_id: ?u32) void {
+        callbacks.call_arranger(self, g, event, node_id, prev_id);
     }
     pub fn handle_key(self: *WM, combo: types.KeyCombo) void {
         callbacks.handle_key(self, combo);

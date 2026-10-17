@@ -71,7 +71,7 @@ fn apply(wm: *WM, g: *Graph, factory: types.Callback) !void {
     for (ids.items) |id| {
         const node = wm.get_node_by_id(id) orelse continue;
         try g.attach_node(node);
-        wm.call_arranger(g, "map", id, prev_id);
+        wm.call_arranger(g, .map, id, prev_id);
         prev_id = id;
     }
 

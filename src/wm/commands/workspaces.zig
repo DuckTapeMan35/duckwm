@@ -98,7 +98,7 @@ pub fn create_nested(wm: *WM) !u32 {
         (if (f.owner_graph == g) wm.get_id_for_node(f) else null)
     else
         null;
-    wm.call_arranger(g, "map", id, prev_id);
+    wm.call_arranger(g, .map, id, prev_id);
 
     // A new graph and node: no journal entries needed for their own fields.
     const sub = n.content.workspace;

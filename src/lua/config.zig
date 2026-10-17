@@ -117,7 +117,7 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
                 continue;
             }
         }
-        wm.call_arranger(g, "map", id, prev_id);
+        wm.call_arranger(g, .map, id, prev_id);
         prev_id = id;
     }
     wm.resolve(g) catch {};

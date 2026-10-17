@@ -2,7 +2,17 @@ const std = @import("std");
 pub const wire = @import("wire.zig");
 pub const json = @import("json.zig");
 
-pub const Other = struct { other: NodeId };
+/// A node: by id, or a keyed container that duckwm creates on first use and
+/// destroys once no layout refers to it. Keys belong to the workspace.
+pub const Ref = union(enum) {
+    id: NodeId,
+    key: u32,
+
+    /// JSON and Lua accept a bare number for .id
+    pub const shorthand = "id";
+};
+
+pub const Other = struct { other: Ref };
 
 /// Constraint, with ids instead of pointers. Variant names are the API's
 /// constraint type names, and must stay identical to Constraint's.
@@ -22,12 +32,12 @@ pub const ConstraintSpec = union(enum) {
     fixed_width: struct { value: u32 },
     fixed_height: struct { value: u32 },
     fixed_ratio: struct { value: f64 },
-    grid_cell: struct { col: u32, row: u32, cols: u32, rows: u32, container: NodeId },
-    grid_cell_abs: struct { x: i32, y: i32, w: u32, h: u32, container: NodeId },
-    split: struct { container: NodeId, axis: Axis, ratios: []const f64, children: []const NodeId },
+    grid_cell: struct { col: u32, row: u32, cols: u32, rows: u32, container: Ref },
+    grid_cell_abs: struct { x: i32, y: i32, w: u32, h: u32, container: Ref },
+    split: struct { container: Ref, axis: Axis, ratios: []const f64, children: []const Ref },
 };
 
-pub const NodeSpec = struct { id: NodeId, constraints: ?[]const ConstraintSpec };
+pub const NodeSpec = struct { id: Ref, constraints: ?[]const ConstraintSpec };
 pub const LayoutSpec = struct { nodes: []const NodeSpec };
 
 pub const NodeId = u32;
@@ -536,7 +546,7 @@ pub const CallArgs = union(enum) {
     /// A rule, for one window event.
     rule: struct { event: []const u8, id: NodeId },
     /// An arranger, for one event in its workspace.
-    arranger: struct { event: []const u8, id: NodeId, prev_id: ?NodeId },
+    arranger: Snapshot,
     /// A factory (set_arranger, set_default_arranger): Return.callback is the arranger it made.
     factory,
 };
@@ -546,13 +556,44 @@ pub const CallArgs = union(enum) {
 pub const Call = struct { callback: u64, args: CallArgs };
 
 /// The end of a Call: commands to run in the same transaction, or an error
-/// that rolls it back. A factory sets callback to the arranger it made.
-pub const Return = struct { commands: []const Command, err: ?[]const u8, callback: ?u64 };
+/// that rolls it back. A factory sets callback to the arranger it made; an
+/// arranger may return the workspace's whole layout and its next state.
+pub const Return = struct {
+    commands: []const Command,
+    err: ?[]const u8,
+    callback: ?u64,
+    layout: ?LayoutSpec,
+    state: ?Value,
+};
 
 /// Everything a client sends.
 pub const ClientMessage = union(enum) {
     request: Request,
     ret: Return,
+};
+
+pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
+
+pub const ArrangerEvent = enum { pre_map, map, unmap, focus, resize };
+
+pub const WindowInfo = struct { id: NodeId, geometry: Rect };
+
+/// Everything an arranger needs for one event, so it can answer without queries.
+pub const Snapshot = struct {
+    event: ArrangerEvent,
+    id: NodeId,
+    prev_id: ?NodeId,
+    work_area: Rect,
+    /// The cursor relative to the focused window, as get_cursor_relative_to_focused.
+    cursor_dx: i32,
+    cursor_dy: i32,
+    focused: ?NodeId,
+    /// This workspace's tiled windows, in order.
+    windows: []const WindowInfo,
+    /// The layout as duckwm has it now, keyed containers by key, ratios after resizes.
+    layout: LayoutSpec,
+    /// What this arranger returned last time, null at first.
+    state: ?Value,
 };
 
 test {

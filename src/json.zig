@@ -115,6 +115,17 @@ fn convert(comptime T: type, a: Allocator, v: std.json.Value, path: *std.ArrayLi
             return out;
         },
         .@"union" => |u| {
+            if (comptime @hasDecl(T, "shorthand")) {
+                if (v == .integer or v == .number_string) {
+                    return @unionInit(T, T.shorthand, try convert(
+                        @FieldType(T, T.shorthand),
+                        a,
+                        v,
+                        path,
+                        diag,
+                    ));
+                }
+            }
             const obj = switch (v) {
                 .object => |o| o,
                 else => return fail(a, path, diag, "expected an object with one key", .{}),
@@ -184,4 +195,15 @@ test "commands from JSON" {
         try std.testing.expectError(error.InvalidJson, parse(protocol.Request, a, c[0], &d));
         try std.testing.expectEqualStrings(c[1], d.message);
     }
+}
+
+test "ref shorthand" {
+    const protocol = @import("protocol.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var diag: Diagnostic = .{};
+    const refs = try parse([]const protocol.Ref, arena.allocator(), "[5, {\"id\": 6}, {\"key\": 1}]", &diag);
+    try std.testing.expectEqual(@as(u32, 5), refs[0].id);
+    try std.testing.expectEqual(@as(u32, 6), refs[1].id);
+    try std.testing.expectEqual(@as(u32, 1), refs[2].key);
 }

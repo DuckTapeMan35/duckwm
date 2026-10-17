@@ -36,7 +36,7 @@ fn invoke_lua(self: *WM, ref: i32, call: protocol.CallArgs) !void {
             break :blk 2;
         },
         .arranger => |a| blk: {
-            _ = lua.pushString(a.event);
+            _ = lua.pushString(@tagName(a.event));
             lua.pushInteger(@intCast(a.id));
             if (a.prev_id) |p| lua.pushInteger(@intCast(p)) else lua.pushNil();
             break :blk 3;
@@ -103,13 +103,27 @@ pub fn call_rules(wm: *WM, event: [:0]const u8, node_id: u32) void {
 }
 
 /// Call the arranger for graph (made from the default factory if it has none).
-pub fn call_arranger(wm: *WM, g: *Graph, event: [:0]const u8, node_id: u32, prev_id: ?u32) void {
+pub fn call_arranger(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, prev_id: ?u32) void {
     if (g.arranger == null and wm.default_arranger == null) return;
     const m = wm.tx_begin();
     if (g.arranger == null) {
         g.arranger = instantiate(wm, wm.default_arranger.?, g) catch return wm.tx_end(m, false);
     }
-    invoke(wm, g.arranger.?, .{ .arranger = .{ .event = event, .id = node_id, .prev_id = prev_id } }) catch
+    invoke(wm, g.arranger.?, .{
+        .arranger = .{
+            .event = event,
+            .id = node_id,
+            .prev_id = prev_id,
+            // TODO the real snapshot
+            .work_area = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+            .cursor_dx = 0,
+            .cursor_dy = 0,
+            .focused = null,
+            .windows = &.{},
+            .layout = .{ .nodes = &.{} },
+            .state = null,
+        },
+    }) catch
         return wm.tx_end(m, false);
     wm.tx_end(m, true);
 }

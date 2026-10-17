@@ -153,7 +153,7 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     const saved_graph = wm.current_graph;
     wm.current_graph = src_graph;
     if (!node.floating) {
-        wm.call_arranger(src_graph, "unmap", node_id, null);
+        wm.call_arranger(src_graph, .unmap, node_id, null);
     }
     wm.resolve(src_graph) catch {};
     wm.rebuild_focus_edges() catch {};
@@ -173,7 +173,7 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     }
 
     if (!node.floating) {
-        wm.call_arranger(target_graph, "map", node_id, target_prev_id);
+        wm.call_arranger(target_graph, .map, node_id, target_prev_id);
     }
 
     // Hide frame if target is not visible

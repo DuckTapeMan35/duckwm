@@ -40,7 +40,7 @@ pub fn toggle_floating(wm: *WM) !void {
                 break;
             }
         }
-        wm.call_arranger(wm.current_graph, "map", id, prev_id);
+        wm.call_arranger(wm.current_graph, .map, id, prev_id);
     } else {
         // call arranger first while node is still tiled
         var node_id_for_arranger: ?u32 = null;
@@ -51,7 +51,7 @@ pub fn toggle_floating(wm: *WM) !void {
                 break;
             }
         }
-        if (node_id_for_arranger) |nid| wm.call_arranger(wm.current_graph, "unmap", nid, null);
+        if (node_id_for_arranger) |nid| wm.call_arranger(wm.current_graph, .unmap, nid, null);
 
         focused.floating = true;
         focused.constraints.clearRetainingCapacity();
@@ -103,7 +103,7 @@ pub fn toggle_fullscreen(wm: *WM) !void {
                 break;
             }
         }
-        if (node_id) |nid| wm.call_arranger(wm.current_graph, "map", nid, prev_id);
+        if (node_id) |nid| wm.call_arranger(wm.current_graph, .map, nid, prev_id);
     } else {
         // Go fullscreen
         g.fullscreen_saved_x = focused.x;
@@ -117,7 +117,7 @@ pub fn toggle_fullscreen(wm: *WM) !void {
         focused.width = wm.screen_width;
         focused.height = wm.screen_height;
         g.fullscreen_node = focused;
-        if (node_id) |nid| wm.call_arranger(wm.current_graph, "unmap", nid, null);
+        if (node_id) |nid| wm.call_arranger(wm.current_graph, .unmap, nid, null);
     }
     wm.backend.publish_window_fullscreen(win, g.fullscreen_node == focused);
     try wm.resolve(wm.current_graph);

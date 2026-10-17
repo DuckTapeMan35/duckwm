@@ -107,9 +107,9 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
 
     const prev_id = arranger_anchor(wm, prev_focused, id);
     wm.call_rules("pre_map", id);
-    wm.call_arranger(wm.current_graph, "pre_map", id, prev_id);
+    wm.call_arranger(wm.current_graph, .pre_map, id, prev_id);
     const is_floating = if (wm.node_registry.get(id)) |n| n.floating else false;
-    if (!is_floating) wm.call_arranger(wm.current_graph, "map", id, prev_id);
+    if (!is_floating) wm.call_arranger(wm.current_graph, .pre_map, id, prev_id);
 
     try wm.resolve(wm.current_graph);
     swallow_mod.try_swallow(wm, id);
@@ -191,7 +191,7 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
 
     if (!dying.floating and dying.owner_graph == wm.current_graph) {
         const prev_id: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
-        wm.call_arranger(wm.current_graph, "unmap", dying_id, prev_id);
+        wm.call_arranger(wm.current_graph, .unmap, dying_id, prev_id);
     }
     wm.call_rules("unmap", dying_id);
     _ = wm.node_registry.remove(dying_id);

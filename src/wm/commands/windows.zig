@@ -81,7 +81,7 @@ fn apply_floating(wm: *WM, id: command.NodeId, n: *Node, val: bool) !void {
     const g = n.owner_graph orelse return error.NotInGraph;
     try g.replace_constraints(n, &.{});
     if (val) {
-        wm.call_arranger(wm.current_graph, "unmap", id, null);
+        wm.call_arranger(wm.current_graph, .unmap, id, null);
         wm.journal.set(n, "floating", true);
         wm.center_node(n);
     } else {
@@ -90,7 +90,7 @@ fn apply_floating(wm: *WM, id: command.NodeId, n: *Node, val: bool) !void {
             (if (f != n) wm.get_id_for_node(f) else null)
         else
             null;
-        wm.call_arranger(wm.current_graph, "map", id, prev_id);
+        wm.call_arranger(wm.current_graph, .map, id, prev_id);
     }
     wm.relayout();
 }

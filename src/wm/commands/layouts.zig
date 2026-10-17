@@ -3,13 +3,14 @@ const core = @import("../core.zig");
 const command = @import("../command.zig");
 const graph_mod = @import("graph");
 const util = @import("util.zig");
-const WM = core.WM;
 const protocol = @import("protocol");
+const nodes_mod = @import("nodes.zig");
 
 pub const Other = protocol.Other;
 pub const ConstraintSpec = protocol.ConstraintSpec;
 pub const NodeSpec = protocol.NodeSpec;
 pub const LayoutSpec = protocol.LayoutSpec;
+const WM = core.WM;
 const Allocator = std.mem.Allocator;
 const Node = graph_mod.Node;
 const Graph = graph_mod.Graph;
@@ -27,16 +28,36 @@ comptime {
     }
 }
 
+/// Resolves a layout's refs: ids anywhere, keys in one workspace (created on first use).
+const Refs = struct {
+    wm: *WM,
+    g: *Graph,
+
+    fn node(self: Refs, r: protocol.Ref) !*Node {
+        return switch (r) {
+            .id => |i| get(self.wm, i),
+            .key => |k| self.g.keyed(k) orelse try self.create(k),
+        };
+    }
+
+    /// Inside the caller's transaction, so a rollback removes it again.
+    fn create(self: Refs, k: u32) !*Node {
+        const n = (try nodes_mod.add_empty(self.wm, self.g)).node;
+        n.key = k;
+        return n;
+    }
+};
+
 // ---- set_layout ----
 fn get(wm: *WM, id: NodeId) !*Node {
     return wm.get_node_by_id(id) orelse error.InvalidNode;
 }
 
-pub fn make_split(wm: *WM, container: NodeId, axis: command.Axis, ratios: []const f64, children: []const NodeId) !Constraint {
+fn build_split(container: *Node, axis: command.Axis, ratios: []const f64, children: []const *Node) !Constraint {
     const count = children.len;
     if (count == 0 or count > 16 or ratios.len != count) return error.InvalidSplit;
     var con: Constraint = .{ .split = .{
-        .container = try get(wm, container),
+        .container = container,
         .axis = if (axis == .h) .horizontal else .vertical,
         .count = @intCast(count),
         .ratios = undefined,
@@ -45,12 +66,28 @@ pub fn make_split(wm: *WM, container: NodeId, axis: command.Axis, ratios: []cons
     for (ratios, children, 0..) |r, child, k| {
         if (!(r > 0)) return error.InvalidSplit;
         con.split.ratios[k] = @floatCast(r);
-        con.split.children[k] = try get(wm, child);
+        con.split.children[k] = child;
     }
     return con;
 }
 
-fn resolve(wm: *WM, spec: ConstraintSpec) !Constraint {
+/// The split command's form: ids.
+pub fn make_split(wm: *WM, container: NodeId, axis: command.Axis, ratios: []const f64, children: []const NodeId) !Constraint {
+    if (children.len > 16) return error.InvalidSplit;
+    var nodes: [16]*Node = undefined;
+    for (children, 0..) |c, k| nodes[k] = try get(wm, c);
+    return build_split(try get(wm, container), axis, ratios, nodes[0..children.len]);
+}
+
+/// A layout's form: refs.
+fn make_split_refs(refs: Refs, container: protocol.Ref, axis: command.Axis, ratios: []const f64, children: []const protocol.Ref) !Constraint {
+    if (children.len > 16) return error.InvalidSplit;
+    var nodes: [16]*Node = undefined;
+    for (children, 0..) |c, k| nodes[k] = try refs.node(c);
+    return build_split(try refs.node(container), axis, ratios, nodes[0..children.len]);
+}
+
+fn resolve(refs: Refs, spec: ConstraintSpec) !Constraint {
     return switch (spec) {
         inline .left_of,
         .right_of,
@@ -62,7 +99,7 @@ fn resolve(wm: *WM, spec: ConstraintSpec) !Constraint {
         .align_bottom,
         .equal_width,
         .equal_height,
-        => |o, tag| @unionInit(Constraint, @tagName(tag), try get(wm, o.other)),
+        => |o, tag| @unionInit(Constraint, @tagName(tag), try refs.node(o.other)),
         .fixed_x => |v| .{ .fixed_x = v.value },
         .fixed_y => |v| .{ .fixed_y = v.value },
         .fixed_width => |v| .{ .fixed_width = v.value },
@@ -73,36 +110,88 @@ fn resolve(wm: *WM, spec: ConstraintSpec) !Constraint {
             .row = g.row,
             .cols = g.cols,
             .rows = g.rows,
-            .container = try get(wm, g.container),
+            .container = try refs.node(g.container),
         } },
         .grid_cell_abs => |g| .{ .grid_cell_abs = .{
             .x = g.x,
             .y = g.y,
             .w = g.w,
             .h = g.h,
-            .container = try get(wm, g.container),
+            .container = try refs.node(g.container),
         } },
-        .split => |s| try make_split(wm, s.container, s.axis, s.ratios, s.children),
+        .split => |s| try make_split_refs(refs, s.container, s.axis, s.ratios, s.children),
     };
 }
 
-/// Replace the constraints of every listed node. Everything is resolved
-/// first, so a bad id anywhere changes nothing. Unknown node ids are
-/// skipped: an arranger's table may mention a window that just closed.
-pub fn apply(wm: *WM, spec: LayoutSpec, arena: std.mem.Allocator) !void {
+/// Replace the constraints of every listed node, in workspace g. Everything is
+/// resolved first, so a bad id anywhere changes nothing. Unknown node ids are
+/// skipped: an arranger's table may mention a window that just closed. Keyed
+/// containers the layout no longer mentions are destroyed.
+pub fn apply(wm: *WM, g: *Graph, spec: LayoutSpec, arena: std.mem.Allocator) !void {
+    const refs: Refs = .{ .wm = wm, .g = g };
     const Resolved = struct { node: *Node, cons: []Constraint };
     var resolved: std.ArrayListUnmanaged(Resolved) = .empty;
     for (spec.nodes) |ns| {
-        const n = wm.get_node_by_id(ns.id) orelse continue;
+        const n = switch (ns.id) {
+            .id => |i| wm.get_node_by_id(i) orelse continue,
+            .key => |k| g.keyed(k) orelse try refs.create(k),
+        };
         const specs = ns.constraints orelse &.{};
         const cons = try arena.alloc(Constraint, specs.len);
-        for (specs, cons) |cs, *out| out.* = try resolve(wm, cs);
+        for (specs, cons) |cs, *out| out.* = try resolve(refs, cs);
         try resolved.append(arena, .{ .node = n, .cons = cons });
     }
     for (resolved.items) |r| {
-        const g = r.node.owner_graph orelse continue;
-        try g.replace_constraints(r.node, r.cons);
+        const owner = r.node.owner_graph orelse continue;
+        try owner.replace_constraints(r.node, r.cons);
     }
+    try sweep(g, spec, arena);
+}
+
+fn mark(used: *std.AutoHashMapUnmanaged(u32, void), a: Allocator, r: protocol.Ref) !void {
+    if (r == .key) try used.put(a, r.key, {});
+}
+
+/// Destroy g's keyed containers that spec doesn't mention.
+fn sweep(g: *Graph, spec: LayoutSpec, arena: Allocator) !void {
+    var used: std.AutoHashMapUnmanaged(u32, void) = .empty;
+    for (spec.nodes) |ns| {
+        try mark(&used, arena, ns.id);
+        for (ns.constraints orelse &.{}) |cs| switch (cs) {
+            inline .left_of,
+            .right_of,
+            .above,
+            .below,
+            .align_left,
+            .align_top,
+            .align_right,
+            .align_bottom,
+            .equal_width,
+            .equal_height,
+            => |o| try mark(&used, arena, o.other),
+            .grid_cell => |c| try mark(&used, arena, c.container),
+            .grid_cell_abs => |c| try mark(&used, arena, c.container),
+            .split => |s| {
+                try mark(&used, arena, s.container);
+                for (s.children) |c| try mark(&used, arena, c);
+            },
+            else => {},
+        };
+    }
+    try drop_keyed(g, &used, arena);
+}
+
+/// Destroy g's keyed containers, except those in keep.
+pub fn drop_keyed(g: *Graph, keep: ?*const std.AutoHashMapUnmanaged(u32, void), arena: Allocator) !void {
+    var doomed: std.ArrayListUnmanaged(*Node) = .empty;
+    for (g.nodes.items) |n| {
+        const k = n.key orelse continue;
+        if (n.dead) continue;
+        if (keep) |set| if (set.contains(k)) continue;
+        try doomed.append(arena, n);
+    }
+    // Collected first: remove_node shrinks g.nodes.
+    for (doomed.items) |n| g.remove_node(n);
 }
 
 // ---- get_layout ----
@@ -348,7 +437,7 @@ pub fn get_layout(wm: *WM, _: void, arena: Allocator) !Value {
 }
 
 pub fn set_layout(wm: *WM, args: Args(.set_layout), arena: Allocator) !Value {
-    try apply(wm, args.layout, arena);
+    try apply(wm, wm.current_graph, args.layout, arena);
     return .nil;
 }
 
