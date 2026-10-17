@@ -109,7 +109,7 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
     wm.call_rules("pre_map", id);
     wm.call_arranger(wm.current_graph, .pre_map, id, prev_id);
     const is_floating = if (wm.node_registry.get(id)) |n| n.floating else false;
-    if (!is_floating) wm.call_arranger(wm.current_graph, .pre_map, id, prev_id);
+    if (!is_floating) wm.call_arranger(wm.current_graph, .map, id, prev_id);
 
     try wm.resolve(wm.current_graph);
     swallow_mod.try_swallow(wm, id);
