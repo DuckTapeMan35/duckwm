@@ -50,26 +50,20 @@ let
       };
     }) cfg.binds;
 
-  # A list of commands -> an encoded duckwm.v1.Request, checked against the schema at build time.
-  encode =
-    name: cmds:
-    pkgs.runCommand name
+  # The commands file: JSON, checked by duckwm at build time.
+  commandsFile =
+    pkgs.runCommand "duckwm-commands.json"
       {
-        nativeBuildInputs = [
-          pkgs.protobuf
-          (pkgs.python3.withPackages (ps: [ ps.protobuf ]))
-        ];
-        json = builtins.toJSON { commands = cmds; };
+        json = builtins.toJSON { commands = commands; };
         passAsFile = [ "json" ];
       }
       ''
-        protoc --proto_path=${shared}/share/duckwm --descriptor_set_out=schema.pb duckwm.proto
-        python3 -I ${./encode-commands.py} schema.pb "$jsonPath" "$out"
+        cp "$jsonPath" $out
+        ${shared}/bin/duckwm --check $out
       '';
 
   flags = lib.concatStringsSep " " (
-    lib.optional (commands != [ ]) "--commands ${encode "duckwm-commands.pb" commands}"
-    ++ lib.optional (!cfg.lua) "--no-lua"
+    lib.optional (commands != [ ]) "--commands ${commandsFile}" ++ lib.optional (!cfg.lua) "--no-lua"
   );
 
   # The package's session entry, with the flags added to its Exec line.
@@ -143,16 +137,14 @@ in
       example = lib.literalExpression ''
         [
           { set_gaps = { inner_h = 8; inner_v = 8; outer_h = 8; outer_v = 8; }; }
-          { set_workspace_switch_mode.mode = "WORKSPACE_SWITCH_MODE_PREVIOUS"; }
+          { set_workspace_switch_mode.mode = "previous"; }
           { exec_once.argv = [ "dunst" ]; }
         ]
       '';
       description = ''
-        Commands run as one batch after the Lua config (if any), at startup and
-        after every reload. Each is a duckwm.v1.Command in protobuf's JSON form
-        (see share/duckwm/duckwm.proto): the command name as the key, its fields
-        as an attribute set, enums by their full name. Checked at build time.
-        exec_once commands start their programs only at startup.
+        Each is a duckwm command as JSON: the command name as the key, its
+        fields as an attribute set, enums by name ("previous", "left").
+        Optional fields can be left out. Checked by duckwm at build time.
       '';
     };
 

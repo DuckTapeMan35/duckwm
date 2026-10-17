@@ -10,6 +10,7 @@ const usage =
     \\                     run after the Lua config and after every reload
     \\  --no-lua           don't load a Lua config: the commands file and
     \\                     socket clients configure everything
+    \\  --check <file>     check a commands file and exit (status 0: valid)
     \\
 ;
 
@@ -30,6 +31,8 @@ fn mainImpl(init: std.process.Init) !void {
             commands_path = args[i];
         } else if (std.mem.eql(u8, args[i], "--no-lua")) {
             no_lua = true;
+        } else if (std.mem.eql(u8, args[i], "--check") and i + 1 < args.len) {
+            std.process.exit(duckwm.check_commands_file(args[i + 1]));
         } else {
             std.debug.print("{s}", .{usage});
             std.process.exit(if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) 0 else 2);

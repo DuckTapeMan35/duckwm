@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const wire = @import("wire.zig");
+pub const json = @import("json.zig");
 
 pub const Other = struct { other: NodeId };
 
@@ -556,4 +557,5 @@ pub const ClientMessage = union(enum) {
 
 test {
     _ = wire;
+    _ = json;
 }
