@@ -121,8 +121,29 @@ fn read_arg(comptime T: type, lua: *Lua, index: i32, a: std.mem.Allocator) !T {
             return out;
         },
         // A table whose type field names the variant; the payload's fields are read from the same table.
+        // A union with a shorthand (protocol.Ref) also takes a bare number, and a table with
+        // the variant as its only key: 5, { id = 5 }, { key = 0 }.
         .@"union" => |u| {
             if (u.tag_type == null) @compileError("command arguments need tagged unions: " ++ @typeName(T));
+            if (comptime @hasDecl(T, "shorthand")) {
+                if (lua.typeOf(i) == .number) {
+                    return @unionInit(T, T.shorthand, try read_arg(
+                        @FieldType(T, T.shorthand),
+                        lua,
+                        i,
+                        a,
+                    ));
+                }
+                if (lua.typeOf(i) == .table) {
+                    inline for (u.fields) |f| {
+                        if (f.type != void) {
+                            _ = lua.getField(i, f.name);
+                            defer lua.pop(1);
+                            if (!lua.isNil(-1)) return @unionInit(T, f.name, try read_arg(f.type, lua, -1, a));
+                        }
+                    }
+                }
+            }
             if (lua.typeOf(i) != .table) return error.ExpectedTable;
             _ = lua.getField(i, "type");
             const name = lua.toString(-1) catch {
