@@ -216,8 +216,11 @@ fn parse_arg(comptime T: type, a: Allocator, comptime field: []const u8, arg: []
             while (it.next()) |s| try items.append(a, try parse_scalar(p.child, a, field, s));
             return items.items;
         },
-        .@"struct", .@"union" => return std.json.parseFromSliceLeaky(T, a, arg, .{}) catch |err|
-            bad("<{s}>: invalid JSON ({s})", .{ field, @errorName(err) }),
+        .@"struct", .@"union" => {
+            var diag: protocol.json.Diagnostic = .{};
+            return protocol.json.parse(T, a, arg, &diag) catch
+                bad("<{s}>: {s}", .{ field, diag.message });
+        },
         else => return parse_scalar(T, a, field, arg),
     }
 }
