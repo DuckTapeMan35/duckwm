@@ -32,6 +32,7 @@ const handlers = .{
     @import("commands/workspaces.zig"),
     @import("commands/system.zig"),
     @import("commands/layouts.zig"),
+    @import("commands/arrangers.zig"),
 };
 comptime {
     for (std.meta.fields(ConstraintKind)) |f| {
@@ -91,6 +92,13 @@ pub fn error_text(err: anyerror) []const u8 {
         error.SetenvFailed => "invalid variable name",
         error.UnknownKey => "unknown key name",
         error.EmptyBind => "a bind needs at least one command",
+        error.InvalidCallback => "invalid callback",
+        error.UnknownRule => "no such rule",
+        error.InvalidCurve => "bezier x1 and x2 must be within 0..1; samples need 2 or more finite values",
+        error.NoCallbackHost => "a function can't be passed from here",
+        error.CallbackTimeout => "the client's callback didn't return in time",
+        error.ClientGone => "the client that owns the callback has disconnected",
+        error.CallbackFailed => "the callback failed",
         else => @errorName(err),
     };
 }

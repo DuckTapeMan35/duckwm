@@ -8,7 +8,7 @@ const Lua = ziglua.Lua;
 /// by id, so edits through either one are what set_layout reads back.
 pub fn l_get_layout(lua: *Lua) i32 {
     var arena = std.heap.ArenaAllocator.init(util.global_wm.allocator);
-    _ = bridge.run_and_push(lua, .get_layout, {}, &arena);
+    _ = bridge.run_and_push(lua, .get_layout, {}, &arena, bridge.pending_base());
 
     lua.newTable(); // by_id
     _ = lua.getField(-2, "nodes");

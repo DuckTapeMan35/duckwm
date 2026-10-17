@@ -2,6 +2,7 @@ const std = @import("std");
 const graph_mod = @import("graph");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
+const animation = @import("../animation.zig");
 const util = @import("util.zig");
 const types = @import("types");
 const WM = core.WM;
@@ -227,5 +228,16 @@ pub fn force_rgb_frames(wm: *WM, args: Args(.force_rgb_frames), _: Allocator) !V
     const owned = try wm.allocator.dupe(u8, args.class_name);
     errdefer wm.allocator.free(owned);
     try wm.rgb_frame_classes.append(wm.allocator, owned);
+    return .nil;
+}
+
+// ---- animation ----
+pub fn set_animation(wm: *WM, args: Args(.set_animation), _: Allocator) !Value {
+    const curve = if (args.curve) |c| switch (c) {
+        .preset => |p| animation.preset(p),
+        .bezier => |b| try animation.bezier(b.x1, b.y1, b.x2, b.y2),
+        .samples => |s| try animation.from_samples(s.values),
+    } else animation.preset(.ease_out);
+    wm.backend.set_animation(.{ .duration_ms = args.duration_ms, .curve = curve });
     return .nil;
 }

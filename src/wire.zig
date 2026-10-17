@@ -3,6 +3,7 @@ const protocol = @import("protocol.zig");
 const Command = protocol.Command;
 const CommandId = protocol.CommandId;
 const Value = protocol.Value;
+const Request = protocol.Request;
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{
@@ -14,9 +15,6 @@ pub const Error = error{
     MissingVariant,
     OutOfMemory,
 };
-
-/// A batch of commands, run as one transaction.
-pub const Request = struct { commands: []const Command };
 
 const WireType = enum(u3) { varint = 0, fixed64 = 1, len = 2, fixed32 = 5, _ };
 
@@ -116,6 +114,8 @@ fn zero(comptime T: type) T {
             inline for (s.fields) |f| @field(v, f.name) = zero(f.type);
             break :blk v;
         },
+        // A oneof has no default: decode_message requires it to be sent.
+        .@"union" => undefined,
         else => @compileError("no default for " ++ @typeName(T) ++ "; make the field optional or a list"),
     };
 }
@@ -210,16 +210,22 @@ pub fn decode_message(comptime T: type, buf: []const u8, a: Allocator) Error!T {
     switch (@typeInfo(T)) {
         .@"struct" => |s| {
             var out = zero(T);
+            var seen = [_]bool{false} ** s.fields.len;
             while (!r.done()) {
                 const num, const wt = try r.tag();
                 var matched = false;
                 inline for (s.fields, 0..) |f, i| {
                     if (!matched and num == field_number(T, i, f.name)) {
                         matched = true;
+                        seen[i] = true;
                         try read_field(f.type, &@field(out, f.name), &r, wt, a);
                     }
                 }
                 if (!matched) try r.skip(wt); // a newer client's field
+            }
+            // A union field (a oneof message) has no default, so it must have been sent.
+            inline for (s.fields, 0..) |f, i| {
+                if (@typeInfo(f.type) == .@"union" and !seen[i]) return error.MissingVariant;
             }
             return out;
         },
@@ -474,6 +480,49 @@ pub fn encode_request(a: Allocator, commands: []const Command) Error![]u8 {
     return encode_message(Request, .{ .commands = commands }, a);
 }
 
+// ---- the framed messages ----
+pub fn decode_client_message(buf: []const u8, a: Allocator) Error!protocol.ClientMessage {
+    return decode_message(protocol.ClientMessage, buf, a);
+}
+
+pub fn encode_client_message(a: Allocator, m: protocol.ClientMessage) Error![]u8 {
+    return encode_message(protocol.ClientMessage, m, a);
+}
+
+/// What duckwm sends: the answer to a request, or a call to a callback.
+pub const ServerMessage = union(enum) {
+    response: Response,
+    call: protocol.Call,
+};
+
+/// A ServerMessage holding a Response.
+pub fn encode_server_response(a: Allocator, results: []const Value, err: ?[]const u8) Error![]u8 {
+    var w: Writer = .{ .a = a };
+    try w.bytes(1, try encode_response(a, results, err));
+    return w.out.items;
+}
+
+/// A ServerMessage holding a Call.
+pub fn encode_server_call(a: Allocator, call: protocol.Call) Error![]u8 {
+    var w: Writer = .{ .a = a };
+    try w.bytes(2, try encode_message(protocol.Call, call, a));
+    return w.out.items;
+}
+
+pub fn decode_server_message(buf: []const u8, a: Allocator) Error!ServerMessage {
+    var r: Reader = .{ .buf = buf };
+    var out: ?ServerMessage = null;
+    while (!r.done()) {
+        const num, const wt = try r.tag();
+        switch (num) {
+            1 => out = .{ .response = try decode_response(try len_field(&r, wt), a) },
+            2 => out = .{ .call = try decode_message(protocol.Call, try len_field(&r, wt), a) },
+            else => try r.skip(wt),
+        }
+    }
+    return out orelse error.MissingVariant;
+}
+
 // ---- tests ----
 test "request round trip" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -554,4 +603,34 @@ test "response round trip" {
     const failed = try decode_response(try encode_response(a, &.{}, "no such node"), a);
     try std.testing.expectEqual(@as(usize, 0), failed.results.len);
     try std.testing.expectEqualStrings("no such node", failed.err.?);
+}
+
+test "client and server messages" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const ret = try decode_client_message(try encode_client_message(a, .{ .ret = .{
+        .commands = &.{.{ .focus = .{ .id = 3 } }},
+        .err = null,
+        .callback = 9,
+    } }), a);
+    try std.testing.expectEqual(@as(u32, 3), ret.ret.commands[0].focus.id);
+    try std.testing.expectEqual(@as(?u64, 9), ret.ret.callback);
+
+    const call = try decode_server_message(try encode_server_call(a, .{
+        .callback = 17,
+        .args = .{ .arranger = .{ .event = "map", .id = 42, .prev_id = null } },
+    }), a);
+    try std.testing.expectEqual(@as(u64, 17), call.call.callback);
+    try std.testing.expectEqualStrings("map", call.call.args.arranger.event);
+
+    // A Call without its args is rejected rather than decoded with garbage.
+    var w: Writer = .{ .a = a };
+    try w.tag(1, .varint);
+    try w.varint(17);
+    try std.testing.expectError(error.MissingVariant, decode_message(protocol.Call, w.out.items, a));
+
+    const resp = try decode_server_message(try encode_server_response(a, &.{.{ .integer = 5 }}, null), a);
+    try std.testing.expectEqual(@as(i64, 5), resp.response.results[0].integer);
 }

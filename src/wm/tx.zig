@@ -10,8 +10,8 @@ const WM = core.WM;
 pub const Effect = union(enum) {
     spawn: [][:0]u8,
     close_window: types.WindowHandle,
-    bind: struct { key: types.KeyCombo, action: settings.Keybind },
-    unbind: types.KeyCombo,
+    bind: struct { key: settings.BindKey, action: settings.Keybind },
+    unbind: settings.BindKey,
     sync_pointer_grabs,
 };
 

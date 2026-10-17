@@ -1,23 +1,31 @@
 const std = @import("std");
 const ziglua = @import("ziglua");
 const wm_mod = @import("wm");
+const protocol = @import("protocol");
 const util = @import("util.zig");
 const Lua = ziglua.Lua;
 const command = wm_mod.command;
 const Command = command.Command;
 const Registration = util.Registration;
 
+/// Refs made for the command being parsed: released if it fails, owned by
+/// duckwm once it succeeds.
+var pending_refs: [8]i32 = undefined;
+var pending_count: usize = 0;
+
 fn lua_command(comptime tag: std.meta.Tag(Command)) fn (*Lua) i32 {
     return struct {
         fn call(lua: *Lua) i32 {
             const name = @tagName(tag);
             // Nothing below may be skipped by a Lua error (no defers across raises).
+            const base = pending_count;
             var arena = std.heap.ArenaAllocator.init(util.global_wm.allocator);
             const args = parse_args(@FieldType(Command, name), lua, arena.allocator()) catch |err| {
+                release_pending(lua, base);
                 arena.deinit();
                 util.raise_with(lua, name ++ ": ", arg_error_text(err));
             };
-            return run_and_push(lua, tag, args, &arena);
+            return run_and_push(lua, tag, args, &arena, base);
         }
     }.call;
 }
@@ -28,16 +36,33 @@ pub fn run_and_push(
     comptime tag: std.meta.Tag(Command),
     args: @FieldType(Command, @tagName(tag)),
     arena: *std.heap.ArenaAllocator,
+    base: usize,
 ) i32 {
     const name = @tagName(tag);
     var results: [1]command.Value = undefined;
-    command.run(util.global_wm, &.{@unionInit(Command, name, args)}, arena.allocator(), &results) catch |err| {
+    const wm = util.global_wm;
+    const saved_source = wm.callback_source;
+    wm.callback_source = .lua;
+    command.run(
+        wm,
+        &.{@unionInit(Command, name, args)},
+        arena.allocator(),
+        &results,
+    ) catch |err| {
+        wm.callback_source = saved_source;
+        release_pending(lua, base);
         arena.deinit();
         util.raise_with(lua, name ++ " failed: ", command.error_text(err));
     };
+    wm.callback_source = saved_source;
+    pending_count = base; // the command owns them now
     const n = push_value(lua, results[0]);
     arena.deinit(); // pushed values were copied into Lua
     return n;
+}
+
+pub fn pending_base() usize {
+    return pending_count;
 }
 
 fn parse_args(comptime P: type, lua: *Lua, a: std.mem.Allocator) !P {
@@ -49,8 +74,22 @@ fn parse_args(comptime P: type, lua: *Lua, a: std.mem.Allocator) !P {
     return out;
 }
 
+fn release_pending(lua: *Lua, base: usize) void {
+    for (pending_refs[base..pending_count]) |ref| lua.unref(ziglua.registry_index, ref);
+    pending_count = base;
+}
+
 fn read_arg(comptime T: type, lua: *Lua, index: i32, a: std.mem.Allocator) !T {
     const i = lua.absIndex(index); // nested reads push values; a relative index would shift
+    if (T == protocol.Callback) {
+        if (lua.typeOf(i) != .function) return error.ExpectedFunction;
+        if (pending_count == pending_refs.len) return error.TooManyFunctions;
+        lua.pushValue(i);
+        const ref = lua.ref(ziglua.registry_index);
+        pending_refs[pending_count] = ref;
+        pending_count += 1;
+        return .{ .id = @intCast(ref) };
+    }
     switch (@typeInfo(T)) {
         .optional => |o| return if (lua.isNoneOrNil(i)) null else try read_arg(o.child, lua, i, a),
         .int => return std.math.cast(T, lua.toInteger(i) catch return error.ExpectedInteger) orelse error.OutOfRange,
@@ -144,16 +183,18 @@ fn arg_error_text(err: anyerror) []const u8 {
         error.OutOfRange => "argument out of range",
         error.InvalidChoice => "argument is not one of the allowed names",
         error.ExpectedTable => "expected a table argument",
+        error.ExpectedFunction => "expected a function argument",
+        error.TooManyFunctions => "too many function arguments",
         else => "invalid argument",
     };
 }
 
 /// Commands whose Lua function is a hand-written wrapper.
-const wrapped_in_lua = [_][]const u8{"get_layout"};
+const wrapped_in_lua = [_][]const u8{ "get_layout", "set_animation" };
 
 /// Commands with no wm.<name> in Lua, because Lua has a better way to do them:
 /// wm.bind takes a function (lua/input.zig), not a list of commands.
-const not_in_lua = [_]std.meta.Tag(Command){.bind};
+const not_in_lua = [_]std.meta.Tag(Command){.bind_commands};
 
 fn skipped(comptime name: []const u8) bool {
     for (wrapped_in_lua) |w| if (std.mem.eql(u8, w, name)) return true;

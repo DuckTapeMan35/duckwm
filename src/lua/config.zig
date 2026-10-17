@@ -68,7 +68,7 @@ pub fn reload_persistent(lua: *Lua) void {
 
     wm.clear_config_binds();
 
-    for (wm.rules.items) |ref| lua.unref(ziglua.registry_index, ref);
+    for (wm.rules.items) |r| wm.release_callback(r.cb);
     wm.rules.clearRetainingCapacity();
     wm.clear_rgb_frame_classes();
     wm.clear_swallow_pairs();
@@ -78,12 +78,6 @@ pub fn reload_persistent(lua: *Lua) void {
 }
 
 // ---- Lua functions ----
-pub fn l_reload_config(lua: *Lua) i32 {
-    _ = lua;
-    util.global_wm.pending_reload = true;
-    return 0;
-}
-
 pub fn l_reload_persistent(lua: *Lua) i32 {
     reload_persistent(lua);
     return 0;
@@ -93,7 +87,7 @@ pub fn l_reload_persistent(lua: *Lua) i32 {
 /// Map every tiled node of g (and its nested workspaces) through its arranger
 /// again, as if each window had just appeared.
 fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
-    if (g.arranger_ref == 0 and wm.default_arranger_ref == 0) return;
+    if (g.arranger == null and wm.default_arranger == null) return;
 
     const saved_graph = wm.current_graph;
     wm.current_graph = g;

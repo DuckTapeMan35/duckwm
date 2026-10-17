@@ -4,8 +4,6 @@ const api = @import("api_docs");
 const Registration = @import("util.zig").Registration;
 
 const modules = .{
-    @import("process.zig"),
-    @import("input.zig"),
     @import("animation.zig"),
     @import("arrangers.zig"),
     @import("layout.zig"),

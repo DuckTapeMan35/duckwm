@@ -201,3 +201,22 @@ pub fn scratchpad_hide(wm: *WM, args: Args(.scratchpad_hide), _: Allocator) !Val
     try wm.hide_scratchpad(args.id);
     return .nil;
 }
+
+// ---- rules ----
+pub fn add_rule(wm: *WM, args: Args(.add_rule), _: Allocator) !Value {
+    const cb = try util.callback(wm, args.callback);
+    const id = wm.next_rule_id;
+    try wm.rules.append(wm.allocator, .{ .id = id, .cb = cb });
+    wm.next_rule_id += 1;
+    return .{ .integer = id };
+}
+
+pub fn remove_rule(wm: *WM, args: Args(.remove_rule), _: Allocator) !Value {
+    for (wm.rules.items, 0..) |r, i| {
+        if (r.id != args.id) continue;
+        wm.release_callback(r.cb);
+        _ = wm.rules.orderedRemove(i);
+        return .nil;
+    }
+    return error.UnknownRule;
+}

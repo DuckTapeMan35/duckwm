@@ -14,6 +14,16 @@ pub fn spawn(wm: *WM, args: Args(.spawn), _: Allocator) !Value {
     return .nil;
 }
 
+pub fn exec_once(wm: *WM, args: Args(.exec_once), arena: Allocator) !Value {
+    if (!wm.initial_load) return .nil;
+    return spawn(wm, .{ .argv = args.argv }, arena);
+}
+
+pub fn reload_config(wm: *WM, _: Args(.reload_config), _: Allocator) !Value {
+    wm.pending_reload = true;
+    return .nil;
+}
+
 pub fn setenv(_: *WM, args: Args(.setenv), arena: Allocator) !Value {
     // setenv needs NUL-terminated strings; Lua's are, but the slices don't say so.
     const key = try arena.dupeZ(u8, args.key);

@@ -56,8 +56,6 @@ pub const WM = struct {
     scratch_graph: *Graph = undefined,
     /// Undo log for transactions.
     journal: graph.Journal,
-    /// an encoded Request run after the Lua config.
-    commands_path: ?[]const u8 = null,
 
     // ---- node ids ----
     /// The ids the APIs use. Entries are removed when a node is freed at commit.
@@ -112,14 +110,23 @@ pub const WM = struct {
     /// Scratch buffer for laying out previews, reused across repaints.
     preview_items: std.ArrayListUnmanaged(types.PreviewItem) = .empty,
 
-    // ---- Lua: bindings, rules, arrangers ----
+    // ---- config state ----
     lua: ?*Lua = null,
-    keybinds: std.AutoHashMapUnmanaged(types.KeyCombo, settings.Keybind) = .empty,
-    /// Registry refs of the rule functions, in the order they were added.
-    rules: std.ArrayListUnmanaged(i32) = .empty,
+    keybinds: std.AutoHashMapUnmanaged(settings.BindKey, settings.Keybind) = .empty,
+    /// While a factory runs: the workspace its binds belong to.
+    bind_owner: ?*Graph = null,
+    /// Rules, in the order they were added.
+    rules: std.ArrayListUnmanaged(callbacks.Rule) = .empty,
+    next_rule_id: u32 = 1,
     /// Factory for the arranger of workspaces that don't set their own (0: none).
-    default_arranger_ref: i32 = 0,
+    default_arranger: ?types.Callback = null,
     default_arranger_name: []const u8 = "",
+    /// an encoded Request run after the Lua config.
+    commands_path: ?[]const u8 = null,
+    /// True until the first config load and the commands file have run: exec_once spawns only then.
+    initial_load: bool = true,
+    /// Set while Lua runs a command; command.Callback ids are Lua refs then.
+    callback_source: types.CallbackSource = .none,
 
     // ---- window behavior ----
     /// Terminal/child class pairs for swallowing.
@@ -218,7 +225,6 @@ pub const WM = struct {
         self.keybinds.deinit(self.allocator);
         if (self.lua) |lua| lua.deinit();
         self.lua = null;
-        self.keybinds.deinit(self.allocator);
         if (self.default_arranger_name.len > 0) {
             self.allocator.free(self.default_arranger_name);
         }
@@ -463,6 +469,15 @@ pub const WM = struct {
     pub fn handle_key(self: *WM, combo: types.KeyCombo) void {
         callbacks.handle_key(self, combo);
     }
+    pub fn release_callback(self: *WM, cb: types.Callback) void {
+        callbacks.release(self, cb);
+    }
+    pub fn instantiate_callback(self: *WM, factory: types.Callback, owner: *Graph) !types.Callback {
+        return callbacks.instantiate(self, factory, owner);
+    }
+    pub fn drop_client_callbacks(self: *WM, client: u32) void {
+        callbacks.drop_client(self, client);
+    }
 
     // settings.zig
     pub fn set_preview_max_icon_size(self: *WM, size: u32) void {
@@ -504,8 +519,8 @@ pub const WM = struct {
     pub fn bind(self: *WM, mods: types.Mods, keysym: types.Keysym, action: *const fn (*WM) anyerror!void) !void {
         return settings.bind(self, mods, keysym, action);
     }
-    pub fn bind_lua(self: *WM, mods: types.Mods, keysym: types.Keysym, ref: i32) !void {
-        return settings.bind_lua(self, mods, keysym, ref);
+    pub fn bind_callback(self: *WM, mods: types.Mods, keysym: types.Keysym, cb: types.Callback) void {
+        settings.bind_callback(self, mods, keysym, cb);
     }
     pub fn ungrab_keys(self: *WM) void {
         settings.ungrab_keys(self);
@@ -516,8 +531,8 @@ pub const WM = struct {
     pub fn clear_rgb_frame_classes(self: *WM) void {
         settings.clear_rgb_frame_classes(self);
     }
-    pub fn reset_arranger_refs(self: *WM, g: *Graph) void {
-        settings.reset_arranger_refs(self, g);
+    pub fn reset_arrangers(self: *WM, g: *Graph) void {
+        settings.reset_arrangers(self, g);
     }
     pub fn show_error(self: *WM, msg: []const u8) void {
         settings.show_error(self, msg);
@@ -525,11 +540,14 @@ pub const WM = struct {
     pub fn hide_error(self: *WM) void {
         settings.hide_error(self);
     }
-    pub fn put_keybind(self: *WM, key: types.KeyCombo, kb: settings.Keybind) void {
+    pub fn put_keybind(self: *WM, key: settings.BindKey, kb: settings.Keybind) void {
         settings.put_keybind(self, key, kb);
     }
-    pub fn remove_keybind(self: *WM, key: types.KeyCombo) void {
+    pub fn remove_keybind(self: *WM, key: settings.BindKey) void {
         settings.remove_keybind(self, key);
+    }
+    pub fn drop_owned_binds(self: *WM, g: *Graph) void {
+        settings.drop_owned_binds(self, g);
     }
     pub fn free_keybind(self: *WM, kb: settings.Keybind) void {
         settings.free_keybind(self, kb);

@@ -72,6 +72,21 @@ pub const Side = enum { top, bottom, left, right };
 
 pub const Gaps = struct { inner_h: u32, inner_v: u32, outer_h: u32, outer_v: u32 };
 
+/// A function the client keeps and duckwm calls back: a Lua function when
+/// the command comes from Lua, an id the client chose when it comes from a socket.
+pub const Callback = struct { id: u64 };
+
+pub const CurvePreset = enum { linear, ease_in, ease_out, ease_in_out };
+
+/// An animation easing curve.
+pub const Curve = union(enum) {
+    preset: CurvePreset,
+    /// A CSS cubic-bezier; x1 and x2 within 0..1.
+    bezier: struct { x1: f32, y1: f32, x2: f32, y2: f32 },
+    /// Values at evenly spaced t from 0 to 1 (at least 2), resampled as needed.
+    samples: struct { values: []const f32 },
+};
+
 /// Result of a command. Small enough to serialize to Lua, JSON or protobuf.
 pub const Value = union(enum) {
     nil,
@@ -187,6 +202,8 @@ pub const CommandId = enum(u32) {
     scratchpad_toggle = 411,
     scratchpad_show = 412,
     scratchpad_hide = 413,
+    add_rule = 414,
+    remove_rule = 415,
 
     // input: 500-599
     set_resize_modifier = 500,
@@ -205,8 +222,9 @@ pub const CommandId = enum(u32) {
     set_cursor_theme = 513,
     set_keyboard_layout = 514,
     set_keyboard_layout_index = 515,
-    bind = 516,
+    bind_commands = 516,
     unbind = 517,
+    bind = 518,
 
     // appearance: 600-699
     set_default_focused_border_color = 600,
@@ -233,6 +251,7 @@ pub const CommandId = enum(u32) {
     set_indicator_color = 621,
     set_node_indicator = 622,
     clear_node_indicator = 623,
+    set_animation = 624,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -258,11 +277,19 @@ pub const CommandId = enum(u32) {
     spawn = 800,
     setenv = 801,
     quit = 802,
+    exec_once = 803,
+    reload_config = 804,
 
     // layouts: 900-999
     get_layout = 900,
     set_layout = 901,
     print_graph = 902,
+    set_arranger = 903,
+    register_arranger = 904,
+    set_default_arranger = 905,
+    get_arranger_name = 906,
+    get_arranger_index = 907,
+    set_arranger_index = 908,
 };
 
 /// One request. The payload's fields are the arguments, in order.
@@ -390,6 +417,10 @@ pub const Command = union(CommandId) {
     scratchpad_show: One,
     scratchpad_hide: One,
 
+    // rules
+    add_rule: struct { callback: Callback },
+    remove_rule: struct { id: u32 },
+
     // pointer bindings
     set_resize_modifier: struct { mods: Mods },
     set_float_modifier: struct { mods: Mods },
@@ -410,13 +441,12 @@ pub const Command = union(CommandId) {
     get_mouse_node,
     set_cursor_theme: struct { theme: []const u8, size: u32 },
 
-    // keyboard layout
+    // input
     set_keyboard_layout: struct { layout: []const u8, variant: ?[]const u8, options: ?[]const u8, model: ?[]const u8 },
     set_keyboard_layout_index: struct { index: u32 },
-    // keybinds: the commands run as one transaction on each press;
-    // unbind removes any bind, whoever made it
-    bind: struct { mods: Mods, key: []const u8, commands: []const Command },
+    bind_commands: struct { mods: Mods, key: []const u8, commands: []const Command },
     unbind: struct { mods: Mods, key: []const u8 },
+    bind: struct { mods: Mods, key: []const u8, callback: Callback },
 
     // border colors and width
     set_default_focused_border_color: struct { color: u32 },
@@ -449,6 +479,8 @@ pub const Command = union(CommandId) {
     set_indicator_color: struct { color: u32 },
     set_node_indicator: struct { id: NodeId, side: Side },
     clear_node_indicator: One,
+    // animation: null curve is ease_out; duration 0 turns animation off
+    set_animation: struct { duration_ms: u32, curve: ?Curve },
 
     // workspaces
     switch_to_workspace: struct { index: u32 },
@@ -476,11 +508,50 @@ pub const Command = union(CommandId) {
     spawn: struct { argv: []const []const u8 },
     setenv: struct { key: []const u8, value: []const u8 },
     quit,
+    exec_once: struct { argv: []const []const u8 },
+    reload_config,
 
     // layouts
     get_layout,
     set_layout: struct { layout: LayoutSpec },
     print_graph,
+
+    // arrangers
+    set_arranger: struct { factory: Callback, name: ?[]const u8 },
+    register_arranger: struct { id: NodeId, factory: Callback, name: ?[]const u8 },
+    set_default_arranger: struct { factory: Callback, name: ?[]const u8 },
+    get_arranger_name,
+    get_arranger_index,
+    set_arranger_index: struct { index: i32 },
+};
+
+/// A batch of commands, run as one transaction: all of them take effect, or none do.
+pub const Request = struct { commands: []const Command };
+
+/// What duckwm calls a callback with.
+pub const CallArgs = union(enum) {
+    /// A bound key was pressed.
+    key,
+    /// A rule, for one window event.
+    rule: struct { event: []const u8, id: NodeId },
+    /// An arranger, for one event in its workspace.
+    arranger: struct { event: []const u8, id: NodeId, prev_id: ?NodeId },
+    /// A factory (set_arranger, set_default_arranger): Return.callback is the arranger it made.
+    factory,
+};
+
+/// duckwm calling one of the client's callbacks, inside a transaction. The
+/// client may send requests (they run in that transaction), then a Return.
+pub const Call = struct { callback: u64, args: CallArgs };
+
+/// The end of a Call: commands to run in the same transaction, or an error
+/// that rolls it back. A factory sets callback to the arranger it made.
+pub const Return = struct { commands: []const Command, err: ?[]const u8, callback: ?u64 };
+
+/// Everything a client sends.
+pub const ClientMessage = union(enum) {
+    request: Request,
+    ret: Return,
 };
 
 test {

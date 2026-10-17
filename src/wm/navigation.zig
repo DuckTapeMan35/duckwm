@@ -13,6 +13,7 @@ pub fn free_graph(wm: *WM, g: *Graph) void {
     if (g.arranger_name.len > 0) {
         wm.allocator.free(g.arranger_name);
     }
+    wm.drop_owned_binds(g);
     for (g.nodes.items) |node| {
         if (wm.focused == node) {
             wm.focused = null;

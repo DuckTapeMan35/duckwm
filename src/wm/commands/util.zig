@@ -3,6 +3,7 @@ const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
+const protocol = @import("protocol");
 const WM = core.WM;
 const Node = graph_mod.Node;
 const Constraint = graph_mod.Constraint;
@@ -54,4 +55,13 @@ pub fn center(n: *const Node) types.Point {
 
 pub fn point(arena: std.mem.Allocator, p: types.Point) !Value {
     return .{ .multi = try arena.dupe(Value, &.{ .{ .integer = p.x }, .{ .integer = p.y } }) };
+}
+
+/// A command's callback argument, as duckwm stores it.
+pub fn callback(wm: *WM, cb: protocol.Callback) !types.Callback {
+    return switch (wm.callback_source) {
+        .lua => .{ .lua = std.math.cast(i32, cb.id) orelse return error.InvalidCallback },
+        .none => error.NoCallbackHost,
+        .client => |id| .{ .remote = .{ .client = id, .id = cb.id } },
+    };
 }

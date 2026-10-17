@@ -27,6 +27,7 @@ pub fn run(wm: *WM) !void {
     wm.startup_done = true;
     wm.commit();
     wm.run_commands_file();
+    wm.initial_load = false;
     wm.commit();
 
     try wm.init_ipc();

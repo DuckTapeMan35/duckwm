@@ -303,6 +303,11 @@ pub fn build(b: *std.Build) void {
         },
     };
 
+    const protocol_mod = b.addModule("protocol", .{
+        .root_source_file = b.path("src/protocol.zig"),
+        .target = target,
+    });
+
     const wm_mod = b.addModule("wm", .{
         .root_source_file = b.path("src/wm.zig"),
         .target = target,
@@ -312,6 +317,7 @@ pub fn build(b: *std.Build) void {
     wm_mod.addImport("platform", platform_mod);
     wm_mod.addImport("libc", libc_mod);
     wm_mod.addImport("ziglua", zlua);
+    wm_mod.addImport("protocol", protocol_mod);
 
     const api_mod = b.addModule("api", .{
         .root_source_file = b.path("src/api_docs.zig"),
@@ -329,6 +335,7 @@ pub fn build(b: *std.Build) void {
     lua_mod.addImport("types", types_mod);
     lua_mod.addImport("api_docs", api_mod);
     lua_mod.addImport("libc", libc_mod);
+    lua_mod.addImport("protocol", protocol_mod);
 
     const mod = b.addModule("duckwm", .{
         .root_source_file = b.path("src/root.zig"),
@@ -337,12 +344,6 @@ pub fn build(b: *std.Build) void {
     mod.addImport("graph", graph_mod);
     mod.addImport("wm", wm_mod);
     mod.addImport("config", lua_mod);
-
-    const protocol_mod = b.addModule("protocol", .{
-        .root_source_file = b.path("src/protocol.zig"),
-        .target = target,
-    });
-    wm_mod.addImport("protocol", protocol_mod);
 
     // ---- duckwm ----
     const exe = b.addExecutable(.{

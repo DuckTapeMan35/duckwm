@@ -109,11 +109,17 @@ pub fn set_keyboard_layout_index(wm: *WM, args: Args(.set_keyboard_layout_index)
     return .nil;
 }
 
-pub fn bind(wm: *WM, args: Args(.bind), arena: Allocator) !Value {
+pub fn bind_commands(wm: *WM, args: Args(.bind_commands), arena: Allocator) !Value {
     if (args.commands.len == 0) return error.EmptyBind;
     const keysym = wm.backend.keysym_from_name(args.key) orelse return error.UnknownKey;
     const encoded = try wm.allocator.dupe(u8, try wire.encode_request(arena, args.commands));
     wm.bind_commands(.{ .mods = args.mods, .keysym = keysym }, encoded);
+    return .nil;
+}
+
+pub fn bind(wm: *WM, args: Args(.bind), _: Allocator) !Value {
+    const keysym = wm.backend.keysym_from_name(args.key) orelse return error.UnknownKey;
+    wm.bind_callback(args.mods, keysym, try util.callback(wm, args.callback));
     return .nil;
 }
 

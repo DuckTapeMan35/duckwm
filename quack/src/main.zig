@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
     const fd = connect(a);
     defer _ = linux.close(fd);
 
-    const body = try wire.encode_request(a, cmds);
+    const body = try wire.encode_client_message(a, .{ .request = .{ .commands = cmds } });
     var len: [4]u8 = undefined;
     std.mem.writeInt(u32, &len, @intCast(body.len), .little);
     write_all(fd, &len) catch die("quack: failed to send request\n");
@@ -37,7 +37,12 @@ pub fn main(init: std.process.Init) !void {
     const frame = try a.alloc(u8, std.mem.readInt(u32, &len, .little));
     read_exact(fd, frame) catch die("quack: duckwm closed the connection\n");
 
-    const resp = wire.decode_response(frame, a) catch die("quack: malformed response\n");
+    const reply = wire.decode_server_message(frame, a) catch die("quack: malformed response\n");
+    // quack registers no callbacks, so the only thing duckwm sends it is the response.
+    const resp = switch (reply) {
+        .response => |r| r,
+        .call => die("quack: duckwm sent a callback call to quack\n"),
+    };
     if (resp.err) |msg| fail(a, msg);
 
     var out: std.ArrayListUnmanaged(u8) = .empty;

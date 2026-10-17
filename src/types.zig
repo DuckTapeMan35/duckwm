@@ -43,6 +43,15 @@ pub const Event = union(enum) {
     pointer_enter: WindowHandle,
 };
 
+pub const Callback = union(enum) {
+    lua: i32,
+    /// A socket client's function: its connection's id and the id it chose.
+    remote: struct { client: u32, id: u64 },
+};
+
+/// Who the commands being run came from, i.e. who keeps the functions they pass.
+pub const CallbackSource = union(enum) { none, lua, client: u32 };
+
 pub const MapRequest = struct {
     window: WindowHandle,
     size: Size,

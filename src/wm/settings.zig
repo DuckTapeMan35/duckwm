@@ -1,5 +1,4 @@
 const std = @import("std");
-const ziglua = @import("ziglua");
 const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("core.zig");
@@ -8,7 +7,8 @@ const Node = graph_mod.Node;
 
 pub const Keybind = union(enum) {
     zig: *const fn (*WM) anyerror!void,
-    lua: i32,
+    /// A function the config gave.
+    call: types.Callback,
     /// An encoded Request: the commands a bind_commands command gave, run as
     /// one transaction on each press. Owned (wm.allocator).
     commands: []const u8,
@@ -20,27 +20,30 @@ pub const Keybind = union(enum) {
     }
 };
 
+/// A keybind's key: the combo, and the workspace whose arranger made it (null: global).
+pub const BindKey = struct { combo: types.KeyCombo, owner: ?*graph_mod.Graph };
+
 /// Release what a bind owns.
 pub fn free_keybind(wm: *WM, kb: Keybind) void {
     switch (kb) {
         .zig => {},
-        .lua => |ref| if (wm.lua) |lua| lua.unref(ziglua.registry_index, ref),
+        .call => |cb| wm.release_callback(cb),
         .commands => |bytes| wm.allocator.free(bytes),
     }
 }
 
 /// Store a bind, replacing (and freeing) whatever the key had.
-pub fn put_keybind(wm: *WM, key: types.KeyCombo, kb: Keybind) void {
+pub fn put_keybind(wm: *WM, key: BindKey, kb: Keybind) void {
     const old = wm.keybinds.fetchPut(wm.allocator, key, kb) catch {
         free_keybind(wm, kb);
         return;
     };
     if (old) |o| free_keybind(wm, o.value);
-    wm.backend.grab_key(key);
+    wm.backend.grab_key(key.combo);
 }
 
 /// Remove a key's bind, whoever made it.
-pub fn remove_keybind(wm: *WM, key: types.KeyCombo) void {
+pub fn remove_keybind(wm: *WM, key: BindKey) void {
     const old = wm.keybinds.fetchRemove(key) orelse return;
     free_keybind(wm, old.value);
     // The backend can only drop every grab, so grab the remaining keys again.
@@ -48,15 +51,15 @@ pub fn remove_keybind(wm: *WM, key: types.KeyCombo) void {
     wm.regrab_keys();
 }
 
-/// Drop the binds the Lua config made, before it is re-run or its VM is
-/// replaced. Call while the old VM still exists, so Lua refs are released.
-pub fn clear_config_binds(wm: *WM) void {
-    var doomed: std.ArrayListUnmanaged(types.KeyCombo) = .empty;
+/// Drop the binds g's arranger made: it's being replaced, reset, or g is going away.
+pub fn drop_owned_binds(wm: *WM, g: *graph_mod.Graph) void {
+    var doomed: std.ArrayListUnmanaged(BindKey) = .empty;
     defer doomed.deinit(wm.allocator);
     var it = wm.keybinds.iterator();
     while (it.next()) |e| {
-        if (e.value_ptr.from_config()) doomed.append(wm.allocator, e.key_ptr.*) catch {};
+        if (e.key_ptr.owner == g) doomed.append(wm.allocator, e.key_ptr.*) catch {};
     }
+    if (doomed.items.len == 0) return;
     for (doomed.items) |key| {
         const old = wm.keybinds.fetchRemove(key) orelse continue;
         free_keybind(wm, old.value);
@@ -167,29 +170,52 @@ pub fn apply_pointer_grabs(wm: *WM) void {
     wm.backend.set_pointer_grabs(grabs[0..n]);
 }
 
+/// Drop the binds the Lua config made, before it is re-run or its VM is
+/// replaced. Call while the old VM still exists, so Lua refs are released.
+pub fn clear_config_binds(wm: *WM) void {
+    var doomed: std.ArrayListUnmanaged(BindKey) = .empty;
+    defer doomed.deinit(wm.allocator);
+    var it = wm.keybinds.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.from_config()) doomed.append(wm.allocator, e.key_ptr.*) catch {};
+    }
+    for (doomed.items) |key| {
+        const old = wm.keybinds.fetchRemove(key) orelse continue;
+        free_keybind(wm, old.value);
+    }
+    wm.ungrab_keys();
+    wm.regrab_keys();
+}
+
 pub fn bind(wm: *WM, mods: types.Mods, keysym: types.Keysym, action: *const fn (*WM) anyerror!void) !void {
     wm.effect(.{
         .bind = .{
-            .key = .{ .mods = mods, .keysym = keysym },
+            .key = .{ .combo = .{ .mods = mods, .keysym = keysym }, .owner = wm.bind_owner },
             .action = .{ .zig = action },
         },
     });
 }
 
-pub fn bind_lua(wm: *WM, mods: types.Mods, keysym: types.Keysym, ref: i32) !void {
-    wm.effect(.{ .bind = .{
-        .key = .{ .mods = mods, .keysym = keysym },
-        .action = .{ .lua = ref },
-    } });
+pub fn bind_callback(wm: *WM, mods: types.Mods, keysym: types.Keysym, cb: types.Callback) void {
+    wm.effect(.{
+        .bind = .{
+            .key = .{ .combo = .{ .mods = mods, .keysym = keysym }, .owner = wm.bind_owner },
+            .action = .{ .call = cb },
+        },
+    });
 }
 
-/// Bind a key to commands, encoded as a Request (taking ownership of encoded).
-pub fn bind_commands(wm: *WM, key: types.KeyCombo, encoded: []const u8) void {
-    wm.effect(.{ .bind = .{ .key = key, .action = .{ .commands = encoded } } });
+pub fn bind_commands(wm: *WM, combo: types.KeyCombo, encoded: []const u8) void {
+    wm.effect(.{
+        .bind = .{
+            .key = .{ .combo = combo, .owner = wm.bind_owner },
+            .action = .{ .commands = encoded },
+        },
+    });
 }
 
-pub fn unbind(wm: *WM, key: types.KeyCombo) void {
-    wm.effect(.{ .unbind = key });
+pub fn unbind(wm: *WM, combo: types.KeyCombo) void {
+    wm.effect(.{ .unbind = .{ .combo = combo, .owner = wm.bind_owner } });
 }
 
 pub fn ungrab_keys(wm: *WM) void {
@@ -198,7 +224,7 @@ pub fn ungrab_keys(wm: *WM) void {
 
 pub fn regrab_keys(wm: *WM) void {
     var it = wm.keybinds.keyIterator();
-    while (it.next()) |k| wm.backend.grab_key(k.*);
+    while (it.next()) |k| wm.backend.grab_key(k.combo);
 }
 
 pub fn forces_rgb(wm: *WM, node: *Node) bool {
@@ -214,12 +240,12 @@ pub fn clear_rgb_frame_classes(wm: *WM) void {
     wm.rgb_frame_classes.clearRetainingCapacity();
 }
 
-pub fn reset_arranger_refs(wm: *WM, g: *graph_mod.Graph) void {
-    g.arranger_ref = 0;
+pub fn reset_arrangers(wm: *WM, g: *graph_mod.Graph) void {
+    wm.drop_owned_binds(g);
+    if (g.arranger) |cb| wm.release_callback(cb);
+    g.arranger = null;
     for (g.nodes.items) |node| {
-        if (node.content == .workspace) {
-            reset_arranger_refs(wm, node.content.workspace);
-        }
+        if (node.content == .workspace) reset_arrangers(wm, node.content.workspace);
     }
 }
 
