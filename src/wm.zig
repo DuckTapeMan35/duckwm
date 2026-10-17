@@ -2,4 +2,5 @@ pub const WM = @import("wm/core.zig").WM;
 pub const KeybindKey = @import("wm/core.zig").KeybindKey;
 pub const Keybind = @import("wm/core.zig").Keybind;
 pub const platform_id = @import("wm/backend.zig").platform_id;
+pub const reload_commands_only = @import("wm/startup.zig").reload_commands_only;
 pub const command = @import("wm/command.zig");

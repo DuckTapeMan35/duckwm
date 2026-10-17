@@ -53,3 +53,8 @@ fn read_file(a: std.mem.Allocator, path: []const u8) ![]u8 {
         }
     }
 }
+
+/// reload_fn when there's no Lua config: apply the commands file again.
+pub fn reload_commands_only(wm: *WM) void {
+    wm.run_commands_file();
+}

@@ -8,6 +8,8 @@ const usage =
     \\
     \\  --commands <file>  an encoded duckwm.Request (proto/duckwm.proto),
     \\                     run after the Lua config and after every reload
+    \\  --no-lua           don't load a Lua config: the commands file and
+    \\                     socket clients configure everything
     \\
 ;
 
@@ -20,11 +22,14 @@ fn mainImpl(init: std.process.Init) !void {
     // Arguments live in the process arena, so commands_path stays valid for the WM's lifetime.
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var commands_path: ?[]const u8 = null;
+    var no_lua = false;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--commands") and i + 1 < args.len) {
             i += 1;
             commands_path = args[i];
+        } else if (std.mem.eql(u8, args[i], "--no-lua")) {
+            no_lua = true;
         } else {
             std.debug.print("{s}", .{usage});
             std.process.exit(if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) 0 else 2);
@@ -51,7 +56,12 @@ fn mainImpl(init: std.process.Init) !void {
     _ = std.os.linux.sigaction(std.os.linux.SIG.ILL, &handler, null);
     _ = std.os.linux.sigaction(std.os.linux.SIG.BUS, &handler, null);
 
-    try Config.load(&wm);
+    if (no_lua) {
+        // A reload (reload_config) re-applies the commands file, the only config there is.
+        wm.reload_fn = duckwm.reload_commands_only;
+    } else {
+        try Config.load(&wm);
+    }
     try wm.run();
 }
 
