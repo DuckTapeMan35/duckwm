@@ -349,7 +349,7 @@ fn encode_list(a: Allocator, items: []const Value) Error![]u8 {
     return w.out.items;
 }
 
-fn encode_value(a: Allocator, v: Value) Error![]u8 {
+pub fn encode_value(a: Allocator, v: Value) Error![]u8 {
     var w: Writer = .{ .a = a };
     switch (v) {
         .nil => try w.bytes(1, ""),

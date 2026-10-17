@@ -28,25 +28,32 @@ comptime {
     }
 }
 
-/// Resolves a layout's refs: ids anywhere, keys in one workspace (created on first use).
+const Used = std.AutoHashMapUnmanaged(*Node, void);
+
 const Refs = struct {
     wm: *WM,
     g: *Graph,
+    arena: Allocator,
+    /// Every node the layout mentions, however it was named.
+    used: *Used,
 
     fn node(self: Refs, r: protocol.Ref) !*Node {
-        return switch (r) {
-            .id => |i| get(self.wm, i),
+        const n = switch (r) {
+            .id => |i| try get(self.wm, i),
             .key => |k| self.g.keyed(k) orelse try self.create(k),
         };
+        try self.used.put(self.arena, n, {});
+        return n;
     }
 
-    /// Inside the caller's transaction, so a rollback removes it again.
     fn create(self: Refs, k: u32) !*Node {
         const n = (try nodes_mod.add_empty(self.wm, self.g)).node;
-        n.key = k;
+        n.key = k; // a new node: nothing to journal
         return n;
     }
 };
+
+pub const Mode = enum { partial, whole };
 
 // ---- set_layout ----
 fn get(wm: *WM, id: NodeId) !*Node {
@@ -127,8 +134,9 @@ fn resolve(refs: Refs, spec: ConstraintSpec) !Constraint {
 /// resolved first, so a bad id anywhere changes nothing. Unknown node ids are
 /// skipped: an arranger's table may mention a window that just closed. Keyed
 /// containers the layout no longer mentions are destroyed.
-pub fn apply(wm: *WM, g: *Graph, spec: LayoutSpec, arena: std.mem.Allocator) !void {
-    const refs: Refs = .{ .wm = wm, .g = g };
+pub fn apply(wm: *WM, g: *Graph, spec: LayoutSpec, arena: std.mem.Allocator, mode: Mode) !void {
+    var used: Used = .empty;
+    const refs: Refs = .{ .wm = wm, .g = g, .arena = arena, .used = &used };
     const Resolved = struct { node: *Node, cons: []Constraint };
     var resolved: std.ArrayListUnmanaged(Resolved) = .empty;
     for (spec.nodes) |ns| {
@@ -136,6 +144,7 @@ pub fn apply(wm: *WM, g: *Graph, spec: LayoutSpec, arena: std.mem.Allocator) !vo
             .id => |i| wm.get_node_by_id(i) orelse continue,
             .key => |k| g.keyed(k) orelse try refs.create(k),
         };
+        try used.put(arena, n, {});
         const specs = ns.constraints orelse &.{};
         const cons = try arena.alloc(Constraint, specs.len);
         for (specs, cons) |cs, *out| out.* = try resolve(refs, cs);
@@ -145,49 +154,21 @@ pub fn apply(wm: *WM, g: *Graph, spec: LayoutSpec, arena: std.mem.Allocator) !vo
         const owner = r.node.owner_graph orelse continue;
         try owner.replace_constraints(r.node, r.cons);
     }
-    try sweep(g, spec, arena);
-}
-
-fn mark(used: *std.AutoHashMapUnmanaged(u32, void), a: Allocator, r: protocol.Ref) !void {
-    if (r == .key) try used.put(a, r.key, {});
-}
-
-/// Destroy g's keyed containers that spec doesn't mention.
-fn sweep(g: *Graph, spec: LayoutSpec, arena: Allocator) !void {
-    var used: std.AutoHashMapUnmanaged(u32, void) = .empty;
-    for (spec.nodes) |ns| {
-        try mark(&used, arena, ns.id);
-        for (ns.constraints orelse &.{}) |cs| switch (cs) {
-            inline .left_of,
-            .right_of,
-            .above,
-            .below,
-            .align_left,
-            .align_top,
-            .align_right,
-            .align_bottom,
-            .equal_width,
-            .equal_height,
-            => |o| try mark(&used, arena, o.other),
-            .grid_cell => |c| try mark(&used, arena, c.container),
-            .grid_cell_abs => |c| try mark(&used, arena, c.container),
-            .split => |s| {
-                try mark(&used, arena, s.container);
-                for (s.children) |c| try mark(&used, arena, c);
-            },
-            else => {},
-        };
+    if (mode == .whole) {
+        for (g.nodes.items) |n| {
+            if (!listed(n) or n.dead or n.key != null or used.contains(n)) continue;
+            if (n.constraints.items.len > 0) try g.replace_constraints(n, &.{});
+        }
     }
     try drop_keyed(g, &used, arena);
 }
 
 /// Destroy g's keyed containers, except those in keep.
-pub fn drop_keyed(g: *Graph, keep: ?*const std.AutoHashMapUnmanaged(u32, void), arena: Allocator) !void {
+pub fn drop_keyed(g: *Graph, keep: ?*const Used, arena: Allocator) !void {
     var doomed: std.ArrayListUnmanaged(*Node) = .empty;
     for (g.nodes.items) |n| {
-        const k = n.key orelse continue;
-        if (n.dead) continue;
-        if (keep) |set| if (set.contains(k)) continue;
+        if (n.key == null or n.dead) continue;
+        if (keep) |set| if (set.contains(n)) continue;
         try doomed.append(arena, n);
     }
     // Collected first: remove_node shrinks g.nodes.
@@ -322,6 +303,80 @@ pub fn describe(wm: *WM, a: std.mem.Allocator) !Value {
     }) };
 }
 
+// ---- the layout as a LayoutSpec (for arranger snapshots) ----
+/// How a layout names n: its key if it's a keyed container, else its id.
+fn ref_of(wm: *WM, n: *Node) ?protocol.Ref {
+    if (n.key) |k| return .{ .key = k };
+    if (wm.get_id_for_node(n)) |id| return .{ .id = id };
+    return null;
+}
+
+/// con as a ConstraintSpec; null if it names a node with no id (never expected).
+fn spec_of(wm: *WM, a: Allocator, con: Constraint) !?ConstraintSpec {
+    return switch (con) {
+        inline .left_of,
+        .right_of,
+        .above,
+        .below,
+        .align_left,
+        .align_top,
+        .align_right,
+        .align_bottom,
+        .equal_width,
+        .equal_height,
+        => |o, tag| @unionInit(ConstraintSpec, @tagName(tag), .{ .other = ref_of(wm, o) orelse return null }),
+        .fixed_x => |v| .{ .fixed_x = .{ .value = v } },
+        .fixed_y => |v| .{ .fixed_y = .{ .value = v } },
+        .fixed_width => |v| .{ .fixed_width = .{ .value = v } },
+        .fixed_height => |v| .{ .fixed_height = .{ .value = v } },
+        .fixed_ratio => |v| .{ .fixed_ratio = .{ .value = v } },
+        .grid_cell => |c| .{ .grid_cell = .{
+            .col = c.col,
+            .row = c.row,
+            .cols = c.cols,
+            .rows = c.rows,
+            .container = ref_of(wm, c.container) orelse return null,
+        } },
+        .grid_cell_abs => |c| .{ .grid_cell_abs = .{
+            .x = c.x,
+            .y = c.y,
+            .w = c.w,
+            .h = c.h,
+            .container = ref_of(wm, c.container) orelse return null,
+        } },
+        .split => |s| blk: {
+            const ratios = try a.alloc(f64, s.count);
+            const children = try a.alloc(protocol.Ref, s.count);
+            for (0..s.count) |k| {
+                ratios[k] = s.ratios[k];
+                children[k] = ref_of(wm, s.children[k]) orelse return null;
+            }
+            break :blk .{ .split = .{
+                .container = ref_of(wm, s.container) orelse return null,
+                .axis = if (s.axis == .horizontal) .h else .v,
+                .ratios = ratios,
+                .children = children,
+            } };
+        },
+    };
+}
+
+/// g's tiled layout as a LayoutSpec: what an arranger gets in its snapshot, and
+/// what it may hand back changed. Ratios are as they are now, after any resize.
+pub fn describe_spec(wm: *WM, g: *Graph, a: Allocator) !LayoutSpec {
+    var out: std.ArrayListUnmanaged(NodeSpec) = .empty;
+    for (g.nodes.items) |n| {
+        if (!listed(n) or n.dead) continue;
+        const r = ref_of(wm, n) orelse continue;
+        var cons: std.ArrayListUnmanaged(ConstraintSpec) = .empty;
+        for (n.constraints.items) |c| {
+            if (try spec_of(wm, a, c)) |s| try cons.append(a, s);
+        }
+        try out.append(a, .{ .id = r, .constraints = cons.items });
+    }
+    return .{ .nodes = out.items };
+}
+
 // ---- print_graph ----
 fn print_graph_to_buf(wm: *WM, buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, g: *graph_mod.Graph, depth: u32) !void {
     var ind = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
@@ -425,6 +480,20 @@ fn print_graph_to_buf(wm: *WM, buf: *std.ArrayListUnmanaged(u8), allocator: std.
     }
 }
 
+/// g's tiled windows (and previewed workspaces), in the order they appeared.
+pub fn tiled_windows(wm: *WM, g: *Graph, a: Allocator) ![]protocol.WindowInfo {
+    var out: std.ArrayListUnmanaged(protocol.WindowInfo) = .empty;
+    for (g.nodes.items) |n| {
+        if (!listed(n) or n.dead or n.content == .empty) continue;
+        const id = wm.get_id_for_node(n) orelse continue;
+        try out.append(a, .{
+            .id = id,
+            .geometry = .{ .x = n.x, .y = n.y, .width = n.width, .height = n.height },
+        });
+    }
+    return out.items;
+}
+
 /// A readable dump of the current workspace and everything nested in it.
 pub fn print(wm: *WM, a: std.mem.Allocator) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
@@ -437,7 +506,7 @@ pub fn get_layout(wm: *WM, _: void, arena: Allocator) !Value {
 }
 
 pub fn set_layout(wm: *WM, args: Args(.set_layout), arena: Allocator) !Value {
-    try apply(wm, wm.current_graph, args.layout, arena);
+    try apply(wm, wm.current_graph, args.layout, arena, .partial);
     return .nil;
 }
 

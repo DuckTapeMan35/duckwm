@@ -104,6 +104,7 @@ pub fn get_work_area(wm: *WM) types.Rect {
         .height = wm.screen_height -| r.top -| r.bottom,
     };
 }
+
 /// what color each side of node's border should be right now.
 pub fn border_colors(wm: *WM, node: *Node) types.BorderColors {
     const focused = wm.focused == node;

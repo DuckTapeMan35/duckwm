@@ -212,6 +212,8 @@ pub const Journal = struct {
         external: struct { undo: *const fn (*anyopaque, u64) void, ctx: *anyopaque, arg: u64 },
         /// Undo: take the node back out of the graph, without destroying it.
         node_attached: struct { graph: *Graph, node: *Node },
+        /// An owned byte buffer replaced (an arranger's state): the old one, freed at commit.
+        bytes_replaced: struct { slot: *[]const u8, old: []const u8 },
     };
 
     pub fn init(allocator: std.mem.Allocator) Journal {
@@ -316,6 +318,10 @@ pub const Journal = struct {
                     }
                 }
             },
+            .bytes_replaced => |b| {
+                allocator.free(b.slot.*);
+                b.slot.* = b.old;
+            },
         }
     }
 
@@ -323,6 +329,7 @@ pub const Journal = struct {
     fn finish(self: *Journal) void {
         for (self.entries.items) |*e| switch (e.*) {
             .constraints_replaced => |*r| r.old.deinit(self.allocator),
+            .bytes_replaced => |b| self.allocator.free(b.old),
             else => {},
         };
         self.entries.clearRetainingCapacity();
@@ -368,6 +375,8 @@ pub const Graph = struct {
     on_node_free: ?*const fn (*anyopaque, *Node) void,
     on_node_free_ctx: *anyopaque,
     journal: ?*Journal,
+    /// The arranger's state (an encoded protocol.Value; empty: none yet).
+    arranger_state: []const u8,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -407,6 +416,7 @@ pub const Graph = struct {
             .on_node_free = null,
             .on_node_free_ctx = undefined,
             .journal = null,
+            .arranger_state = "",
             .allocator = allocator,
         };
     }
@@ -417,6 +427,7 @@ pub const Graph = struct {
             self.allocator.destroy(node);
         }
         self.nodes.deinit(self.allocator);
+        self.allocator.free(self.arranger_state);
         self.focus_edges.deinit(self.allocator);
     }
 
@@ -430,12 +441,21 @@ pub const Graph = struct {
             self.allocator.destroy(child);
         }
         sub.nodes.deinit(self.allocator);
+        self.allocator.free(sub.arranger_state);
         sub.focus_edges.deinit(self.allocator);
     }
 
     fn jr(self: *Graph) ?*Journal {
         const j = self.journal orelse return null;
         return if (j.active()) j else null;
+    }
+
+    /// Replace an owned buffer of this graph with a copy of new, journaled.
+    pub fn replace_bytes(self: *Graph, slot: *[]const u8, new: []const u8) !void {
+        const copy = try self.allocator.dupe(u8, new);
+        const old = slot.*;
+        slot.* = copy;
+        if (self.jr()) |j| j.push(.{ .bytes_replaced = .{ .slot = slot, .old = old } }) else self.allocator.free(old);
     }
 
     /// Set any field of a Node or Graph, recording the old value.

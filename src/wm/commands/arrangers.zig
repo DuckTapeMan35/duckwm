@@ -31,6 +31,7 @@ fn apply(wm: *WM, g: *Graph, factory: types.Callback) !void {
 
     if (g.arranger) |old| wm.release_callback(old);
     g.arranger = arranger;
+    try g.replace_bytes(&g.arranger_state, "");
 
     g.set(g, "virtual_width", 0);
     g.set(g, "virtual_height", 0);

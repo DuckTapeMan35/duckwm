@@ -296,13 +296,10 @@ fn find(wm: *WM, id: u32) ?*Client {
 /// Call a client's callback inside the current transaction, serving the
 /// requests its body makes (in the same transaction) until it returns.
 /// Returns Return.callback: the arranger a factory made.
-pub fn call(wm: *WM, client: u32, callback: u64, args: protocol.CallArgs) !?u64 {
+pub fn call(wm: *WM, client: u32, callback: u64, args: protocol.CallArgs, a: std.mem.Allocator) !protocol.Return {
     const c = find(wm, client) orelse return error.ClientGone;
     if (c.dead) return error.ClientGone;
 
-    var arena = std.heap.ArenaAllocator.init(wm.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
     try send(wm, c, try wire.encode_server_call(a, .{ .callback = callback, .args = args }));
 
     const deadline = now_ms() + call_timeout_ms;
@@ -329,7 +326,7 @@ pub fn call(wm: *WM, client: u32, callback: u64, args: protocol.CallArgs) !?u64 
                         std.debug.print("callback commands (client {d}): {s}\n", .{ client, command.error_text(err) });
                         return error.CallbackFailed;
                     };
-                    return r.callback;
+                    return r;
                 },
             }
         }
