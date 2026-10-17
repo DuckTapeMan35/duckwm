@@ -59,7 +59,7 @@ let
       }
       ''
         cp "$jsonPath" $out
-        ${shared}/bin/duckwm --check $out
+        ${lib.getExe shared} --check $out
       '';
 
   flags = lib.concatStringsSep " " (
@@ -81,12 +81,13 @@ let
     if flags == "" then
       packages
     else
-      lib.optional hasX11 (session cfg.package "xsessions" "${cfg.package}/bin/duckwm ${flags}")
+      lib.optional hasX11 (session cfg.package "xsessions" "${lib.getExe cfg.package} ${flags}")
       ++ lib.optional hasRiver (
-        session cfg.riverPackage "wayland-sessions" ''river -c "${cfg.riverPackage}/bin/duckwm ${flags}"''
+        session cfg.riverPackage "wayland-sessions"
+          ''${lib.getExe pkgs.river} -c "${lib.getExe cfg.riverPackage} ${flags}"''
       );
 
-  # A JSON-ish attribute set per command, in protobuf's JSON form.
+  # One command: the command name as the key, its fields as an attribute set.
   commandType = lib.types.attrsOf lib.types.anything;
 in
 {
@@ -142,9 +143,11 @@ in
         ]
       '';
       description = ''
-        Each is a duckwm command as JSON: the command name as the key, its
-        fields as an attribute set, enums by name ("previous", "left").
-        Optional fields can be left out. Checked by duckwm at build time.
+        Commands run as one batch after the Lua config (if any), at startup and
+        after every reload. Each is a duckwm command as JSON: the command name
+        as the key, its fields as an attribute set, enums by name ("previous",
+        "left"). Optional fields can be left out. Checked by duckwm at build
+        time. exec_once commands start their programs only at startup.
       '';
     };
 

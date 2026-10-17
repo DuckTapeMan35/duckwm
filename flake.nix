@@ -1,5 +1,5 @@
 {
-  description = "duckwm — a graph-based X11 tiling window manager";
+  description = "duckwm — a graph-based tiling window manager";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -12,6 +12,7 @@
     {
       packages.${system} = {
         duckwm = pkgs.callPackage ./nix/package.nix { };
+        duckwm-river = pkgs.callPackage ./nix/package.nix { platform = "river"; };
         default = self.packages.${system}.duckwm;
       };
 
@@ -28,7 +29,7 @@
           protobuf
         ];
         buildInputs = with pkgs; [
-          #x11 backend
+          # x11 backend
           libx11
           libxft
           libxcursor
