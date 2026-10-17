@@ -7,6 +7,7 @@ const protocol = @import("protocol");
 const command = @import("command.zig");
 const ipc = @import("ipc.zig");
 const settings = @import("settings.zig");
+const luaconv = @import("luaconv.zig");
 const layouts = @import("commands/layouts.zig");
 const util = @import("commands/util.zig");
 
@@ -24,10 +25,7 @@ pub const Reply = struct { layout: ?protocol.LayoutSpec = null, state: ?protocol
 /// (already reported); the caller rolls back.
 pub fn invoke(wm: *WM, cb: Callback, call: protocol.CallArgs, a: std.mem.Allocator) !Reply {
     switch (cb) {
-        .lua => |ref| {
-            try invoke_lua(wm, ref, call);
-            return .{}; // step 6: a Lua arranger's return values
-        },
+        .lua => |ref| return invoke_lua(wm, ref, call, a),
         .remote => |r| {
             const ret = try ipc.call(wm, r.client, r.id, call, a);
             return .{ .layout = ret.layout, .state = ret.state };
@@ -35,32 +33,53 @@ pub fn invoke(wm: *WM, cb: Callback, call: protocol.CallArgs, a: std.mem.Allocat
     }
 }
 
-fn invoke_lua(self: *WM, ref: i32, call: protocol.CallArgs) !void {
+fn invoke_lua(self: *WM, ref: i32, call: protocol.CallArgs, a: std.mem.Allocator) !Reply {
     const lua = self.lua orelse return error.NoLua;
     const top = lua.getTop();
     _ = lua.getIndexRaw(ziglua.registry_index, ref);
-    const nargs: i32 = switch (call) {
-        .key => 0,
+    const nargs: i32, const nresults: i32 = switch (call) {
+        .key => .{ 0, 0 },
         .rule => |r| blk: {
             _ = lua.pushString(r.event);
             lua.pushInteger(@intCast(r.id));
-            break :blk 2;
+            break :blk .{ 2, 0 };
         },
-        .arranger => |a| blk: {
-            _ = lua.pushString(@tagName(a.event));
-            lua.pushInteger(@intCast(a.id));
-            if (a.prev_id) |p| lua.pushInteger(@intCast(p)) else lua.pushNil();
-            break :blk 3;
+        // (event, id, prev_id, snapshot) -> layout, state; old arrangers ignore
+        // the snapshot and return nothing.
+        .arranger => |s| blk: {
+            _ = lua.pushString(@tagName(s.event));
+            lua.pushInteger(@intCast(s.id));
+            if (s.prev_id) |p| lua.pushInteger(@intCast(p)) else lua.pushNil();
+            luaconv.push(lua, protocol.Snapshot, s);
+            break :blk .{ 4, 2 };
         },
         // Factories are called through instantiate, which takes the result.
         .factory => unreachable,
     };
-    lua.protectedCall(.{ .args = nargs, .results = 0 }) catch |err| {
+    lua.protectedCall(.{ .args = nargs, .results = nresults }) catch |err| {
         const msg = lua.toString(-1) catch null;
         std.debug.print("{s} callback error: {} {s}\n", .{ @tagName(call), err, msg orelse "" });
         lua.setTop(top);
         return error.CallbackFailed;
     };
+    defer lua.setTop(top);
+    if (nresults == 0) return .{};
+
+    const layout: ?protocol.LayoutSpec = if (lua.typeOf(-2) == .table)
+        luaconv.read(protocol.LayoutSpec, lua, -2, a) catch |err| {
+            std.debug.print("arranger returned an invalid layout: {s}\n", .{@errorName(err)});
+            return error.CallbackFailed;
+        }
+    else
+        null;
+    const state: ?protocol.Value = if (lua.isNoneOrNil(-1))
+        null
+    else
+        luaconv.to_value(lua, -1, a) catch |err| {
+            std.debug.print("arranger returned an invalid state: {s}\n", .{@errorName(err)});
+            return error.CallbackFailed;
+        };
+    return .{ .layout = layout, .state = state };
 }
 
 /// Call a factory (set_default_arranger's function) and keep the callback it returns.
@@ -138,11 +157,7 @@ pub fn call_arranger(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id:
 
 fn run_arranger(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, prev_id: ?u32, a: std.mem.Allocator) !void {
     const cb = g.arranger.?;
-    // Lua arrangers read what they need themselves; only a client gets the snapshot.
-    const snap = if (cb == .remote)
-        try snapshot(wm, g, event, node_id, prev_id, a)
-    else
-        bare(event, node_id, prev_id);
+    const snap = try snapshot(wm, g, event, node_id, prev_id, a);
     const reply = try invoke(wm, cb, .{ .arranger = snap }, a);
     if (reply.layout) |l| try layouts.apply(wm, g, l, a, .whole);
     if (reply.state) |s| try g.replace_bytes(&g.arranger_state, try wire.encode_value(a, s));
@@ -171,21 +186,6 @@ fn snapshot(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, pre
         .windows = try layouts.tiled_windows(wm, g, a),
         .layout = try layouts.describe_spec(wm, g, a),
         .state = if (g.arranger_state.len > 0) try wire.decode_value(g.arranger_state, a) else null,
-    };
-}
-
-fn bare(event: protocol.ArrangerEvent, node_id: u32, prev_id: ?u32) protocol.Snapshot {
-    return .{
-        .event = event,
-        .id = node_id,
-        .prev_id = prev_id,
-        .work_area = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
-        .cursor_dx = 0,
-        .cursor_dy = 0,
-        .focused = null,
-        .windows = &.{},
-        .layout = .{ .nodes = &.{} },
-        .state = null,
     };
 }
 
