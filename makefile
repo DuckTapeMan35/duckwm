@@ -5,6 +5,7 @@ DATADIR    := $(PREFIX)/share
 XSESSDIR   := $(DATADIR)/xsessions
 APPDIR     := $(DATADIR)/applications
 DOCDIR     := $(DATADIR)/doc/duckwm
+SCHEMADIR  := $(DATADIR)/duckwm
 METADIR    := $(DATADIR)/duckwm/meta
 ZIG        ?= zig
 BUILD_FLAGS ?=
@@ -32,6 +33,7 @@ install: build
 	install -Dm644 API.md      $(DESTDIR)$(DOCDIR)/API.md
 	install -Dm644 API.norg    $(DESTDIR)$(DOCDIR)/API.norg
 	install -Dm644 meta/wm.lua $(DESTDIR)$(METADIR)/wm.lua
+	install -Dm644 proto/duckwm.proto $(DESTDIR)$(SCHEMADIR)/duckwm.proto
 	@echo "System install complete. Run 'make install-user' as yourself to set up your config."
 
 install-user:
@@ -64,10 +66,12 @@ uninstall:
 	rm -f  $(DESTDIR)$(DOCDIR)/API.md
 	rm -f  $(DESTDIR)$(DOCDIR)/API.norg
 	rm -f  $(DESTDIR)$(METADIR)/wm.lua
+	rm -f  $(DESTDIR)$(SCHEMADIR)/duckwm.proto
 	rmdir --ignore-fail-on-non-empty \
 		$(DESTDIR)$(SYSCONFDIR)/duckwm \
 		$(DESTDIR)$(DOCDIR) \
-		$(DESTDIR)$(METADIR) 2>/dev/null || true
+		$(DESTDIR)$(METADIR) \
+		$(DESTDIR)$(SCHEMADIR) 2>/dev/null || true
 
 clean:
 	rm -rf zig-out zig-cache .zig-cache meta etc API.md API.norg
