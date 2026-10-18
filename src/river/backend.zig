@@ -95,11 +95,6 @@ const Window = struct {
     pos: ?types.Point = null,
     border_width: u32 = 0,
     border_color: ?u32 = null,
-    /// What the client last committed (river's dimensions event).
-    actual: ?types.Size = null,
-    /// The committed size a proposal was already resent for: once per mismatch,
-    /// so clients that round (terminals, to whole cells) don't loop.
-    corrected: ?types.Size = null,
 
     // animation fields
     anim_active: bool = false,
@@ -478,13 +473,8 @@ const State = struct {
                 .width = @max(w.anim_from_size.width, w.want_size.width),
                 .height = @max(w.anim_from_size.height, w.want_size.height),
             } else w.want_size;
-            const drifted = if (w.actual) |act|
-                !size_eql(act, target) and !(w.corrected != null and size_eql(w.corrected.?, act))
-            else
-                false;
-            if (!w.fullscreen and (!size_eql(w.proposed, target) or drifted)) {
+            if (!w.fullscreen and !size_eql(w.proposed, target)) {
                 w.obj.proposeDimensions(@intCast(target.width), @intCast(target.height));
-                w.corrected = if (size_eql(w.proposed, target)) w.actual else null;
                 w.proposed = target;
             }
         }
@@ -904,12 +894,10 @@ fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) 
                 w.wants_fullscreen = false;
             }
         },
-        .dimensions => |e| {
-            const got: types.Size = .{ .width = nonneg(e.width), .height = nonneg(e.height) };
-            w.actual = got;
-            // Not what was asked for: have the next manage sequence ask again.
-            if (w.announced and w.configured and !size_eql(got, w.proposed)) s.mark();
-        },
+        // dimensions: river positions content by the node, and core's
+        // geometry is authoritative, so the actual size isn't needed yet.
+        // Interactive move/resize requests from CSD, maximize, minimize and
+        // the window menu are ignored for now (capabilities say so).
         else => {},
     }
 }
