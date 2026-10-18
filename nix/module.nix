@@ -66,6 +66,11 @@ let
     lib.optional (commands != [ ]) "--commands ${commandsFile}" ++ lib.optional (!cfg.lua) "--no-lua"
   );
 
+  # One path, no quoting: display managers differ in how they split Exec lines.
+  riverSession = pkgs.writeShellScript "duckwm-river-session" ''
+    exec ${lib.getExe pkgs.river} -c "${lib.getExe cfg.riverPackage} ${flags}"
+  '';
+
   # The package's session entry, with the flags added to its Exec line.
   session =
     pkg: dir: exec:
@@ -82,10 +87,7 @@ let
       packages
     else
       lib.optional hasX11 (session cfg.package "xsessions" "${lib.getExe cfg.package} ${flags}")
-      ++ lib.optional hasRiver (
-        session cfg.riverPackage "wayland-sessions"
-          ''${lib.getExe pkgs.river} -c "${lib.getExe cfg.riverPackage} ${flags}"''
-      );
+      ++ lib.optional hasRiver (session cfg.riverPackage "wayland-sessions" "${riverSession}");
 
   # One command: the command name as the key, its fields as an attribute set.
   commandType = lib.types.attrsOf lib.types.anything;
