@@ -95,6 +95,10 @@ const Window = struct {
     pos: ?types.Point = null,
     border_width: u32 = 0,
     border_color: ?u32 = null,
+    /// Propose again at the next manage, even though the size hasn't changed.
+    repropose: bool = false,
+    /// Already insisted since the tiled state last changed: once is enough.
+    insisted: bool = false,
 
     // animation fields
     anim_active: bool = false,
@@ -467,17 +471,18 @@ const State = struct {
                 w.obj.setTiled(@bitCast(if (w.want_tiled) all_edges else 0));
                 w.tiled = w.want_tiled;
                 w.proposed = .{ .width = 0, .height = 0 }; // force a proposal
+                w.insisted = false;
             }
 
             const target: types.Size = if (w.anim_active) .{
                 .width = @max(w.anim_from_size.width, w.want_size.width),
                 .height = @max(w.anim_from_size.height, w.want_size.height),
             } else w.want_size;
-            if (!w.fullscreen and !size_eql(w.proposed, target)) {
-                std.debug.print("{d} propose {d}x{d} @{d}\n", .{ w.handle, target.width, target.height, now_ms() });
+            if (!w.fullscreen and (w.repropose or !size_eql(w.proposed, target))) {
                 w.obj.proposeDimensions(@intCast(target.width), @intCast(target.height));
                 w.proposed = target;
             }
+            w.repropose = false;
         }
 
         if (s.focus_dirty) {
@@ -895,11 +900,15 @@ fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) 
                 w.wants_fullscreen = false;
             }
         },
-        .dimensions => |e| std.debug.print("{d} commit {d}x{d} @{d}\n", .{ w.handle, e.width, e.height, now_ms() }),
-        // dimensions: river positions content by the node, and core's
-        // geometry is authoritative, so the actual size isn't needed yet.
-        // Interactive move/resize requests from CSD, maximize, minimize and
-        // the window menu are ignored for now (capabilities say so).
+        // Clients that stop being tiled may go back to a size of their own
+        .dimensions => |e| {
+            const got: types.Size = .{ .width = nonneg(e.width), .height = nonneg(e.height) };
+            if (w.announced and w.tiled == false and !w.insisted and !size_eql(got, w.proposed)) {
+                w.insisted = true;
+                w.repropose = true;
+                s.mark();
+            }
+        },
         else => {},
     }
 }
