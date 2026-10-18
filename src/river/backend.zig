@@ -474,6 +474,7 @@ const State = struct {
                 .height = @max(w.anim_from_size.height, w.want_size.height),
             } else w.want_size;
             if (!w.fullscreen and !size_eql(w.proposed, target)) {
+                std.debug.print("{d} propose {d}x{d} @{d}\n", .{ w.handle, target.width, target.height, now_ms() });
                 w.obj.proposeDimensions(@intCast(target.width), @intCast(target.height));
                 w.proposed = target;
             }
@@ -894,6 +895,7 @@ fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) 
                 w.wants_fullscreen = false;
             }
         },
+        .dimensions => |e| std.debug.print("{d} commit {d}x{d} @{d}\n", .{ w.handle, e.width, e.height, now_ms() }),
         // dimensions: river positions content by the node, and core's
         // geometry is authoritative, so the actual size isn't needed yet.
         // Interactive move/resize requests from CSD, maximize, minimize and
