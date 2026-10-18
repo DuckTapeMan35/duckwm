@@ -18,7 +18,7 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32, floating: bool) !b
     }
     const tol: i32 = 1;
     for (wm.current_graph.nodes.items) |node| {
-        if (node.content == .empty or node.floating != floating) continue;
+        if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (@abs(right - edge_x) <= tol) {
             if (@as(i32, @intCast(node.width)) + delta < 2 * wm.border_width + 10) return false;
@@ -28,7 +28,7 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32, floating: bool) !b
     }
     var changed = false;
     for (wm.current_graph.nodes.items) |node| {
-        if (node.content == .empty or node.floating != floating) continue;
+        if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (@abs(right - edge_x) <= tol) {
             node.width = @intCast(@as(i32, @intCast(node.width)) + delta);
@@ -56,7 +56,7 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32, floating: bool) 
     }
     const tol: i32 = 1;
     for (wm.current_graph.nodes.items) |node| {
-        if (node.content == .empty or node.floating != floating) continue;
+        if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (@abs(bottom - edge_y) <= tol) {
             if (@as(i32, @intCast(node.height)) + delta < 2 * wm.border_width + 10) return false;
@@ -66,7 +66,7 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32, floating: bool) 
     }
     var changed = false;
     for (wm.current_graph.nodes.items) |node| {
-        if (node.content == .empty or node.floating != floating) continue;
+        if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (@abs(bottom - edge_y) <= tol) {
             node.height = @intCast(@as(i32, @intCast(node.height)) + delta);

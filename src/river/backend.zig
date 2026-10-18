@@ -97,8 +97,9 @@ const Window = struct {
     border_color: ?u32 = null,
     /// Propose again at the next manage, even though the size hasn't changed.
     repropose: bool = false,
-    /// Already insisted since the tiled state last changed: once is enough.
-    insisted: bool = false,
+    /// Times re-proposed since the target last changed: a few, so stale commits
+    /// don't use it up, but clients that round can't loop.
+    insists: u8 = 0,
 
     // animation fields
     anim_active: bool = false,
@@ -471,7 +472,6 @@ const State = struct {
                 w.obj.setTiled(@bitCast(if (w.want_tiled) all_edges else 0));
                 w.tiled = w.want_tiled;
                 w.proposed = .{ .width = 0, .height = 0 }; // force a proposal
-                w.insisted = false;
             }
 
             const target: types.Size = if (w.anim_active) .{
@@ -479,6 +479,7 @@ const State = struct {
                 .height = @max(w.anim_from_size.height, w.want_size.height),
             } else w.want_size;
             if (!w.fullscreen and (w.repropose or !size_eql(w.proposed, target))) {
+                if (!size_eql(w.proposed, target)) w.insists = 0;
                 w.obj.proposeDimensions(@intCast(target.width), @intCast(target.height));
                 w.proposed = target;
             }
@@ -900,11 +901,10 @@ fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) 
                 w.wants_fullscreen = false;
             }
         },
-        // Clients that stop being tiled may go back to a size of their own
         .dimensions => |e| {
             const got: types.Size = .{ .width = nonneg(e.width), .height = nonneg(e.height) };
-            if (w.announced and w.tiled == false and !w.insisted and !size_eql(got, w.proposed)) {
-                w.insisted = true;
+            if (w.announced and w.tiled == false and w.insists < 3 and !size_eql(got, w.proposed) and !s.op_active) {
+                w.insists += 1;
                 w.repropose = true;
                 s.mark();
             }
