@@ -12,16 +12,25 @@ pub const Keybind = union(enum) {
     /// An encoded Request: the commands a bind_commands command gave, run as
     /// one transaction on each press. Owned (wm.allocator).
     commands: struct { bytes: []const u8, source: types.CallbackSource },
+};
 
-    /// Made by the Lua config, so cleared when it reloads. Binds made by
-    /// commands (the socket, the commands file) outlive config reloads.
-    pub fn from_config(kb: Keybind) bool {
-        return kb != .commands;
+/// Who a bind belongs to; a press takes the highest. Each keeps its own, so
+/// a client dying or the config reloading uncovers the binds beneath.
+pub const Layer = enum(u2) {
+    /// config.lua (and Zig actions): cleared on reload.
+    config,
+    /// The commands file (and anything else not from a client): the fallback.
+    commands,
+    /// A socket client: dropped when it disconnects.
+    client,
+
+    pub fn of(source: types.CallbackSource) Layer {
+        return if (source == .client) .client else if (source == .lua) .config else .commands;
     }
 };
 
-/// A keybind's key: the combo, and the workspace whose arranger made it (null: global).
-pub const BindKey = struct { combo: types.KeyCombo, owner: ?*graph_mod.Graph };
+/// A keybind's key: the combo, the workspace whose arranger made it (null: global), and its layer.
+pub const BindKey = struct { combo: types.KeyCombo, owner: ?*graph_mod.Graph, layer: Layer };
 
 /// Release what a bind owns.
 pub fn free_keybind(wm: *WM, kb: Keybind) void {
@@ -177,7 +186,7 @@ pub fn clear_config_binds(wm: *WM) void {
     defer doomed.deinit(wm.allocator);
     var it = wm.keybinds.iterator();
     while (it.next()) |e| {
-        if (e.value_ptr.from_config()) doomed.append(wm.allocator, e.key_ptr.*) catch {};
+        if (e.key_ptr.layer == .config) doomed.append(wm.allocator, e.key_ptr.*) catch {};
     }
     for (doomed.items) |key| {
         const old = wm.keybinds.fetchRemove(key) orelse continue;
@@ -190,7 +199,11 @@ pub fn clear_config_binds(wm: *WM) void {
 pub fn bind(wm: *WM, mods: types.Mods, keysym: types.Keysym, action: *const fn (*WM) anyerror!void) !void {
     wm.effect(.{
         .bind = .{
-            .key = .{ .combo = .{ .mods = mods, .keysym = keysym }, .owner = wm.bind_owner },
+            .key = .{
+                .combo = .{ .mods = mods, .keysym = keysym },
+                .owner = wm.bind_owner,
+                .layer = .config,
+            },
             .action = .{ .zig = action },
         },
     });
@@ -199,7 +212,11 @@ pub fn bind(wm: *WM, mods: types.Mods, keysym: types.Keysym, action: *const fn (
 pub fn bind_callback(wm: *WM, mods: types.Mods, keysym: types.Keysym, cb: types.Callback) void {
     wm.effect(.{
         .bind = .{
-            .key = .{ .combo = .{ .mods = mods, .keysym = keysym }, .owner = wm.bind_owner },
+            .key = .{
+                .combo = .{ .mods = mods, .keysym = keysym },
+                .owner = wm.bind_owner,
+                .layer = .of(wm.callback_source),
+            },
             .action = .{ .call = cb },
         },
     });
@@ -208,7 +225,11 @@ pub fn bind_callback(wm: *WM, mods: types.Mods, keysym: types.Keysym, cb: types.
 pub fn bind_commands(wm: *WM, combo: types.KeyCombo, encoded: []const u8) void {
     wm.effect(.{
         .bind = .{
-            .key = .{ .combo = combo, .owner = wm.bind_owner },
+            .key = .{
+                .combo = combo,
+                .owner = wm.bind_owner,
+                .layer = .of(wm.callback_source),
+            },
             .action = .{
                 .commands = .{ .bytes = encoded, .source = wm.callback_source },
             },
@@ -217,7 +238,11 @@ pub fn bind_commands(wm: *WM, combo: types.KeyCombo, encoded: []const u8) void {
 }
 
 pub fn unbind(wm: *WM, combo: types.KeyCombo) void {
-    wm.effect(.{ .unbind = .{ .combo = combo, .owner = wm.bind_owner } });
+    wm.effect(.{ .unbind = .{
+        .combo = combo,
+        .owner = wm.bind_owner,
+        .layer = .of(wm.callback_source),
+    } });
 }
 
 pub fn ungrab_keys(wm: *WM) void {

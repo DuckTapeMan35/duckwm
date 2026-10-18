@@ -189,10 +189,20 @@ fn snapshot(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, pre
     };
 }
 
+/// The bind a press runs: the current workspace's before global ones, and
+/// within each, a client's over the commands file's over the config's.
+fn find_bind(wm: *WM, combo: types.KeyCombo) ?settings.Keybind {
+    for ([_]?@TypeOf(wm.current_graph){ wm.current_graph, null }) |owner| {
+        for ([_]settings.Layer{ .client, .commands, .config }) |layer| {
+            if (wm.keybinds.get(.{ .combo = combo, .owner = owner, .layer = layer })) |kb| return kb;
+        }
+    }
+    return null;
+}
+
 /// Run whatever is bound to combo, if anything.
 pub fn handle_key(wm: *WM, combo: types.KeyCombo) void {
-    const kb = wm.keybinds.get(.{ .combo = combo, .owner = wm.current_graph }) orelse
-        wm.keybinds.get(.{ .combo = combo, .owner = null }) orelse return;
+    const kb = find_bind(wm, combo) orelse return;
     switch (kb) {
         .zig => |action| action(wm) catch |err| {
             std.debug.print("Keybinding error: {}\n", .{err});
