@@ -292,6 +292,9 @@ pub const WM = struct {
     pub fn toggle_floating(self: *WM) !void {
         return float.toggle_floating(self);
     }
+    pub fn set_floating(self: *WM, node: *Node, val: bool) !void {
+        return float.set_floating(self, node, val);
+    }
     pub fn toggle_fullscreen(self: *WM) !void {
         return float.toggle_fullscreen(self);
     }

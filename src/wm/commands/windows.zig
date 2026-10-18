@@ -76,27 +76,11 @@ pub fn toggle_fullscreen(wm: *WM, _: void, _: Allocator) !Value {
     return .nil;
 }
 
-fn apply_floating(wm: *WM, id: command.NodeId, n: *Node, val: bool) !void {
-    if (n.content != .window or n.floating == val) return;
-    const g = n.owner_graph orelse return error.NotInGraph;
-    try g.replace_constraints(n, &.{});
-    if (val) {
-        wm.call_arranger(wm.current_graph, .unmap, id, null);
-        wm.journal.set(n, "floating", true);
-        wm.center_node(n);
-    } else {
-        wm.journal.set(n, "floating", false);
-        const prev_id: ?u32 = if (wm.focused) |f|
-            (if (f != n) wm.get_id_for_node(f) else null)
-        else
-            null;
-        wm.call_arranger(wm.current_graph, .map, id, prev_id);
-    }
-    wm.relayout();
-}
-
 pub fn set_floating(wm: *WM, args: Args(.set_floating), _: Allocator) !Value {
-    if (wm.get_node_by_id(args.id)) |n| try apply_floating(wm, args.id, n, args.floating);
+    const n = wm.get_node_by_id(args.id) orelse return .nil;
+    if (n.content != .window) return .nil;
+    try wm.set_floating(n, args.floating);
+    wm.relayout();
     return .nil;
 }
 

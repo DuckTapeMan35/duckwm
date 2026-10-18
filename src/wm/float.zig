@@ -12,52 +12,30 @@ pub fn center_node(wm: *WM, node: *Node) void {
     node.y = @as(i32, @intCast(wm.screen_height / 2)) - @as(i32, @intCast(node.height / 2));
 }
 
-pub fn toggle_floating(wm: *WM) !void {
-    const focused = wm.focused orelse return;
-    if (focused.content != .window and focused.content != .workspace) return;
-
-    var node_id: ?u32 = null;
-    var it = wm.node_registry.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.* == focused) {
-            node_id = entry.key_ptr.*;
-            break;
-        }
-    }
-    const id = node_id orelse return;
-
-    if (focused.floating) {
-        focused.floating = false;
-        focused.constraints.clearRetainingCapacity();
-
-        var prev_id: ?u32 = null;
-        for (wm.current_graph.nodes.items) |n| {
-            if (n.floating) continue;
-            if (n == focused) continue;
-            if (n.content != .window and n.content != .workspace) continue;
-            if (wm.get_id_for_node(n)) |nid| {
-                prev_id = nid;
-                break;
-            }
-        }
-        wm.call_arranger(wm.current_graph, .map, id, prev_id);
+/// Float or tile n, telling its workspace's arranger: an unmap while it's
+/// still tiled, a map once it's back. Journaled: a failed transaction undoes it.
+pub fn set_floating(wm: *WM, n: *Node, val: bool) !void {
+    if (n.content != .window and n.content != .workspace) return;
+    if (n.floating == val) return;
+    const g = n.owner_graph orelse return error.NotInGraph;
+    const id = wm.get_id_for_node(n) orelse return error.NoId;
+    if (val) {
+        // Leaves the tiling like a close: the snapshot still lists it, as the unmapped one.
+        wm.call_arranger(g, .unmap, id, null);
+        try g.replace_constraints(n, &.{});
+        wm.journal.set(n, "floating", true);
+        center_node(wm, n);
     } else {
-        // call arranger first while node is still tiled
-        var node_id_for_arranger: ?u32 = null;
-        var it2 = wm.node_registry.iterator();
-        while (it2.next()) |entry| {
-            if (entry.value_ptr.* == focused) {
-                node_id_for_arranger = entry.key_ptr.*;
-                break;
-            }
-        }
-        if (node_id_for_arranger) |nid| wm.call_arranger(wm.current_graph, .unmap, nid, null);
-
-        focused.floating = true;
-        focused.constraints.clearRetainingCapacity();
-        center_node(wm, focused);
+        try g.replace_constraints(n, &.{});
+        wm.journal.set(n, "floating", false);
+        // Rejoins like a new window; with no prev, the arranger puts it last.
+        wm.call_arranger(g, .map, id, null);
     }
+}
 
+pub fn toggle_floating(wm: *WM) !void {
+    const n = wm.focused orelse return;
+    try set_floating(wm, n, !n.floating);
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
