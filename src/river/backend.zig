@@ -461,6 +461,14 @@ const State = struct {
                 }
             }
 
+            // Tiled state first: a client that just lost (or regained) it may
+            // pick its own size, so the change always gets a fresh proposal.
+            if (w.tiled == null or w.tiled.? != w.want_tiled) {
+                w.obj.setTiled(@bitCast(if (w.want_tiled) all_edges else 0));
+                w.tiled = w.want_tiled;
+                w.proposed = .{ .width = 0, .height = 0 }; // force a proposal
+            }
+
             const target: types.Size = if (w.anim_active) .{
                 .width = @max(w.anim_from_size.width, w.want_size.width),
                 .height = @max(w.anim_from_size.height, w.want_size.height),
@@ -468,11 +476,6 @@ const State = struct {
             if (!w.fullscreen and !size_eql(w.proposed, target)) {
                 w.obj.proposeDimensions(@intCast(target.width), @intCast(target.height));
                 w.proposed = target;
-            }
-
-            if (w.tiled == null or w.tiled.? != w.want_tiled) {
-                w.obj.setTiled(@bitCast(if (w.want_tiled) all_edges else 0));
-                w.tiled = w.want_tiled;
             }
         }
 
