@@ -204,14 +204,18 @@ pub fn handle_key(wm: *WM, combo: types.KeyCombo) void {
             _ = invoke(wm, cb, .key, arena.allocator()) catch return wm.tx_end(m, false);
             wm.tx_end(m, true);
         },
-        .commands => |bytes| {
+        .commands => |cmd| {
             var arena = std.heap.ArenaAllocator.init(wm.allocator);
             defer arena.deinit();
             const a = arena.allocator();
             // Our own encoding, so it decodes; the decode copies, so a command
             // in the list may replace this very bind.
-            const cmds = wire.decode_request(bytes, a) catch return;
+            const cmds = wire.decode_request(cmd.bytes, a) catch return;
             const results = a.alloc(protocol.Value, cmds.len) catch return;
+            // As whoever made the bind: callbacks in it (set_arranger's factory) are theirs.
+            const saved = wm.callback_source;
+            wm.callback_source = cmd.source;
+            defer wm.callback_source = saved;
             command.run(wm, cmds, a, results) catch |err|
                 std.debug.print("keybind: {s}\n", .{command.error_text(err)});
         },
@@ -229,8 +233,12 @@ pub fn drop_client(self: *WM, client: u32) void {
     defer doomed.deinit(self.allocator);
     var it = self.keybinds.iterator();
     while (it.next()) |e| {
-        if (e.value_ptr.* == .call and owned_by(e.value_ptr.call, client))
-            doomed.append(self.allocator, e.key_ptr.*) catch {};
+        const owned = switch (e.value_ptr.*) {
+            .call => |cb| owned_by(cb, client),
+            .commands => |cmd| cmd.source == .client and cmd.source.client == client,
+            .zig => false,
+        };
+        if (owned) doomed.append(self.allocator, e.key_ptr.*) catch {};
     }
     for (doomed.items) |key| self.remove_keybind(key);
 

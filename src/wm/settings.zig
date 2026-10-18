@@ -11,7 +11,7 @@ pub const Keybind = union(enum) {
     call: types.Callback,
     /// An encoded Request: the commands a bind_commands command gave, run as
     /// one transaction on each press. Owned (wm.allocator).
-    commands: []const u8,
+    commands: struct { bytes: []const u8, source: types.CallbackSource },
 
     /// Made by the Lua config, so cleared when it reloads. Binds made by
     /// commands (the socket, the commands file) outlive config reloads.
@@ -28,7 +28,7 @@ pub fn free_keybind(wm: *WM, kb: Keybind) void {
     switch (kb) {
         .zig => {},
         .call => |cb| wm.release_callback(cb),
-        .commands => |bytes| wm.allocator.free(bytes),
+        .commands => |cmd| wm.allocator.free(cmd.bytes),
     }
 }
 
@@ -209,7 +209,9 @@ pub fn bind_commands(wm: *WM, combo: types.KeyCombo, encoded: []const u8) void {
     wm.effect(.{
         .bind = .{
             .key = .{ .combo = combo, .owner = wm.bind_owner },
-            .action = .{ .commands = encoded },
+            .action = .{
+                .commands = .{ .bytes = encoded, .source = wm.callback_source },
+            },
         },
     });
 }
