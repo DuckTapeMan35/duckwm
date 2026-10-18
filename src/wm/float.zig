@@ -57,47 +57,37 @@ pub fn raise_floating_windows(wm: *WM) void {
 }
 
 pub fn toggle_fullscreen(wm: *WM) !void {
-    const focused = wm.focused orelse return;
-    if (focused.content != .window) return;
-    const win = focused.content.window;
-    const g = focused.owner_graph orelse wm.current_graph;
-    const node_id = wm.get_id_for_node(focused);
-    if (g.fullscreen_node == focused) {
-        // Restore
-        focused.x = g.fullscreen_saved_x;
-        focused.y = g.fullscreen_saved_y;
-        focused.width = g.fullscreen_saved_w;
-        focused.height = g.fullscreen_saved_h;
-        focused.floating = false;
-        focused.constraints.clearRetainingCapacity();
-        g.fullscreen_node = null;
-        var prev_id: ?u32 = null;
-        for (wm.current_graph.nodes.items) |n| {
-            if (n.floating) continue;
-            if (n == focused) continue;
-            if (n.content != .window and n.content != .workspace) continue;
-            if (wm.get_id_for_node(n)) |nid| {
-                prev_id = nid;
-                break;
-            }
-        }
-        if (node_id) |nid| wm.call_arranger(wm.current_graph, .map, nid, prev_id);
+    const n = wm.focused orelse return;
+    if (n.content != .window) return;
+    const win = n.content.window;
+    const g = n.owner_graph orelse wm.current_graph;
+    const id = wm.get_id_for_node(n) orelse return;
+    if (g.fullscreen_node == n) {
+        n.x = g.fullscreen_saved_x;
+        n.y = g.fullscreen_saved_y;
+        n.width = g.fullscreen_saved_w;
+        n.height = g.fullscreen_saved_h;
+        try g.replace_constraints(n, &.{});
+        wm.journal.set(n, "floating", false);
+        wm.journal.set(g, "fullscreen_node", null);
+        // Back into the tiling like a new window.
+        wm.call_arranger(g, .map, id, null);
     } else {
-        // Go fullscreen
-        g.fullscreen_saved_x = focused.x;
-        g.fullscreen_saved_y = focused.y;
-        g.fullscreen_saved_w = focused.width;
-        g.fullscreen_saved_h = focused.height;
-        focused.floating = true;
-        focused.constraints.clearRetainingCapacity();
-        focused.x = 0;
-        focused.y = 0;
-        focused.width = wm.screen_width;
-        focused.height = wm.screen_height;
-        g.fullscreen_node = focused;
-        if (node_id) |nid| wm.call_arranger(wm.current_graph, .unmap, nid, null);
+        g.fullscreen_saved_x = n.x;
+        g.fullscreen_saved_y = n.y;
+        g.fullscreen_saved_w = n.width;
+        g.fullscreen_saved_h = n.height;
+        // Out of the tiling while the snapshot still lists it.
+        wm.call_arranger(g, .unmap, id, null);
+        try g.replace_constraints(n, &.{});
+        wm.journal.set(n, "floating", true);
+        wm.journal.set(g, "fullscreen_node", n);
+        n.x = 0;
+        n.y = 0;
+        n.width = wm.screen_width;
+        n.height = wm.screen_height;
     }
-    wm.backend.publish_window_fullscreen(win, g.fullscreen_node == focused);
+    wm.backend.publish_window_fullscreen(win, g.fullscreen_node == n);
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
