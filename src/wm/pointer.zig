@@ -19,6 +19,9 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
             wm.pan_drag_start_y = ev.pos.y;
             wm.pan_drag_start_pan_x = wm.current_graph.pan_x;
             wm.pan_drag_start_pan_y = wm.current_graph.pan_y;
+            suspend_ffm(wm);
+            // river only reports motion during a pointer op; X gets a grab, harmless.
+            wm.backend.capture_pointer();
             return;
         }
     }
@@ -251,7 +254,10 @@ fn throttle_elapsed(wm: *WM) bool {
 pub fn button_release(wm: *WM) void {
     if (wm.pan_dragging) {
         wm.pan_dragging = false;
+        wm.backend.release_pointer();
+        resume_ffm(wm);
         for (wm.current_graph.nodes.items) |n| wm.paint_borders(n, null);
+        wm.flush(wm.current_graph) catch {};
         return;
     }
     if (wm.float_moving) {
