@@ -1,4 +1,5 @@
 const std = @import("std");
+const graph = @import("graph");
 const types = @import("types");
 const core = @import("core.zig");
 const lifecycle = @import("lifecycle.zig");
@@ -22,6 +23,10 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
             const size = wm.backend.screen_size();
             wm.screen_width = size.width;
             wm.screen_height = size.height;
+            const work = wm.get_work_area();
+            const resized = work.width != wm.last_work_area.width or work.height != wm.last_work_area.height;
+            wm.last_work_area = work;
+            if (resized) rearrange_all(wm, &wm.graph);
             wm.relayout();
         },
         .map_request => |req| lifecycle.window_mapped(wm, req) catch |err| {
@@ -59,4 +64,20 @@ fn window_exposed(wm: *WM, h: types.WindowHandle) void {
     const node = wm.node_registry.get(id) orelse return;
     wm.paint_borders(node, null);
     if (node.content == .workspace) wm.repaint_preview(node);
+}
+
+/// The work area changed size: every workspace's arranger lays it out again
+/// (layouts pin their root to the work area they were given).
+fn rearrange_all(wm: *WM, g: *graph.Graph) void {
+    if (g.arranger != null) {
+        const saved = wm.current_graph;
+        wm.current_graph = g;
+        defer wm.current_graph = saved;
+        const id: u32 = if (wm.focused) |f| wm.get_id_for_node(f) orelse 0 else 0;
+        wm.call_arranger(g, .area, id, null);
+        wm.resolve(g) catch {};
+    }
+    for (g.nodes.items) |node| {
+        if (node.content == .workspace) rearrange_all(wm, node.content.workspace);
+    }
 }

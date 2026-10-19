@@ -167,6 +167,8 @@ pub const WM = struct {
     resize_refresh_interval: i64 = 16, // ms
     last_flushed_edge_x: i32 = -1,
     last_flushed_edge_y: i32 = -1,
+    /// The work area at the last reserved_area_changed, to tell when its size changed.
+    last_work_area: types.Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
     // ---- pointer drags: moving and resizing floats ----
     float_move_modifier: ?types.Mods = null,

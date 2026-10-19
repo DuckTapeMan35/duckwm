@@ -91,6 +91,7 @@ pub fn toggle_fullscreen(wm: *WM) !void {
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
+    wm.set_focus(n);
 }
 
 pub fn move_floating(wm: *WM, delta_x: i32, delta_y: i32) !void {

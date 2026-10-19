@@ -587,7 +587,7 @@ pub const ClientMessage = union(enum) {
 
 pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
 
-pub const ArrangerEvent = enum { pre_map, map, unmap, focus, resize };
+pub const ArrangerEvent = enum { pre_map, map, unmap, focus, resize, area };
 
 pub const WindowInfo = struct { id: NodeId, geometry: Rect };
 

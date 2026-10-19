@@ -30,6 +30,9 @@ const prompt_pad: i32 = 4;
 
 const frame_interval_ms: i64 = 16;
 
+/// A side drawn in a color of its own, over river's one-color border.
+const Odd = struct { side: types.Side, color: u32 };
+
 const Preview = struct {
     surf: surface.ShellSurface,
     handle: types.WindowHandle,
@@ -142,6 +145,11 @@ const Window = struct {
     anim_from_size: types.Size = .{ .width = 0, .height = 0 },
     /// Content clip box last sent.
     clip: ?types.Size = null,
+    /// The odd side core wants, and the surface drawing it.
+    want_odd: ?Odd = null,
+    ind: ?surface.ShellSurface = null,
+    ind_size: types.Size = .{ .width = 0, .height = 0 },
+    ind_color: u32 = 0,
 };
 
 const Output = struct {
@@ -348,6 +356,7 @@ const State = struct {
         for (s.dead.items) |w| {
             _ = s.windows.remove(w.handle);
             _ = s.by_obj.remove(w.obj);
+            if (w.ind) |*ind| ind.destroy();
             w.node.destroy();
             w.obj.destroy();
             s.allocator.destroy(w);
@@ -585,6 +594,7 @@ const State = struct {
         var it = s.windows.valueIterator();
         while (it.next()) |wp| {
             const w = wp.*;
+            if (!w.closed and !w.in_scene) if (w.ind) |*ind| ind.unmap();
             if (w.closed or w.in_scene or !w.shown) continue;
             w.obj.hide();
             w.shown = false;
@@ -604,7 +614,7 @@ const State = struct {
                 if (p.want_tiled) {
                     p.surf.node.placeTop();
                 } else {
-                    s.scratch.append(s.allocator, .{ .node = p.surf.node, .serial = p.raise_serial }) catch {};
+                    s.scratch.append(s.allocator, .{ .node = p.surf.node, .serial = p.raise_serial * 2 }) catch {};
                 }
                 continue;
             }
@@ -640,12 +650,16 @@ const State = struct {
                 send_borders(w);
             }
 
+            const ind_node = s.render_indicator(w, r);
+
             if (s.fullscreen == w.handle) {
                 fullscreen_node = w.node;
             } else if (w.want_tiled) {
                 w.node.placeTop();
+                if (ind_node) |n| n.placeTop();
             } else {
-                s.scratch.append(s.allocator, .{ .node = w.node, .serial = w.raise_serial }) catch {};
+                s.scratch.append(s.allocator, .{ .node = w.node, .serial = w.raise_serial * 2 }) catch {};
+                if (ind_node) |n| s.scratch.append(s.allocator, .{ .node = n, .serial = w.raise_serial * 2 + 1 }) catch {};
             }
         }
 
@@ -718,6 +732,44 @@ const State = struct {
             p.surf.node.setPosition(p.want_pos.x, p.want_pos.y);
             p.pos = p.want_pos;
         }
+    }
+
+    /// The odd side's strip, just outside the content at r. Its node, to stack
+    /// right above the window, or null when there's nothing to show.
+    fn render_indicator(s: *State, w: *Window, r: Shown) ?*river.NodeV1 {
+        const want = w.want_odd orelse {
+            if (w.ind) |*ind| ind.unmap();
+            return null;
+        };
+        const bw: i32 = @intCast(w.want_border_width);
+        if (bw == 0 or w.fullscreen) {
+            if (w.ind) |*ind| ind.unmap();
+            return null;
+        }
+        const shm = s.shm orelse return null;
+        if (w.ind == null) {
+            const wm = s.wm orelse return null;
+            const comp = s.compositor orelse return null;
+            w.ind = surface.ShellSurface.create(wm, comp) catch return null;
+        }
+        const ind = &w.ind.?;
+        const rw: i32 = @intCast(r.size.width);
+        const rh: i32 = @intCast(r.size.height);
+        const rect: types.Rect = switch (want.side) {
+            .top => .{ .x = r.pos.x - bw, .y = r.pos.y - bw, .width = @intCast(rw + 2 * bw), .height = @intCast(bw) },
+            .bottom => .{ .x = r.pos.x - bw, .y = r.pos.y + rh, .width = @intCast(rw + 2 * bw), .height = @intCast(bw) },
+            .left => .{ .x = r.pos.x - bw, .y = r.pos.y - bw, .width = @intCast(bw), .height = @intCast(rh + 2 * bw) },
+            .right => .{ .x = r.pos.x + rw, .y = r.pos.y - bw, .width = @intCast(bw), .height = @intCast(rh + 2 * bw) },
+        };
+        const size: types.Size = .{ .width = rect.width, .height = rect.height };
+        if (!ind.mapped or !size_eql(size, w.ind_size) or w.ind_color != want.color) {
+            const color = want.color;
+            ind.draw(shm, size.width, size.height, &color, paint_solid) catch return null;
+            w.ind_size = size;
+            w.ind_color = color;
+        }
+        ind.node.setPosition(rect.x, rect.y);
+        return ind.node;
     }
 
     /// Across the top of the usable area; reserved_insets makes room for it.
@@ -955,6 +1007,25 @@ fn size_eql(a: types.Size, b: types.Size) bool {
 fn opt_eql(a: ?u32, b: ?u32) bool {
     if (a == null or b == null) return a == null and b == null;
     return a.? == b.?;
+}
+
+/// The color most sides share: river's border color.
+fn base_color(b: types.BorderColors) u32 {
+    return if (b.top == b.bottom or b.top == b.left or b.top == b.right) b.top else b.bottom;
+}
+
+/// The first side that isn't the base color (the indicator), if any.
+fn odd_side(b: types.BorderColors) ?Odd {
+    const base = base_color(b);
+    if (b.top != base) return .{ .side = .top, .color = b.top };
+    if (b.bottom != base) return .{ .side = .bottom, .color = b.bottom };
+    if (b.left != base) return .{ .side = .left, .color = b.left };
+    if (b.right != base) return .{ .side = .right, .color = b.right };
+    return null;
+}
+
+fn paint_solid(cv: surface.Canvas, color: *const u32) void {
+    cv.fill(0, 0, cv.width, cv.height, color.*);
 }
 
 /// 0xRRGGBB to the protocol's four 32-bit (pre-multiplied, here opaque) components.
@@ -1299,7 +1370,10 @@ pub const Backend = struct {
         self.ungrab_all_keys();
         self.set_pointer_grabs(&.{});
         var it = s.windows.valueIterator();
-        while (it.next()) |wp| s.allocator.destroy(wp.*);
+        while (it.next()) |wp| {
+            if (wp.*.ind) |*ind| ind.destroy();
+            s.allocator.destroy(wp.*);
+        }
         s.windows.deinit(s.allocator);
         s.by_obj.deinit(s.allocator);
         for (s.outputs.items) |o| s.allocator.destroy(o);
@@ -1519,7 +1593,7 @@ pub const Backend = struct {
                 p.want_size = .{ .width = @max(1, st.frame.width), .height = @max(1, st.frame.height) };
                 p.want_tiled = st.tiled;
                 p.want_border_width = st.border_width;
-                p.want_border_color = if (st.borders) |b| b.top else null;
+                p.want_border_color = if (st.borders) |b| base_color(b) else null;
                 s.order.append(s.allocator, st.handle) catch {};
                 continue;
             }
@@ -1548,11 +1622,12 @@ pub const Backend = struct {
             } else if (changed) {
                 w.anim_active = false;
             }
+            w.want_border_color = if (st.borders) |b| base_color(b) else null;
+            w.want_odd = if (st.borders) |b| odd_side(b) else null;
             w.want_pos = new_pos;
             w.want_size = new_size;
             w.want_tiled = st.tiled;
             w.want_border_width = bw;
-            w.want_border_color = if (st.borders) |b| b.top else null;
             s.order.append(s.allocator, st.handle) catch {};
         }
         s.fullscreen = fullscreen;
@@ -1590,13 +1665,14 @@ pub const Backend = struct {
         _ = size;
         const s = self.state;
         if (s.previews.get(h)) |p| {
-            p.want_border_color = colors.top;
+            p.want_border_color = base_color(colors);
             p.want_border_width = width;
             s.mark();
             return;
         }
         const w = s.live(h) orelse return;
-        w.want_border_color = colors.top;
+        w.want_border_color = base_color(colors);
+        w.want_odd = odd_side(colors);
         w.want_border_width = width;
         s.mark();
     }
