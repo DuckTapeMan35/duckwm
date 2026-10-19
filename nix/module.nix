@@ -68,6 +68,10 @@ let
 
   # One path, no quoting: display managers differ in how they split Exec lines.
   riverSession = pkgs.writeShellScript "duckwm-river-session" ''
+    ${lib.optionalString (cfg.keyboard.layout != null) ''
+      export XKB_DEFAULT_LAYOUT=${lib.escapeShellArg cfg.keyboard.layout}
+      export XKB_DEFAULT_VARIANT=${lib.escapeShellArg cfg.keyboard.variant}
+    ''}
     exec ${lib.getExe pkgs.river} -c "${lib.getExe cfg.riverPackage} ${flags}"
   '';
 
@@ -95,6 +99,20 @@ in
 {
   options.programs.duckwm = {
     enable = lib.mkEnableOption "duckwm, a graph-based tiling window manager";
+
+    keyboard = {
+      layout = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "pt";
+        description = "XKB layout for duckwm sessions (X11 and river). null leaves the system default.";
+      };
+      variant = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "XKB variant, e.g. \"nodeadkeys\".";
+      };
+    };
 
     platforms = lib.mkOption {
       type = lib.types.nonEmptyListOf (
@@ -187,6 +205,10 @@ in
       {
         environment.systemPackages = packages;
         services.displayManager.sessionPackages = sessions;
+        services.xserver.xkb = lib.mkIf (cfg.keyboard.layout != null) {
+          layout = cfg.keyboard.layout;
+          variant = cfg.keyboard.variant;
+        };
       }
 
       (lib.mkIf cfg.lua {
