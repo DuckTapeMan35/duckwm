@@ -101,6 +101,7 @@ pub fn error_text(err: anyerror) []const u8 {
         error.CallbackFailed => "the callback failed",
         error.NoLua => "duckwm has no Lua VM",
         error.EvalFailed => "the REPL's evaluator failed",
+        error.InvalidZoom => "zoom must be between 0 (fit) and 1",
         else => @errorName(err),
     };
 }

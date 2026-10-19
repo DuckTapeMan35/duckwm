@@ -2,6 +2,7 @@ const std = @import("std");
 const graph_mod = @import("graph");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
+const scene = @import("../scene.zig");
 const util = @import("util.zig");
 const WM = core.WM;
 const Value = command.Value;
@@ -104,4 +105,16 @@ pub fn resize_focused_edge(wm: *WM, args: Args(.resize_focused_edge), _: Allocat
 pub fn resize_focused_corner(wm: *WM, args: Args(.resize_focused_corner), _: Allocator) !Value {
     if (wm.focused) |n| try wm.resize_corner(n, args.dx, args.dy);
     return .nil;
+}
+
+pub fn set_zoom(wm: *WM, args: Args(.set_zoom), _: Allocator) !Value {
+    if (!std.math.isFinite(args.zoom) or args.zoom < 0 or args.zoom > 1) return error.InvalidZoom;
+    wm.current_graph.zoom = args.zoom;
+    wm.relayout();
+    return .nil;
+}
+
+/// The zoom in effect: 0 (fit) comes back as the factor it works out to.
+pub fn get_zoom(wm: *WM, _: void, _: Allocator) !Value {
+    return .{ .number = scene.zoom_of(wm, wm.current_graph) };
 }

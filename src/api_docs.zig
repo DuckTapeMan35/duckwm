@@ -777,6 +777,20 @@ pub const entries = [_]ApiEntry{
         .params = &.{.{ .name = "layout", .typ = "{ nodes: node[] }" }},
         .ret = "nil",
     },
+    .{
+        .category = "Layout & Arrangers",
+        .name = "set_zoom",
+        .desc = "Draw the current workspace zoomed out: 1 is normal, 0.5 shows twice as much of the canvas each way, 0 fits the whole canvas on screen. Windows are really resized (river and X11 can't scale them), and get their size back at 1. While zoomed, mouse move and resize are off; panning and click-to-focus work.",
+        .params = &.{.{ .name = "zoom", .typ = "number" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Layout & Arrangers",
+        .name = "get_zoom",
+        .desc = "The current workspace's zoom; for 0 (fit), the factor that works out to.",
+        .params = &.{},
+        .ret = "number",
+    },
 
     // =========================================================
     // Constraints

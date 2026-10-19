@@ -8,6 +8,10 @@ const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
 
+/// How a workspace is drawn: its canvas scaled by z around the work area's
+/// corner, after the pan.
+const View = struct { z: f64, pan_x: i32, pan_y: i32 };
+
 /// Push everything changed during this loop iteration to the backend, once.
 pub fn commit(wm: *WM) void {
     if (wm.scene_dirty) {
@@ -194,6 +198,7 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
     wm.scene.clearRetainingCapacity();
     const bw: u32 = @intCast(@max(0, wm.border_width));
     const work = get_work_area(wm);
+    const view = view_of(g, work);
 
     for (g.nodes.items) |node| {
         switch (node.content) {
@@ -202,7 +207,7 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
                 const is_fullscreen = wm.focused == node and g.fullscreen_node == node;
                 try wm.scene.append(wm.allocator, .{
                     .handle = win,
-                    .frame = if (node.floating) floating_rect(node) else tiled_rect(g, node, work),
+                    .frame = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view),
                     .border_width = if (is_fullscreen) 0 else bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     .tiled = !node.floating,
@@ -213,7 +218,7 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
                 if (!preview_visible(wm, node)) continue;
                 try wm.scene.append(wm.allocator, .{
                     .handle = node.preview_window.?,
-                    .frame = if (node.floating) floating_rect(node) else tiled_rect(g, node, work),
+                    .frame = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view),
                     .border_width = bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     .tiled = !node.floating,
@@ -237,7 +242,7 @@ fn floating_rect(node: *const Node) types.Rect {
     return .{ .x = node.x, .y = node.y, .width = @max(1, node.width), .height = @max(1, node.height) };
 }
 
-fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect) types.Rect {
+fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect, v: View) types.Rect {
     const nw: i32 = @intCast(node.width);
     const nh: i32 = @intCast(node.height);
     const ww: i32 = @intCast(work.width);
@@ -255,13 +260,22 @@ fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect) types.Rect {
     const gap_top: u32 = if (at_top) g.gap_outer_v else half_v;
     const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
 
+    // Both edges scaled, so neighbours still meet exactly; gaps stay their size.
+    const x0 = work.x + scaled(node.x - work.x - v.pan_x, v.z);
+    const x1 = work.x + scaled(node.x + nw - work.x - v.pan_x, v.z);
+    const y0 = work.y + scaled(node.y - work.y - v.pan_y, v.z);
+    const y1 = work.y + scaled(node.y + nh - work.y - v.pan_y, v.z);
+    const w: u32 = @intCast(@max(0, x1 - x0));
+    const h: u32 = @intCast(@max(0, y1 - y0));
+
     return .{
-        .x = node.x + @as(i32, @intCast(gap_left)) - g.pan_x,
-        .y = node.y + @as(i32, @intCast(gap_top)) - g.pan_y,
-        .width = @max(1, node.width -| gap_left -| gap_right),
-        .height = @max(1, node.height -| gap_top -| gap_bottom),
+        .x = x0 + @as(i32, @intCast(gap_left)),
+        .y = y0 + @as(i32, @intCast(gap_top)),
+        .width = @max(1, w -| gap_left -| gap_right),
+        .height = @max(1, h -| gap_top -| gap_bottom),
     };
 }
+
 /// Smallest node in the current graph containing p (most specific hit).
 pub fn node_at(wm: *WM, p: types.Point) ?*Node {
     var best: ?*Node = null;
@@ -279,4 +293,29 @@ pub fn node_at(wm: *WM, p: types.Point) ?*Node {
         }
     }
     return best;
+}
+
+fn view_of(g: *const Graph, work: types.Rect) View {
+    const ww: f64 = @floatFromInt(work.width);
+    const wh: f64 = @floatFromInt(work.height);
+    const cw: f64 = @floatFromInt(@max(g.virtual_width, work.width));
+    const ch: f64 = @floatFromInt(@max(g.virtual_height, work.height));
+    const z = if (g.zoom > 0) g.zoom else @min(1.0, @min(ww / cw, wh / ch));
+    if (z == 1.0) return .{ .z = 1.0, .pan_x = g.pan_x, .pan_y = g.pan_y };
+    // Zoomed out, the view covers more canvas: keep it inside.
+    const max_x: i32 = @intFromFloat(@max(0, cw - ww / z));
+    const max_y: i32 = @intFromFloat(@max(0, ch - wh / z));
+    return .{
+        .z = z,
+        .pan_x = std.math.clamp(g.pan_x, 0, max_x),
+        .pan_y = std.math.clamp(g.pan_y, 0, max_y),
+    };
+}
+
+pub fn zoom_of(wm: *WM, g: *const Graph) f64 {
+    return view_of(g, get_work_area(wm)).z;
+}
+
+fn scaled(v: i32, z: f64) i32 {
+    return @intFromFloat(@round(@as(f64, @floatFromInt(v)) * z));
 }

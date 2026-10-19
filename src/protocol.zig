@@ -199,6 +199,8 @@ pub const CommandId = enum(u32) {
     resize_corner = 311,
     resize_focused_edge = 312,
     resize_focused_corner = 313,
+    set_zoom = 314,
+    get_zoom = 315,
 
     // windows: 400-499
     get_window_class = 400,
@@ -411,6 +413,10 @@ pub const Command = union(CommandId) {
     resize_corner: struct { id: NodeId, dx: i32, dy: i32 },
     resize_focused_edge: struct { direction: Dir, delta: i32 },
     resize_focused_corner: struct { dx: i32, dy: i32 },
+
+    /// zoom
+    set_zoom: struct { zoom: f64 },
+    get_zoom,
 
     // window info
     get_window_class: One,

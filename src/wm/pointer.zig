@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("types");
+const scene = @import("scene.zig");
 const graph_mod = @import("graph");
 const Node = graph_mod.Node;
 const WM = @import("core.zig").WM;
@@ -38,6 +39,9 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
         }
         return;
     }
+
+    // Zoomed, positions on screen aren't the layout's: no moving or resizing.
+    if (wm.current_graph.zoom != 1.0) return;
 
     const h = ev.window orelse return;
     const node = node_of(wm, h) orelse return;
@@ -106,8 +110,9 @@ fn nearest_edges(node: *const Node, p: types.Point) Edges {
 
 pub fn motion(wm: *WM, pos: types.Point) void {
     if (wm.pan_dragging) {
-        const dx = pos.x - wm.pan_drag_start_x;
-        const dy = pos.y - wm.pan_drag_start_y;
+        const z = scene.zoom_of(wm, wm.current_graph);
+        const dx: i32 = @intFromFloat(@as(f64, @floatFromInt(pos.x - wm.pan_drag_start_x)) / z);
+        const dy: i32 = @intFromFloat(@as(f64, @floatFromInt(pos.y - wm.pan_drag_start_y)) / z);
         wm.current_graph.pan_x = @max(0, wm.pan_drag_start_pan_x - dx);
         wm.current_graph.pan_y = @max(0, wm.pan_drag_start_pan_y - dy);
         wm.flushing = false;
