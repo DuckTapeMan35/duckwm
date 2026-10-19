@@ -206,8 +206,8 @@ in
         environment.systemPackages = packages;
         services.displayManager.sessionPackages = sessions;
         services.xserver.xkb = lib.mkIf (cfg.keyboard.layout != null) {
-          layout = cfg.keyboard.layout;
-          variant = cfg.keyboard.variant;
+          layout = lib.mkDefault cfg.keyboard.layout;
+          variant = lib.mkDefault cfg.keyboard.variant;
         };
       }
 
