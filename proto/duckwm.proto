@@ -334,6 +334,21 @@ message Bind {
   Callback callback = 3;
 }
 
+message ReadLine {
+  string prompt = 1;
+  Callback callback = 2;
+  optional string initial = 3;
+}
+
+enum PromptKeys {
+  PROMPT_KEYS_EMACS = 0;
+  PROMPT_KEYS_VI = 1;
+}
+
+message SetPromptKeys {
+  PromptKeys keys = 1;
+}
+
 message SetDefaultFocusedBorderColor {
   uint32 color = 1;
 }
@@ -466,6 +481,11 @@ message Curve {
 message SetAnimation {
   uint32 duration_ms = 1;
   optional Curve curve = 2;
+}
+
+message Message {
+  string text = 1;
+  uint32 timeout_ms = 2;
 }
 
 message SwitchToWorkspace {
@@ -651,6 +671,7 @@ enum ArrangerEvent {
   ARRANGER_EVENT_UNMAP = 2;
   ARRANGER_EVENT_FOCUS = 3;
   ARRANGER_EVENT_RESIZE = 4;
+  ARRANGER_EVENT_AREA = 5;
 }
 
 message Rect {
@@ -678,12 +699,17 @@ message Snapshot {
   optional Value state = 10;
 }
 
+message CallArgsLine {
+  string text = 1;
+}
+
 message CallArgs {
   oneof kind {
     Empty key = 1;
     CallArgsRule rule = 2;
     Snapshot arranger = 3;
     Empty factory = 4;
+    CallArgsLine line = 5;
   }
 }
 
@@ -804,6 +830,8 @@ message Command {
     BindCommands bind_commands = 516;
     Unbind unbind = 517;
     Bind bind = 518;
+    ReadLine read_line = 519;
+    SetPromptKeys set_prompt_keys = 520;
     SetDefaultFocusedBorderColor set_default_focused_border_color = 600;
     SetDefaultUnfocusedBorderColor set_default_unfocused_border_color = 601;
     SetDefaultUrgentBorderColor set_default_urgent_border_color = 602;
@@ -829,6 +857,7 @@ message Command {
     SetNodeIndicator set_node_indicator = 622;
     One clear_node_indicator = 623;
     SetAnimation set_animation = 624;
+    Message message = 625;
     SwitchToWorkspace switch_to_workspace = 700;
     SendToWorkspace send_to_workspace = 701;
     One enter_workspace_by_id = 702;
