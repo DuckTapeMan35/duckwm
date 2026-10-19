@@ -40,7 +40,7 @@ let
     installPhase = "cp -r $TMPDIR/zig-cache/p $out";
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-EVniAMInYX18XsTdwBzBwKcKkMzbVC4UGXNNu58TYyY=";
+    outputHash = "sha256-A7IhyX3yEJ7wTGU0QX5T1RAXNePStU5ngExYV3e3G2E=";
   };
 
   deps = runCommand "duckwm-deps" { } ''
