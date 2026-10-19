@@ -53,6 +53,10 @@ fn invoke_lua(self: *WM, ref: i32, call: protocol.CallArgs, a: std.mem.Allocator
             luaconv.push(lua, protocol.Snapshot, s);
             break :blk .{ 4, 2 };
         },
+        .line => |l| blk: {
+            _ = lua.pushString(l.text);
+            break :blk .{ 1, 0 };
+        },
         // Factories are called through instantiate, which takes the result.
         .factory => unreachable,
     };
@@ -261,6 +265,11 @@ pub fn drop_client(self: *WM, client: u32) void {
         if (owned_by(cb, client)) self.default_arranger = null;
     }
     drop_arrangers(&self.graph, client);
+
+    if (self.prompt_cb) |cb| if (owned_by(cb, client)) {
+        self.prompt_cb = null;
+        self.backend.hide_prompt();
+    };
 }
 
 fn drop_arrangers(g: *Graph, client: u32) void {

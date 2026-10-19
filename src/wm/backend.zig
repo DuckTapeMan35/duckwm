@@ -52,6 +52,9 @@ comptime {
         "set_layout_index",
         "set_animation",
         "poll_timeout",
+        "show_prompt",
+        "show_message",
+        "hide_prompt",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

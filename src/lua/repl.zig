@@ -39,3 +39,21 @@ pub fn eval(wm: *WM, src: []const u8, arena: std.mem.Allocator) !Value {
     fields[1] = .{ .key = "output", .value = .{ .str = try arena.dupe(u8, lua.toString(-1) catch "") } };
     return .{ .map = fields };
 }
+
+/// wm.eval(src) -> status, output: the REPL's evaluator, for a prompt bound in the config.
+pub fn l_eval(lua: *Lua) i32 {
+    _ = lua.toString(1) catch {
+        _ = lua.pushString("error");
+        _ = lua.pushString("wm.eval: expected a string\n");
+        return 2;
+    };
+    if (lua.getField(ziglua.registry_index, registry_key) != .function) {
+        lua.pop(1);
+        _ = lua.pushString("error");
+        _ = lua.pushString("wm.eval: no evaluator\n");
+        return 2;
+    }
+    lua.pushValue(1);
+    lua.call(.{ .args = 1, .results = 2 });
+    return 2;
+}

@@ -4,6 +4,7 @@ const core = @import("core.zig");
 const lifecycle = @import("lifecycle.zig");
 const requests = @import("requests.zig");
 const pointer = @import("pointer.zig");
+const input_bar = @import("input_bar.zig");
 const WM = core.WM;
 
 pub fn handle_event(wm: *WM, ev: types.Event) void {
@@ -47,6 +48,7 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
         .button_release => pointer.button_release(wm),
         .pointer_motion => |p| pointer.motion(wm, p),
         .pointer_enter => |h| pointer.enter(wm, h),
+        .prompt_key => |k| input_bar.key(wm, k),
     }
     return true;
 }

@@ -4,6 +4,7 @@ const core = @import("../core.zig");
 const command = @import("../command.zig");
 const util = @import("util.zig");
 const wire = @import("protocol").wire;
+const input_bar = @import("../input_bar.zig");
 const WM = core.WM;
 const Value = command.Value;
 const Args = util.Args;
@@ -126,5 +127,19 @@ pub fn bind(wm: *WM, args: Args(.bind), _: Allocator) !Value {
 pub fn unbind(wm: *WM, args: Args(.unbind), _: Allocator) !Value {
     const keysym = wm.backend.keysym_from_name(args.key) orelse return error.UnknownKey;
     wm.unbind(.{ .mods = args.mods, .keysym = keysym });
+    return .nil;
+}
+
+pub fn read_line(wm: *WM, args: Args(.read_line), _: Allocator) !Value {
+    const cb = try util.callback(wm, args.callback);
+    try input_bar.open(wm, args.prompt, args.initial orelse "", cb);
+    return .nil;
+}
+
+pub fn set_prompt_keys(wm: *WM, args: Args(.set_prompt_keys), _: Allocator) !Value {
+    wm.prompt.keys = switch (args.keys) {
+        .emacs => .emacs,
+        .vi => .vi,
+    };
     return .nil;
 }

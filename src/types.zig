@@ -41,6 +41,8 @@ pub const Event = union(enum) {
     pointer_motion: Point,
     /// The pointer entered a managed window (for focus-follows-mouse).
     pointer_enter: WindowHandle,
+    /// Only while the input bar holds the keyboard; binds don't fire then.
+    prompt_key: PromptKey,
 };
 
 pub const Callback = union(enum) {
@@ -261,6 +263,18 @@ pub const PointerGrab = struct { mods: Mods, button: ?Button };
 pub const Keysym = u32;
 
 pub const KeyCombo = struct { mods: Mods, keysym: Keysym };
+
+/// A key typed into the input bar: its keysym, modifiers, and the UTF-8 text it types.
+pub const PromptKey = struct {
+    keysym: Keysym,
+    mods: Mods,
+    text_buf: [8]u8 = undefined,
+    text_len: u8 = 0,
+
+    pub fn text(k: *const PromptKey) []const u8 {
+        return k.text_buf[0..k.text_len];
+    }
+};
 
 pub const WindowKind = enum { normal, floating, dock };
 

@@ -55,6 +55,7 @@ pub fn reset_vm(wm: *WM) !*Lua {
     if (wm.default_arranger) |cb| wm.release_callback(cb);
     wm.default_arranger = null;
     wm.reset_arrangers(&wm.graph);
+    wm.cancel_prompt();
     if (wm.lua) |old| old.deinit();
     wm.lua = null;
 

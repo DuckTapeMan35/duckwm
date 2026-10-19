@@ -12,6 +12,8 @@ pub const Ref = union(enum) {
     pub const shorthand = "id";
 };
 
+pub const PromptKeys = enum { emacs, vi };
+
 pub const Other = struct { other: Ref };
 
 /// Constraint, with ids instead of pointers. Variant names are the API's
@@ -236,6 +238,8 @@ pub const CommandId = enum(u32) {
     bind_commands = 516,
     unbind = 517,
     bind = 518,
+    read_line = 519,
+    set_prompt_keys = 520,
 
     // appearance: 600-699
     set_default_focused_border_color = 600,
@@ -263,6 +267,7 @@ pub const CommandId = enum(u32) {
     set_node_indicator = 622,
     clear_node_indicator = 623,
     set_animation = 624,
+    message = 625,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -459,6 +464,8 @@ pub const Command = union(CommandId) {
     bind_commands: struct { mods: Mods, key: []const u8, commands: []const Command },
     unbind: struct { mods: Mods, key: []const u8 },
     bind: struct { mods: Mods, key: []const u8, callback: Callback },
+    read_line: struct { prompt: []const u8, callback: Callback, initial: ?[]const u8 },
+    set_prompt_keys: struct { keys: PromptKeys },
 
     // border colors and width
     set_default_focused_border_color: struct { color: u32 },
@@ -493,6 +500,8 @@ pub const Command = union(CommandId) {
     clear_node_indicator: One,
     // animation: null curve is ease_out; duration 0 turns animation off
     set_animation: struct { duration_ms: u32, curve: ?Curve },
+    /// Text in the input bar for timeout_ms (0: 3s).
+    message: struct { text: []const u8, timeout_ms: u32 },
 
     // workspaces
     switch_to_workspace: struct { index: u32 },
@@ -551,6 +560,8 @@ pub const CallArgs = union(enum) {
     arranger: Snapshot,
     /// A factory (set_arranger, set_default_arranger): Return.callback is the arranger it made.
     factory,
+    /// read_line's callback: the line that was typed.
+    line: struct { text: []const u8 },
 };
 
 /// duckwm calling one of the client's callbacks, inside a transaction. The

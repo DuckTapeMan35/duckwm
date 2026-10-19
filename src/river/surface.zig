@@ -174,6 +174,39 @@ pub fn paint_error(cv: Canvas, e: *const ErrorContent) void {
     cv.text(font, e.pad, e.pad + font.ascent, e.msg, e.fg, cv.width - e.pad);
 }
 
+pub const PromptContent = struct {
+    /// The label then the text.
+    text: []const u8,
+    label_len: usize,
+    /// Byte offset into the text; null for a message.
+    cursor: ?usize,
+    /// A block over a character (vi normal mode) rather than a bar between two.
+    block: bool,
+    font: ?*Font,
+    bg: u32,
+    fg: u32,
+    pad: i32,
+};
+
+pub fn paint_prompt(cv: Canvas, p: *const PromptContent) void {
+    cv.fill(0, 0, cv.width, cv.height, p.bg);
+    const font = p.font orelse return;
+    const baseline = p.pad + font.ascent;
+    cv.text(font, p.pad, baseline, p.text, p.fg, cv.width - p.pad);
+    const cur = p.cursor orelse return;
+    const at = p.label_len + cur;
+    const x = p.pad + text_width(font, p.text[0..at]);
+    if (p.block) {
+        // A block over the character, which is drawn again in the background color.
+        const end = if (at < p.text.len) @min(p.text.len, at + (std.unicode.utf8ByteSequenceLength(p.text[at]) catch 1)) else at;
+        const ch: []const u8 = if (end > at) p.text[at..end] else " ";
+        cv.fill(x, p.pad, @max(1, text_width(font, ch)), font.height, p.fg);
+        cv.text(font, x, baseline, ch, p.bg, cv.width);
+    } else {
+        cv.fill(x, p.pad, 2, font.height, p.fg);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shell surfaces
 pub const ShellSurface = struct {

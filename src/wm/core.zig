@@ -20,6 +20,8 @@ const events = @import("events.zig");
 const loop = @import("loop.zig");
 const swallow = @import("swallow.zig");
 const startup = @import("startup.zig");
+const prompt = @import("prompt.zig");
+const input_bar = @import("input_bar.zig");
 
 const Graph = graph.Graph;
 const Node = graph.Node;
@@ -128,6 +130,9 @@ pub const WM = struct {
     initial_load: bool = true,
     /// Set while Lua runs a command; command.Callback ids are Lua refs then.
     callback_source: types.CallbackSource = .none,
+    prompt: prompt.Editor = .{},
+    /// read_line's callback while the bar is open.
+    prompt_cb: ?types.Callback = null,
 
     // ---- window behavior ----
     /// Terminal/child class pairs for swallowing.
@@ -232,6 +237,7 @@ pub const WM = struct {
             self.allocator.free(self.default_arranger_name);
         }
         swallow.clear_pairs(self);
+        self.prompt.deinit(self.allocator);
         self.preview_items.deinit(self.allocator);
         self.swallow_pairs.deinit(self.allocator);
         self.next_workspace_number.deinit(self.allocator);
@@ -591,5 +597,10 @@ pub const WM = struct {
     // loop.zig
     pub fn run(self: *WM) !void {
         return loop.run(self);
+    }
+
+    // input_bar.zig
+    pub fn cancel_prompt(self: *WM) void {
+        input_bar.cancel(self);
     }
 };

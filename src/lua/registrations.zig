@@ -8,6 +8,7 @@ const modules = .{
     @import("arrangers.zig"),
     @import("layout.zig"),
     @import("config.zig"),
+    @import("repl.zig"),
 };
 
 /// Every pub fn l_<name> in the modules above becomes wm.<name>.

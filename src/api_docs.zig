@@ -141,6 +141,13 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "boolean",
     },
+    .{
+        .category = "Core",
+        .name = "eval",
+        .desc = "Run Lua source as the REPL does: an expression shows its value, statements run as they are. Returns a status ('ok', 'error' or 'incomplete') and the text printed or returned.",
+        .params = &.{.{ .name = "src", .typ = "string" }},
+        .ret = "'ok'|'error'|'incomplete', string",
+    },
 
     // =========================================================
     // Keybindings
@@ -164,6 +171,24 @@ pub const entries = [_]ApiEntry{
             .{ .name = "mods", .typ = "integer" },
             .{ .name = "key", .typ = "string" },
         },
+        .ret = "nil",
+    },
+    .{
+        .category = "Input",
+        .name = "read_line",
+        .desc = "Open the input bar at the top of the screen and read a line, StumpWM style. fn gets the text on Enter; Escape closes the bar without calling it (with vi keys, Escape from normal mode). While it's open every key goes to the bar, so binds don't fire.",
+        .params = &.{
+            .{ .name = "prompt", .typ = "string" },
+            .{ .name = "fn", .typ = "fun(text: string)" },
+            .{ .name = "initial", .typ = "string?" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Input",
+        .name = "set_prompt_keys",
+        .desc = "Editing keys for the input bar: 'emacs' (readline's; Escape cancels) or 'vi' (insert and normal modes, counts, motions, d/c/y, undo, j/k for history). Default: 'emacs'.",
+        .params = &.{.{ .name = "keys", .typ = "'emacs'|'vi'" }},
         .ret = "nil",
     },
 
@@ -1306,6 +1331,16 @@ pub const entries = [_]ApiEntry{
         .desc = "Remove a node's indicator.",
         .params = &.{
             .{ .name = "id", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "message",
+        .desc = "Show text in the input bar for timeout_ms milliseconds (0: 3 seconds). Ignored while a line is being typed.",
+        .params = &.{
+            .{ .name = "text", .typ = "string" },
+            .{ .name = "timeout_ms", .typ = "integer" },
         },
         .ret = "nil",
     },

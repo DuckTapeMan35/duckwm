@@ -3,6 +3,7 @@ const graph_mod = @import("graph");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
 const animation = @import("../animation.zig");
+const input_bar = @import("../input_bar.zig");
 const util = @import("util.zig");
 const types = @import("types");
 const WM = core.WM;
@@ -239,5 +240,10 @@ pub fn set_animation(wm: *WM, args: Args(.set_animation), _: Allocator) !Value {
         .samples => |s| try animation.from_samples(s.values),
     } else animation.preset(.ease_out);
     wm.backend.set_animation(.{ .duration_ms = args.duration_ms, .curve = curve });
+    return .nil;
+}
+
+pub fn message(wm: *WM, args: Args(.message), _: Allocator) !Value {
+    try input_bar.message(wm, args.text, args.timeout_ms);
     return .nil;
 }

@@ -23,6 +23,10 @@ const default_size: types.Size = .{ .width = 800, .height = 600 };
 const error_bg: u32 = 0x8b1a1a;
 const error_fg: u32 = 0xffffff;
 const error_pad: i32 = 4;
+const prompt_font = "monospace:size=11";
+const prompt_bg: u32 = 0x1e1e2e;
+const prompt_fg: u32 = 0xcdd6f4;
+const prompt_pad: i32 = 4;
 
 const frame_interval_ms: i64 = 16;
 
@@ -56,6 +60,35 @@ const ErrorBar = struct {
     height: u32,
     width: u32 = 0,
     dirty: bool = true,
+};
+
+/// The input bar (prompts and messages), below the error bar if there is one.
+const PromptBar = struct {
+    surf: surface.ShellSurface,
+    height: u32,
+    width: u32 = 0,
+    dirty: bool = true,
+    /// The label then the text, as drawn.
+    content: std.ArrayListUnmanaged(u8) = .empty,
+    label_len: usize = 0,
+    cursor: ?usize = null,
+    block: bool = false,
+    /// Taking the keyboard: a prompt rather than a message.
+    grabbed: bool = false,
+    /// river has been told to focus it (only once it has a buffer).
+    focused: bool = false,
+    /// A message hides itself once now_ms() passes this.
+    deadline: ?i64 = null,
+
+    fn set(b: *PromptBar, a: std.mem.Allocator, label: []const u8, text: []const u8, cursor: ?usize, block: bool) !void {
+        b.content.clearRetainingCapacity();
+        try b.content.appendSlice(a, label);
+        try b.content.appendSlice(a, text);
+        b.label_len = label.len;
+        b.cursor = cursor;
+        b.block = block;
+        b.dirty = true;
+    }
 };
 
 const Stacked = struct { node: *river.NodeV1, serial: u64 };
@@ -193,6 +226,7 @@ const State = struct {
     fonts: surface.Fonts = .{},
     previews: std.AutoHashMapUnmanaged(types.WindowHandle, *Preview) = .empty,
     error_bar: ?*ErrorBar = null,
+    prompt_bar: ?*PromptBar = null,
     scratch: std.ArrayListUnmanaged(Stacked) = .empty,
 
     // Input.
@@ -218,6 +252,17 @@ const State = struct {
     keymap: ?*river.XkbKeymapV1 = null,
     /// Sent, waiting for river's success/failure.
     pending_keymap: ?*river.XkbKeymapV1 = null,
+    // The keyboard as a plain Wayland client sees it: keys typed into the input bar.
+    wl_seat: ?*wl.Seat = null,
+    keyboard: ?*wl.Keyboard = null,
+    xkb_ctx: ?*xkb.Context = null,
+    xkb_keymap: ?*xkb.Keymap = null,
+    xkb_state: ?*xkb.State = null,
+    repeat_rate: i32 = 25,
+    repeat_delay: i32 = 600,
+    /// The held key being repeated into the bar (an xkb keycode).
+    repeat_key: ?u32 = null,
+    repeat_next_ms: i64 = 0,
 
     // Animations.
     anim: types.Animation = .{},
@@ -405,13 +450,17 @@ const State = struct {
 
         if (s.seat) |seat| {
             if (s.xkb_bindings) |kb| {
+                const tp = s.typing();
                 for (s.keys.items) |k| {
                     if (k.obj == null) {
                         const obj = kb.getXkbBinding(seat, @intCast(k.combo.keysym), river_mods(k.combo.mods)) catch continue;
                         obj.setListener(*KeyBinding, key_listener, k);
                         k.obj = obj;
                     }
-                    if (!k.enabled) {
+                    if (tp and k.enabled) {
+                        k.obj.?.disable();
+                        k.enabled = false;
+                    } else if (!tp and !k.enabled) {
                         k.obj.?.enable();
                         k.enabled = true;
                     }
@@ -488,9 +537,17 @@ const State = struct {
 
         if (s.focus_dirty) {
             s.focus_dirty = false;
-            // While a layer surface holds exclusive focus, river ignores these anyway.
             if (s.seat) |seat| {
-                if (!s.layer_focus_exclusive) {
+                if (s.prompt_bar) |bar| if (bar.grabbed) {
+                    if (bar.surf.mapped) {
+                        seat.focusShellSurface(bar.surf.shell);
+                        bar.focused = true;
+                    } else {
+                        s.focus_dirty = true; // try again after it's rendered
+                    }
+                };
+                // While a layer surface holds exclusive focus, river ignores these anyway.
+                if (!s.typing() and !s.layer_focus_exclusive) {
                     if (s.focus) |h| {
                         if (s.live(h)) |w| {
                             seat.focusWindow(w.obj);
@@ -600,6 +657,7 @@ const State = struct {
         for (s.scratch.items) |e| e.node.placeTop();
         if (fullscreen_node) |n| n.placeTop();
         s.render_error_bar();
+        s.render_prompt_bar();
 
         if (s.animating) s.last_frame_ms = now;
         wm.renderFinish();
@@ -710,6 +768,119 @@ const State = struct {
             s.push(.{ .button_press = .{ .window = pp.*.handle, .button = 1, .mods = 0, .pos = s.pointer_pos } });
             return;
         }
+    }
+
+    // ---- input bar ----
+    fn open_prompt_bar(s: *State) !*PromptBar {
+        if (s.prompt_bar) |b| return b;
+        const wm = s.wm orelse return error.NoWindowManager;
+        const comp = s.compositor orelse return error.NoCompositor;
+        const b = try s.allocator.create(PromptBar);
+        errdefer s.allocator.destroy(b);
+        const font_h: i32 = if (s.fonts.get(s.allocator, prompt_font)) |f| f.height else 16;
+        b.* = .{
+            .surf = try surface.ShellSurface.create(wm, comp),
+            .height = @intCast(font_h + 2 * prompt_pad),
+        };
+        s.prompt_bar = b;
+        return b;
+    }
+
+    fn destroy_prompt_bar(s: *State) bool {
+        const b = s.prompt_bar orelse return false;
+        s.prompt_bar = null;
+        if (b.grabbed) s.focus_dirty = true; // back to the WM's choice
+        s.repeat_key = null;
+        b.surf.destroy();
+        b.content.deinit(s.allocator);
+        s.allocator.destroy(b);
+        s.mark();
+        return true;
+    }
+
+    fn typing(s: *const State) bool {
+        const b = s.prompt_bar orelse return false;
+        return b.grabbed;
+    }
+
+    /// Top of the usable area, under the error bar.
+    fn render_prompt_bar(s: *State) void {
+        const bar = s.prompt_bar orelse return;
+        const shm = s.shm orelse return;
+        const o = s.primary orelse return;
+        const area: types.Rect = o.usable orelse
+            .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
+        const y = area.y + if (s.error_bar) |e| @as(i32, @intCast(e.height)) else 0;
+        if (bar.dirty or !bar.surf.mapped or bar.width != area.width) {
+            const content: surface.PromptContent = .{
+                .text = bar.content.items,
+                .label_len = bar.label_len,
+                .cursor = bar.cursor,
+                .block = bar.block,
+                .font = s.fonts.get(s.allocator, prompt_font),
+                .bg = prompt_bg,
+                .fg = prompt_fg,
+                .pad = prompt_pad,
+            };
+            bar.surf.draw(shm, area.width, bar.height, &content, surface.paint_prompt) catch return;
+            bar.dirty = false;
+            bar.width = area.width;
+        }
+        bar.surf.node.setPosition(area.x, y);
+        bar.surf.node.placeTop();
+        // It has a buffer now: the next manage can give it the keyboard.
+        if (bar.grabbed and !bar.focused) s.mark();
+    }
+
+    /// One key into the bar, as keysym, X-style modifiers and UTF-8 text.
+    fn push_prompt_key(s: *State, keycode: u32) void {
+        const st = s.xkb_state orelse return;
+        var k: types.PromptKey = .{
+            .keysym = @intCast(@intFromEnum(st.keyGetOneSym(keycode))),
+            .mods = s.xkb_mods(),
+        };
+        var buf: [16]u8 = undefined;
+        const n = st.keyGetUtf8(keycode, &buf);
+        if (n <= k.text_buf.len) {
+            @memcpy(k.text_buf[0..n], buf[0..n]);
+            k.text_len = @intCast(n);
+        }
+        s.push(.{ .prompt_key = k });
+    }
+
+    fn xkb_mods(s: *State) types.Mods {
+        const st = s.xkb_state orelse return 0;
+        const effective: xkb.State.Component = @enumFromInt(xkb.State.Component.mods_effective);
+        var m: types.Mods = 0;
+        if (st.modNameIsActive("Shift", effective) > 0) m |= types.mod.shift;
+        if (st.modNameIsActive("Control", effective) > 0) m |= types.mod.ctrl;
+        if (st.modNameIsActive("Mod1", effective) > 0) m |= types.mod.alt;
+        if (st.modNameIsActive("Mod4", effective) > 0) m |= types.mod.super;
+        return m;
+    }
+
+    fn keyboard_key(s: *State, evdev: u32, pressed: bool) void {
+        const keycode = evdev + 8; // evdev to xkb
+        if (!pressed) {
+            if (s.repeat_key == keycode) s.repeat_key = null;
+            return;
+        }
+        if (!s.typing()) return;
+        s.push_prompt_key(keycode);
+        const km = s.xkb_keymap orelse return;
+        if (s.repeat_rate > 0 and km.keyRepeats(keycode) != 0) {
+            s.repeat_key = keycode;
+            s.repeat_next_ms = now_ms() + s.repeat_delay;
+        }
+    }
+
+    /// Wayland leaves key repeat to the client: send the held key again when it's due.
+    fn repeat_due(s: *State) void {
+        const kc = s.repeat_key orelse return;
+        const now = now_ms();
+        if (now < s.repeat_next_ms) return;
+        s.push_prompt_key(kc);
+        s.repeat_next_ms = now + @divTrunc(1000, @max(1, s.repeat_rate));
     }
 };
 
@@ -838,6 +1009,11 @@ fn registry_listener(registry: *wl.Registry, event: wl.Registry.Event, s: *State
                 s.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 4)) catch return;
             } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
                 s.shm = registry.bind(g.name, wl.Shm, 1) catch return;
+            } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq) {
+                // One seat until there's a reason for more, as with river_seat_v1.
+                if (s.wl_seat != null) return;
+                s.wl_seat = registry.bind(g.name, wl.Seat, @min(g.version, 5)) catch return;
+                s.wl_seat.?.setListener(*State, wl_seat_listener, s);
             } else if (std.mem.orderZ(u8, g.interface, river.XkbConfigV1.interface.name) == .eq) {
                 s.xkb_config = registry.bind(g.name, river.XkbConfigV1, 1) catch return;
                 s.xkb_config.?.setListener(*State, xkb_config_listener, s);
@@ -977,6 +1153,52 @@ fn keymap_listener(km: *river.XkbKeymapV1, event: river.XkbKeymapV1.Event, s: *S
     }
 }
 
+fn wl_seat_listener(seat: *wl.Seat, event: wl.Seat.Event, s: *State) void {
+    switch (event) {
+        .capabilities => |e| {
+            if (e.capabilities.keyboard and s.keyboard == null) {
+                const kb = seat.getKeyboard() catch return;
+                kb.setListener(*State, wl_keyboard_listener, s);
+                s.keyboard = kb;
+            } else if (!e.capabilities.keyboard) {
+                if (s.keyboard) |kb| kb.release();
+                s.keyboard = null;
+            }
+        },
+        else => {},
+    }
+}
+
+fn wl_keyboard_listener(_: *wl.Keyboard, event: wl.Keyboard.Event, s: *State) void {
+    switch (event) {
+        .keymap => |e| {
+            defer _ = c.close(e.fd);
+            if (e.format != .xkb_v1 or e.size == 0) return;
+            const mem = c.mmap(null, e.size, c.PROT_READ, c.MAP_PRIVATE, e.fd, 0);
+            if (mem == null or @intFromPtr(mem) == std.math.maxInt(usize)) return;
+            defer _ = c.munmap(mem, e.size);
+            const ctx = s.xkb_ctx orelse (xkb.Context.new(.no_flags) orelse return);
+            s.xkb_ctx = ctx;
+            const bytes: [*]const u8 = @ptrCast(mem.?);
+            const km = xkb.Keymap.newFromBuffer(ctx, bytes, e.size - 1, .text_v1, .no_flags) orelse return;
+            const st = xkb.State.new(km) orelse return km.unref();
+            if (s.xkb_state) |old| old.unref();
+            if (s.xkb_keymap) |old| old.unref();
+            s.xkb_keymap = km;
+            s.xkb_state = st;
+        },
+        .enter, .leave => s.repeat_key = null,
+        .modifiers => |e| if (s.xkb_state) |st| {
+            _ = st.updateMask(e.mods_depressed, e.mods_latched, e.mods_locked, 0, 0, e.group);
+        },
+        .key => |e| s.keyboard_key(e.key, e.state == .pressed),
+        .repeat_info => |e| {
+            s.repeat_rate = e.rate;
+            s.repeat_delay = e.delay;
+        },
+    }
+}
+
 fn seat_listener(_: *river.SeatV1, event: river.SeatV1.Event, s: *State) void {
     switch (event) {
         .pointer_position => |e| s.pointer_pos = .{ .x = e.x, .y = e.y },
@@ -1099,6 +1321,12 @@ pub const Backend = struct {
         }
         s.previews.deinit(s.allocator);
         _ = s.destroy_error_bar();
+        _ = s.destroy_prompt_bar();
+        if (s.keyboard) |kb| kb.release();
+        if (s.wl_seat) |ws| ws.release();
+        if (s.xkb_state) |x| x.unref();
+        if (s.xkb_keymap) |x| x.unref();
+        if (s.xkb_ctx) |x| x.unref();
         s.fonts.deinit(s.allocator);
         surface.deinit();
         s.display.disconnect();
@@ -1119,6 +1347,10 @@ pub const Backend = struct {
             s.pump();
             s.pumped = true;
         }
+        if (s.prompt_bar) |b| if (b.deadline) |d| if (now_ms() >= d) {
+            _ = s.destroy_prompt_bar();
+        };
+        s.repeat_due();
         if (s.render_pending) {
             s.render_pending = false;
             s.send_render();
@@ -1453,6 +1685,38 @@ pub const Backend = struct {
         return self.state.destroy_error_bar();
     }
 
+    /// The input bar, taking the keyboard: keys come back as prompt_key events.
+    pub fn show_prompt(self: *Backend, label: []const u8, text: []const u8, cursor: usize, block: bool) !void {
+        const s = self.state;
+        const bar = try s.open_prompt_bar();
+        if (!bar.grabbed) {
+            bar.grabbed = true;
+            bar.focused = false;
+            s.focus_dirty = true;
+        }
+        bar.deadline = null;
+        try bar.set(s.allocator, label, text, cursor, block);
+        s.mark();
+    }
+
+    /// Text in the input bar without taking the keyboard; gone after timeout_ms.
+    pub fn show_message(self: *Backend, text: []const u8, timeout_ms: u32) !void {
+        const s = self.state;
+        const bar = try s.open_prompt_bar();
+        if (bar.grabbed) {
+            bar.grabbed = false;
+            s.focus_dirty = true;
+            s.repeat_key = null;
+        }
+        bar.deadline = now_ms() + timeout_ms;
+        try bar.set(s.allocator, "", text, null, false);
+        s.mark();
+    }
+
+    pub fn hide_prompt(self: *Backend) void {
+        _ = self.state.destroy_prompt_bar();
+    }
+
     // ---- input ----
 
     pub fn keysym_from_name(self: *const Backend, name: []const u8) ?types.Keysym {
@@ -1619,8 +1883,17 @@ pub const Backend = struct {
     /// While animating, wake up in time for the next frame.
     pub fn poll_timeout(self: *const Backend) i32 {
         const s = self.state;
-        if (!s.animating) return -1;
-        const wait = s.last_frame_ms + frame_interval_ms - now_ms();
-        return @intCast(@max(0, wait));
+        const now = now_ms();
+        var wait: ?i64 = null;
+        if (s.animating) wait = s.last_frame_ms + frame_interval_ms - now;
+        if (s.repeat_key != null) {
+            const w = s.repeat_next_ms - now;
+            wait = if (wait) |x| @min(x, w) else w;
+        }
+        if (s.prompt_bar) |b| if (b.deadline) |d| {
+            wait = if (wait) |x| @min(x, d - now) else d - now;
+        };
+        const w = wait orelse return -1;
+        return @intCast(std.math.clamp(w, 0, std.math.maxInt(i32)));
     }
 };

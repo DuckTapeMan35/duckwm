@@ -24,6 +24,46 @@ const frame_event_mask: c_long = c.SubstructureRedirectMask | c.SubstructureNoti
     c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask |
     c.EnterWindowMask | c.LeaveWindowMask | c.ExposureMask;
 
+const prompt_font = "monospace:size=11";
+const prompt_bg: c_ulong = 0x1e1e2e;
+const prompt_fg: u32 = 0xcdd6f4;
+const prompt_pad: c_int = 4;
+
+const PromptBar = struct {
+    win: c.Window,
+    draw: *c.XftDraw,
+    font: [*c]c.XftFont,
+    fg: c.XftColor,
+    /// For the character under a block cursor.
+    bg: c.XftColor,
+    /// The label then the text, as drawn.
+    content: std.ArrayListUnmanaged(u8) = .empty,
+    label_len: usize = 0,
+    /// Byte offset into the text; null for a message.
+    cursor: ?usize = null,
+    /// A block cursor over a character (vi normal mode) rather than a bar between two.
+    block: bool = false,
+    /// Holding the keyboard: a prompt rather than a message.
+    grabbed: bool = false,
+    /// A message hides itself once now_ms() passes this.
+    deadline: ?i64 = null,
+};
+
+fn now_ms() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+    return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+}
+
+fn render_color(rgb: u32) c.XRenderColor {
+    return .{
+        .red = @intCast(((rgb >> 16) & 0xff) * 0x101),
+        .green = @intCast(((rgb >> 8) & 0xff) * 0x101),
+        .blue = @intCast((rgb & 0xff) * 0x101),
+        .alpha = 0xffff,
+    };
+}
+
 fn on_wm_detected(_: ?*c.Display, _: [*c]c.XErrorEvent) callconv(.c) c_int {
     wm_detected = true;
     return 0;
@@ -108,6 +148,7 @@ pub const Backend = struct {
     atoms: Atoms,
     docks: Docks = .{},
     error_bar: c.Window = 0,
+    bar: ?PromptBar = null,
     pointer_grabs: [8]types.PointerGrab = undefined,
     pointer_grab_count: usize = 0,
     check_win: c.Window = 0,
@@ -144,6 +185,7 @@ pub const Backend = struct {
         self.overlays.deinit(self.allocator);
         self.ignore_unmaps.deinit(self.allocator);
         self.renderer.deinit(self.allocator, self.display);
+        self.hide_prompt();
         _ = c.XCloseDisplay(self.display);
     }
 
@@ -409,6 +451,154 @@ pub const Backend = struct {
         _ = c.XDrawString(self.display, win, gc, @intCast(width - 30), 14, x_label.ptr, x_label.len);
     }
 
+    /// The input bar, holding the keyboard so every key comes back as a
+    /// prompt_key event. Called again after each edit to redraw.
+    pub fn show_prompt(self: *Backend, label: []const u8, text: []const u8, cursor: usize, block: bool) !void {
+        const b = try self.open_bar();
+        b.deadline = null;
+        if (!b.grabbed) {
+            if (c.XGrabKeyboard(self.display, self.root, 1, c.GrabModeAsync, c.GrabModeAsync, c.CurrentTime) != c.GrabSuccess) {
+                self.hide_prompt();
+                return error.KeyboardGrabFailed;
+            }
+            b.grabbed = true;
+        }
+        try self.set_bar(b, label, text, cursor, block);
+    }
+
+    /// Text in the input bar without taking the keyboard; gone after timeout_ms.
+    pub fn show_message(self: *Backend, text: []const u8, timeout_ms: u32) !void {
+        const b = try self.open_bar();
+        if (b.grabbed) {
+            _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
+            b.grabbed = false;
+        }
+        b.deadline = now_ms() + timeout_ms;
+        try self.set_bar(b, "", text, null, false);
+    }
+
+    pub fn hide_prompt(self: *Backend) void {
+        var b = self.bar orelse return;
+        self.bar = null;
+        if (b.grabbed) _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
+        const screen = c.XDefaultScreen(self.display);
+        const visual = c.XDefaultVisual(self.display, screen);
+        const cmap = c.XDefaultColormap(self.display, screen);
+        c.XftColorFree(self.display, visual, cmap, &b.fg);
+        c.XftColorFree(self.display, visual, cmap, &b.bg);
+        c.XftDrawDestroy(b.draw);
+        c.XftFontClose(self.display, b.font);
+        _ = c.XDestroyWindow(self.display, b.win);
+        b.content.deinit(self.allocator);
+        _ = c.XFlush(self.display);
+    }
+
+    fn open_bar(self: *Backend) !*PromptBar {
+        if (self.bar != null) return &self.bar.?;
+        const screen = c.XDefaultScreen(self.display);
+        const visual = c.XDefaultVisual(self.display, screen);
+        const cmap = c.XDefaultColormap(self.display, screen);
+
+        const font = c.XftFontOpenName(self.display, screen, prompt_font);
+        if (font == null) return error.PromptFontFailed;
+        errdefer c.XftFontClose(self.display, font);
+
+        const width = self.screen_size().width;
+        const height: c_uint = @intCast(font.*.height + 2 * prompt_pad);
+        var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        wa.override_redirect = 1;
+        wa.background_pixel = prompt_bg;
+        const win = c.XCreateWindow(
+            self.display,
+            self.root,
+            0,
+            0,
+            width,
+            height,
+            0,
+            c.CopyFromParent,
+            c.InputOutput,
+            c.CopyFromParent,
+            c.CWOverrideRedirect | c.CWBackPixel,
+            &wa,
+        );
+        if (win == 0) return error.PromptCreateFailed;
+        errdefer _ = c.XDestroyWindow(self.display, win);
+
+        const draw = c.XftDrawCreate(self.display, win, visual, cmap) orelse return error.PromptCreateFailed;
+        var fg: c.XftColor = undefined;
+        var bg: c.XftColor = undefined;
+        _ = c.XftColorAllocValue(self.display, visual, cmap, &render_color(prompt_fg), &fg);
+        _ = c.XftColorAllocValue(self.display, visual, cmap, &render_color(@intCast(prompt_bg)), &bg);
+
+        _ = c.XSelectInput(self.display, win, c.ExposureMask);
+        _ = c.XMapRaised(self.display, win);
+        self.bar = .{ .win = win, .draw = draw, .font = font, .fg = fg, .bg = bg };
+        return &self.bar.?;
+    }
+
+    fn set_bar(self: *Backend, b: *PromptBar, label: []const u8, text: []const u8, cursor: ?usize, block: bool) !void {
+        b.content.clearRetainingCapacity();
+        try b.content.appendSlice(self.allocator, label);
+        try b.content.appendSlice(self.allocator, text);
+        b.label_len = label.len;
+        b.cursor = cursor;
+        b.block = block;
+        self.draw_bar(b);
+    }
+
+    fn draw_bar(self: *Backend, b: *PromptBar) void {
+        _ = c.XClearWindow(self.display, b.win);
+        const s = b.content.items;
+        const y: c_int = prompt_pad + b.font.*.ascent;
+        if (s.len > 0) c.XftDrawStringUtf8(b.draw, &b.fg, b.font, prompt_pad, y, s.ptr, @intCast(s.len));
+        if (b.cursor) |cur| {
+            const at = b.label_len + cur;
+            const x = prompt_pad + self.text_width(b.font, s[0..at]);
+            const h: c_uint = @intCast(b.font.*.height);
+            if (b.block) {
+                // A block over the character, which is drawn again in the background color.
+                const end = if (at < s.len) @min(s.len, at + (std.unicode.utf8ByteSequenceLength(s[at]) catch 1)) else at;
+                const ch: []const u8 = if (end > at) s[at..end] else " ";
+                const w: c_uint = @intCast(@max(1, self.text_width(b.font, ch)));
+                c.XftDrawRect(b.draw, &b.fg, x, prompt_pad, w, h);
+                c.XftDrawStringUtf8(b.draw, &b.bg, b.font, x, y, ch.ptr, @intCast(ch.len));
+            } else {
+                c.XftDrawRect(b.draw, &b.fg, x, prompt_pad, 2, h);
+            }
+        }
+        _ = c.XRaiseWindow(self.display, b.win);
+        _ = c.XFlush(self.display);
+    }
+
+    fn text_width(self: *const Backend, font: [*c]c.XftFont, s: []const u8) c_int {
+        if (s.len == 0) return 0;
+        var gi: c.XGlyphInfo = undefined;
+        c.XftTextExtentsUtf8(self.display, font, s.ptr, @intCast(s.len), &gi);
+        return gi.xOff;
+    }
+
+    /// A key typed into the bar: its keysym and the UTF-8 text it types.
+    fn prompt_key(ev: *c.XKeyEvent) types.Event {
+        var latin1: [8]u8 = undefined;
+        var sym: c.KeySym = 0;
+        const n: usize = @intCast(@max(0, c.XLookupString(ev, &latin1, latin1.len, &sym, null)));
+        var k: types.PromptKey = .{
+            .keysym = @intCast(sym),
+            .mods = @intCast(ev.state & ~@as(c_uint, c.LockMask | c.Mod2Mask)),
+        };
+        // XLookupString speaks Latin-1; core wants UTF-8.
+        for (latin1[0..n]) |ch| {
+            const len = std.unicode.utf8Encode(ch, k.text_buf[k.text_len..]) catch break;
+            k.text_len += len;
+        }
+        // Keysyms past Latin-1 that carry their code point (0x01000000 | cp).
+        if (n == 0 and sym >= 0x01000100 and sym <= 0x0110ffff) {
+            k.text_len = std.unicode.utf8Encode(@intCast(sym - 0x01000000), &k.text_buf) catch 0;
+        }
+        return .{ .prompt_key = k };
+    }
+
     pub fn window_info(self: *const Backend, h: types.WindowHandle) types.WindowInfo {
         return info_mod.read_info(self.display, &self.atoms, @intCast(h));
     }
@@ -487,6 +677,7 @@ pub const Backend = struct {
     }
 
     pub fn release_keyboard_grab(self: *const Backend) void {
+        if (self.bar) |b| if (b.grabbed) return; // the input bar holds it
         _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
         _ = c.XSync(self.display, 0);
     }
@@ -1040,6 +1231,7 @@ pub const Backend = struct {
     /// The next event that core needs to see, or null when none are pending.
     /// Events the backend fully handles itself are consumed here.
     pub fn next_event(self: *Backend) ?types.Event {
+        if (self.bar) |b| if (b.deadline) |d| if (now_ms() >= d) self.hide_prompt();
         while (c.XPending(self.display) > 0) {
             _ = c.XNextEvent(self.display, &self.event_buf);
             if (self.translate(&self.event_buf)) |ev| return ev;
@@ -1050,12 +1242,17 @@ pub const Backend = struct {
     fn translate(self: *Backend, e: *c.XEvent) ?types.Event {
         switch (e.type) {
             c.KeyPress => {
+                if (self.bar) |b| if (b.grabbed) return prompt_key(&e.xkey);
                 const keysym = c.XkbKeycodeToKeysym(self.display, @as(u8, @truncate(e.xkey.keycode)), 0, 0);
                 const mods = e.xkey.state & ~@as(c_uint, c.LockMask | c.Mod2Mask);
                 return .{ .key = .{ .mods = @intCast(mods), .keysym = @intCast(keysym) } };
             },
             c.Expose => {
                 if (e.xexpose.count != 0) return null;
+                if (self.bar) |*b| if (e.xexpose.window == b.win) {
+                    self.draw_bar(b);
+                    return null;
+                };
                 const client = self.frames.client_of(e.xexpose.window) orelse return null;
                 return .{ .expose = client };
             },
@@ -1456,7 +1653,8 @@ pub const Backend = struct {
     }
 
     pub fn poll_timeout(self: *const Backend) i32 {
-        _ = self;
-        return -1;
+        const b = self.bar orelse return -1;
+        const d = b.deadline orelse return -1;
+        return @intCast(std.math.clamp(d - now_ms(), 0, std.math.maxInt(i32)));
     }
 };
