@@ -36,3 +36,8 @@ pub fn quit(wm: *WM, _: void, _: Allocator) !Value {
     wm.end_session();
     std.process.exit(0);
 }
+
+pub fn eval(wm: *WM, args: Args(.eval), arena: Allocator) !Value {
+    const run = wm.eval_fn orelse return error.NoLua;
+    return run(wm, args.source, arena);
+}

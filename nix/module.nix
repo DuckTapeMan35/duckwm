@@ -13,6 +13,13 @@ let
   # config.lua, docs, stubs and the schema are identical in both; take them from either.
   shared = if hasX11 then cfg.package else cfg.riverPackage;
 
+  # quack repl with line editing and history.
+  repl = pkgs.writeShellApplication {
+    name = "duckwm-repl";
+    runtimeInputs = [ pkgs.rlwrap ];
+    text = ''exec rlwrap -H "''${XDG_CACHE_HOME:-$HOME/.cache}/duckwm_repl_history" ${shared}/bin/quack repl'';
+  };
+
   # Modifier bits, as in types.mod.
   modBits = {
     shift = 1;
@@ -203,7 +210,7 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        environment.systemPackages = packages;
+        environment.systemPackages = packages ++ lib.optional cfg.lua repl;
         services.displayManager.sessionPackages = sessions;
         services.xserver.xkb = lib.mkIf (cfg.keyboard.layout != null) {
           layout = lib.mkDefault cfg.keyboard.layout;

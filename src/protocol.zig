@@ -290,6 +290,7 @@ pub const CommandId = enum(u32) {
     quit = 802,
     exec_once = 803,
     reload_config = 804,
+    eval = 805,
 
     // layouts: 900-999
     get_layout = 900,
@@ -521,6 +522,7 @@ pub const Command = union(CommandId) {
     quit,
     exec_once: struct { argv: []const []const u8 },
     reload_config,
+    eval: struct { source: []const u8 },
 
     // layouts
     get_layout,

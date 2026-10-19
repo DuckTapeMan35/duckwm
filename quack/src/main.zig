@@ -15,6 +15,7 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(if (args.len < 2) 1 else 0);
     }
 
+    if (std.mem.eql(u8, args[1], "repl")) return repl();
     const batch = std.mem.eql(u8, args[1], "-");
     const cmds: []const Command = if (batch)
         parse_batch(a, try read_stdin(a)) catch |err| fail(a, if (err == error.OutOfMemory) "out of memory" else parse_error)
@@ -27,32 +28,19 @@ pub fn main(init: std.process.Init) !void {
     const fd = connect(a);
     defer _ = linux.close(fd);
 
-    const body = try wire.encode_client_message(a, .{ .request = .{ .commands = cmds } });
-    var len: [4]u8 = undefined;
-    std.mem.writeInt(u32, &len, @intCast(body.len), .little);
-    write_all(fd, &len) catch die("quack: failed to send request\n");
-    write_all(fd, body) catch die("quack: failed to send request\n");
-
-    read_exact(fd, &len) catch die("quack: duckwm closed the connection\n");
-    const frame = try a.alloc(u8, std.mem.readInt(u32, &len, .little));
-    read_exact(fd, frame) catch die("quack: duckwm closed the connection\n");
-
-    const reply = wire.decode_server_message(frame, a) catch die("quack: malformed response\n");
-    // quack registers no callbacks, so the only thing duckwm sends it is the response.
-    const resp = switch (reply) {
-        .response => |r| r,
-        .call => die("quack: duckwm sent a callback call to quack\n"),
+    const results = switch (try roundtrip(a, fd, cmds)) {
+        .ok => |r| r,
+        .err => |msg| fail(a, msg),
     };
-    if (resp.err) |msg| fail(a, msg);
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     try out.appendSlice(a, "{\"ok\":true,\"result\":");
     if (batch) {
         // A batch: every command's result, in order.
-        try write_json(a, &out, .{ .list = resp.results });
+        try write_json(a, &out, .{ .list = results });
     } else {
         // One command, one result; a multi result prints as an array.
-        try write_json(a, &out, if (resp.results.len > 0) resp.results[0] else .nil);
+        try write_json(a, &out, if (results.len > 0) results[0] else .nil);
     }
     try out.appendSlice(a, "}\n");
     try write_all(1, out.items);
@@ -269,7 +257,14 @@ fn signature(comptime T: type, comptime cmd: []const u8) []const u8 {
 fn usage(a: Allocator) ![]u8 {
     @setEvalBranchQuota(100000);
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    try out.appendSlice(a, "Usage: quack <command> [args...]\n\nCommands:\n");
+    try out.appendSlice(a,
+        \\Usage: quack <command> [args...]
+        \\       quack -       commands from stdin, as one batch
+        \\       quack repl    Lua, evaluated inside duckwm
+        \\
+        \\Commands:
+        \\
+    );
     inline for (@typeInfo(Command).@"union".fields) |f| {
         try out.print(a, "  {s}\n", .{comptime signature(f.type, f.name)});
     }
@@ -369,6 +364,95 @@ fn read_exact(fd: i32, buf: []u8) !void {
             else => return error.ReadFailed,
         }
     }
+}
+
+// ---- Round trip ----
+const Reply = union(enum) { ok: []const Value, err: []const u8 };
+
+/// Send one request and wait for its response.
+fn roundtrip(a: Allocator, fd: i32, cmds: []const Command) !Reply {
+    const body = try wire.encode_client_message(a, .{ .request = .{ .commands = cmds } });
+    var len: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len, @intCast(body.len), .little);
+    write_all(fd, &len) catch die("quack: failed to send request\n");
+    write_all(fd, body) catch die("quack: failed to send request\n");
+
+    read_exact(fd, &len) catch die("quack: duckwm closed the connection\n");
+    const frame = try a.alloc(u8, std.mem.readInt(u32, &len, .little));
+    read_exact(fd, frame) catch die("quack: duckwm closed the connection\n");
+
+    const reply = wire.decode_server_message(frame, a) catch die("quack: malformed response\n");
+    // quack registers no callbacks, so the only thing duckwm sends it is the response.
+    const resp = switch (reply) {
+        .response => |r| r,
+        .call => die("quack: duckwm sent a callback call to quack\n"),
+    };
+    if (resp.err) |msg| return .{ .err = msg };
+    return .{ .ok = resp.results };
+}
+
+// ---- REPL ----
+/// quack repl: read Lua, run it inside duckwm, print what it printed and
+/// returned. A line that leaves a block open (for ... do, function f())
+/// keeps reading until the block is complete. Line editing: run it under rlwrap.
+fn repl() !void {
+    const gpa = std.heap.page_allocator;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const fd = connect(arena.allocator());
+    defer _ = linux.close(fd);
+
+    var src: std.ArrayListUnmanaged(u8) = .empty;
+    defer src.deinit(gpa);
+    while (true) {
+        _ = arena.reset(.retain_capacity);
+        const a = arena.allocator();
+        try write_all(1, if (src.items.len == 0) "lua> " else "...> ");
+        const line = (try read_line(a)) orelse {
+            try write_all(1, "\n");
+            return;
+        };
+        if (src.items.len == 0 and std.mem.trim(u8, line, " \t\r").len == 0) continue;
+        if (src.items.len > 0) try src.append(gpa, '\n');
+        try src.appendSlice(gpa, line);
+
+        const cmd = [_]Command{.{ .eval = .{ .source = src.items } }};
+        switch (try roundtrip(a, fd, &cmd)) {
+            .err => |msg| try write_all(1, try std.fmt.allocPrint(a, "duckwm: {s}\n", .{msg})),
+            .ok => |results| {
+                const r: Value = if (results.len > 0) results[0] else .nil;
+                if (std.mem.eql(u8, map_str(r, "status"), "incomplete")) continue;
+                try write_all(1, map_str(r, "output"));
+            },
+        }
+        src.clearRetainingCapacity();
+    }
+}
+
+/// One line of stdin without its newline; null at end of input.
+fn read_line(a: Allocator) !?[]const u8 {
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    var ch: [1]u8 = undefined;
+    while (true) {
+        const rc = linux.read(0, &ch, 1);
+        switch (linux.errno(rc)) {
+            .SUCCESS => {
+                if (rc == 0) return if (line.items.len > 0) line.items else null;
+                if (ch[0] == '\n') return line.items;
+                try line.append(a, ch[0]);
+            },
+            .INTR => continue,
+            else => die("quack: failed to read stdin\n"),
+        }
+    }
+}
+
+fn map_str(v: Value, key: []const u8) []const u8 {
+    if (v != .map) return "";
+    for (v.map) |f| {
+        if (std.mem.eql(u8, f.key, key) and f.value == .str) return f.value.str;
+    }
+    return "";
 }
 
 // ---- Tests ----

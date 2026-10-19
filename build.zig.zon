@@ -62,8 +62,8 @@
         //    .lazy = false,
         //},
         .ziglua = .{
-            .url = "https://github.com/natecraddock/ziglua/archive/8f271c82baa5fc43aa02a72f6da020c2025d9436.tar.gz",
-            .hash = "zlua-0.1.0-hGRpC2aABQD4D9PBVH3wAW8k32-I4969MRQ0CpOwoley",
+            .url = "https://github.com/natecraddock/ziglua/archive/refs/tags/0.7.0.tar.gz",
+            .hash = "zlua-0.1.0-hGRpC1mUBQCNQf4CnmRTM4I7gxE3YpCvZ-p2EarlcyER",
         },
         .wayland = .{
             .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.6.0.tar.gz",

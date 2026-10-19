@@ -194,6 +194,8 @@ pub const WM = struct {
     inotify_wd: i32 = -1,
     /// Reloads the config; set by the Lua frontend once a config has loaded.
     reload_fn: ?*const fn (*WM) void = null,
+    /// Set by the Lua module: runs the eval command.
+    eval_fn: ?*const fn (*WM, []const u8, std.mem.Allocator) anyerror!protocol.Value = null,
     /// A reload requested from Lua, run after the current event.
     pending_reload: bool = false,
     /// Debounce for file-change reloads.

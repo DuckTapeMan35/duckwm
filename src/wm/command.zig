@@ -99,6 +99,8 @@ pub fn error_text(err: anyerror) []const u8 {
         error.CallbackTimeout => "the client's callback didn't return in time",
         error.ClientGone => "the client that owns the callback has disconnected",
         error.CallbackFailed => "the callback failed",
+        error.NoLua => "duckwm has no Lua VM",
+        error.EvalFailed => "the REPL's evaluator failed",
         else => @errorName(err),
     };
 }

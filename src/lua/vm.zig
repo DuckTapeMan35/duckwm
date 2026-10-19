@@ -1,6 +1,7 @@
 const ziglua = @import("ziglua");
 const wm_mod = @import("wm");
 const types = @import("types");
+const repl = @import("repl.zig");
 const registrations = @import("registrations.zig");
 const Lua = ziglua.Lua;
 const WM = wm_mod.WM;
@@ -44,6 +45,7 @@ pub fn setup_lua(wm: *WM, lua: *Lua) void {
         lua.setField(-2, reg.name);
     }
     lua.setGlobal("wm");
+    repl.install(lua);
 }
 
 pub fn reset_vm(wm: *WM) !*Lua {

@@ -507,6 +507,10 @@ message ExecOnce {
   repeated string argv = 1;
 }
 
+message Eval {
+  string source = 1;
+}
+
 message Ref {
   oneof kind {
     uint32 id = 1;
@@ -848,6 +852,7 @@ message Command {
     Empty quit = 802;
     ExecOnce exec_once = 803;
     Empty reload_config = 804;
+    Eval eval = 805;
     Empty get_layout = 900;
     SetLayout set_layout = 901;
     Empty print_graph = 902;

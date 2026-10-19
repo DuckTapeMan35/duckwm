@@ -215,7 +215,7 @@ const wrapped_in_lua = [_][]const u8{ "get_layout", "set_animation" };
 
 /// Commands with no wm.<name> in Lua, because Lua has a better way to do them:
 /// wm.bind takes a function (lua/input.zig), not a list of commands.
-const not_in_lua = [_]std.meta.Tag(Command){.bind_commands};
+const not_in_lua = [_]std.meta.Tag(Command){ .bind_commands, .eval };
 
 fn skipped(comptime name: []const u8) bool {
     for (wrapped_in_lua) |w| if (std.mem.eql(u8, w, name)) return true;

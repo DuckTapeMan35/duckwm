@@ -5,6 +5,7 @@ const graph_mod = @import("graph");
 const c = @import("libc");
 const util = @import("util.zig");
 const vm = @import("vm.zig");
+const repl = @import("repl.zig");
 const Lua = ziglua.Lua;
 const WM = wm_mod.WM;
 
@@ -198,6 +199,7 @@ pub fn load(wm: *WM) !void {
     var lua = try Lua.init(wm.allocator);
     wm.lua = lua;
     vm.setup_lua(wm, lua);
+    wm.eval_fn = repl.eval;
 
     const user_path = resolve_user_path(wm);
     defer if (user_path) |p| wm.allocator.free(p);
