@@ -143,6 +143,11 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     const src_graph = node.owner_graph orelse return error.InvalidNode;
     if (src_graph == target_graph) return;
 
+    // If the leaving window has focus, a neighbour takes it, as when one closes.
+    // Picked now, while the focus edges still include it.
+    const was_focused = wm.focused == node;
+    const next: ?*Node = if (was_focused) neighbour_in(src_graph, node) else null;
+
     src_graph.detach_node(node);
     try src_graph.replace_constraints(node, &.{});
     try target_graph.attach_node(node);
@@ -194,6 +199,11 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
         else => {},
     }
     sync_workspace_state(wm);
+    // The arranger didn't choose (only some do on unmap): fall back.
+    if (was_focused and (wm.focused == null or wm.focused.?.owner_graph != src_graph) and src_graph == wm.current_graph) {
+        const n = if (next) |x| (if (!x.dead and x.owner_graph == src_graph) x else null) else null;
+        if (n orelse focus.top_left_window(wm)) |t| wm.set_focus(t);
+    }
 }
 
 pub fn sync_workspace_state(wm: *WM) void {
@@ -378,4 +388,15 @@ fn undo_free_graph(ctx: *anyopaque, arg: u64) void {
 fn undo_destroy_preview(ctx: *anyopaque, arg: u64) void {
     const wm: *WM = @ptrCast(@alignCast(ctx));
     wm.backend.destroy_preview_window(arg);
+}
+
+/// The node focus would move to from n: along a focus edge, else any visible window.
+fn neighbour_in(g: *Graph, n: *Node) ?*Node {
+    for (g.focus_edges.items) |e| {
+        if (e.from == n and e.to != n) return e.to;
+    }
+    for (g.nodes.items) |x| {
+        if (x != n and !x.hidden and x.content == .window) return x;
+    }
+    return null;
 }

@@ -1,1370 +1,1018 @@
 -- ============================================================
--- duckwm — default configuration
--- ============================================================
--- Modifier keys available:
---   wm.MOD_SUPER  (Windows / Command key)
---   wm.MOD_ALT
---   wm.MOD_SHIFT
---   wm.MOD_CTRL
+-- duckwm — the default configuration
 --
--- Mouse buttons available:
---   wm.BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT
---   wm.BUTTON_SCROLL_UP, BUTTON_SCROLL_DOWN
--- ============================================================
-
-local M = wm.MOD_SUPER
-local S = wm.MOD_SHIFT
-local C = wm.MOD_CTRL
-local A = wm.MOD_ALT
-
--- ------------------------------------------------------------
--- Core behaviour
--- ------------------------------------------------------------
-wm.set_gaps(0, 0, 0, 0)
-wm.set_resize_modifier(A)
-wm.set_float_modifier(A)
-wm.set_pan_modifier(A)
-wm.set_pan_button(wm.BUTTON_MIDDLE)
-wm.set_border_width(2)
-wm.set_border_width(2)
-wm.set_default_focused_border_color(0x5294e2)
-wm.set_default_unfocused_border_color(0x333333)
-wm.set_default_urgent_border_color(0xe53935)
-wm.set_workspace_switch_mode("previous")
-
--- ------------------------------------------------------------
--- Terminal
--- Find the first available terminal emulator.
--- ------------------------------------------------------------
-local function find_terminal()
-    local candidates = {
-        {"x-terminal-emulator"},
-        {"xdg-terminal"},
-        {"xterm"},
-        {"rxvt"},
-        {"st"},
-        {"alacritty"},
-        {"kitty"},
-        {"wezterm"},
-        {"foot"},
-    }
-    for _, cmd in ipairs(candidates) do
-        local handle = io.popen("command -v " .. cmd[1] .. " 2>/dev/null")
-        if handle then
-            local result = handle:read("*l")
-            handle:close()
-            if result and result ~= "" then
-                return cmd
-            end
-        end
-    end
-    return {"xterm"}
-end
-
-local TERMINAL = find_terminal()
-
--- ------------------------------------------------------------
--- Application launcher
--- ------------------------------------------------------------
-local function find_launcher()
-    local candidates = {"rofi", "dmenu_run", "gmrun"}
-    for _, cmd in ipairs(candidates) do
-        local handle = io.popen("command -v " .. cmd .. " 2>/dev/null")
-        if handle then
-            local result = handle:read("*l")
-            handle:close()
-            if result and result ~= "" then
-                if cmd == "rofi" then
-                    return {"rofi", "-show", "drun"}
-                end
-                return {cmd}
-            end
-        end
-    end
-    return nil
-end
-
-local LAUNCHER = find_launcher()
-
--- ------------------------------------------------------------
--- Scratchpad
--- ------------------------------------------------------------
-local scratchpad_id      = nil
-local scratchpad_visible = false
-
-local function toggle_scratchpad()
-    if scratchpad_id ~= nil then
-        if wm.get_node_type(scratchpad_id) == nil then
-            scratchpad_id    = nil
-            scratchpad_visible = false
-        end
-    end
-
-    if scratchpad_id == nil then
-        local id = wm.get_focused()
-        if not id then return end
-        local info = wm.get_node_info(id)
-        if not info then return end
-        scratchpad_id    = id
-        scratchpad_visible = true
-        if not info.floating then wm.toggle_floating() end
-        return
-    end
-
-    if scratchpad_visible then
-        wm.hide_window(scratchpad_id)
-        scratchpad_visible = false
-    else
-        wm.show_window(scratchpad_id)
-        scratchpad_visible = true
-    end
-end
-
-local function unscratchpad()
-    if scratchpad_id and wm.get_node_type(scratchpad_id) then
-        if not scratchpad_visible then
-            wm.show_window(scratchpad_id)
-            scratchpad_visible = true
-            wm.toggle_floating()
-            scratchpad_id = nil
-        else
-            wm.toggle_floating()
-            scratchpad_id = nil
-        end
-    end
-end
-
--- ============================================================
--- Window rules
--- ============================================================
--- Rules fire on "pre_map" (before layout), "map" (after layout),
--- and "prop" (when WM_CLASS or title changes — useful for apps
--- that set their class late, like Electron apps).
+-- Installed as /etc/duckwm/config.lua: what duckwm runs when you have no
+-- config of your own, or when yours fails to load. So it needs nothing
+-- but duckwm and a shell: no launcher, bar, theme or fonts. A terminal is
+-- the first of $TERMINAL and a few common ones that's installed, and
+-- Super+R runs any command through duckwm's own prompt.
 --
--- Example:
---   wm.add_rule(function(event, id)
---       if event ~= "pre_map" and event ~= "prop" then return end
---       local class = wm.get_window_class(id) or ""
---       if class == "pavucontrol" then wm.set_floating(id, true) end
---   end)
-
--- ============================================================
--- Keybindings
+-- Every part is set up on its own, so one that fails (an API that changed,
+-- say) doesn't take the rest down: Super+F1 shows the keys, and what failed.
+-- To make it yours, copy it to ~/.config/duckwm/config.lua.
 -- ============================================================
 
--- Terminal
-wm.bind(M, "Return", function() wm.spawn(TERMINAL) end)
-
--- Launcher
-if LAUNCHER then
-    wm.bind(M, "d", function() wm.spawn(LAUNCHER) end)
-end
-
--- Window management
-wm.bind(M | S, "q",      wm.kill_client)
-wm.bind(M,     "f",      wm.toggle_floating)
-wm.bind(M,     "F11",    wm.toggle_fullscreen)
-wm.bind(M,     "s",      toggle_scratchpad)
-wm.bind(M,     "Escape", unscratchpad)
-
--- Focus
-wm.bind(M, "h",     wm.focus_left)
-wm.bind(M, "l",     wm.focus_right)
-wm.bind(M, "k",     wm.focus_up)
-wm.bind(M, "j",     wm.focus_down)
-wm.bind(M, "Left",  wm.focus_left)
-wm.bind(M, "Right", wm.focus_right)
-wm.bind(M, "Up",    wm.focus_up)
-wm.bind(M, "Down",  wm.focus_down)
-
--- Move (swap)
-wm.bind(M | S, "h",     function() wm.exchange_left();  wm.focus_left()  end)
-wm.bind(M | S, "l",     function() wm.exchange_right(); wm.focus_right() end)
-wm.bind(M | S, "k",     function() wm.exchange_up();    wm.focus_up()    end)
-wm.bind(M | S, "j",     function() wm.exchange_down();  wm.focus_down()  end)
-wm.bind(M | S, "Left",  function() wm.exchange_left();  wm.focus_left()  end)
-wm.bind(M | S, "Right", function() wm.exchange_right(); wm.focus_right() end)
-wm.bind(M | S, "Up",    function() wm.exchange_up();    wm.focus_up()    end)
-wm.bind(M | S, "Down",  function() wm.exchange_down();  wm.focus_down()  end)
-
--- Resize
-wm.bind(M | C, "h",     function() wm.resize_focused_edge("left",  20) end)
-wm.bind(M | C, "l",     function() wm.resize_focused_edge("right", 20) end)
-wm.bind(M | C, "k",     function() wm.resize_focused_edge("up",    20) end)
-wm.bind(M | C, "j",     function() wm.resize_focused_edge("down",  20) end)
-wm.bind(M | C, "Left",  function() wm.resize_focused_edge("left",  20) end)
-wm.bind(M | C, "Right", function() wm.resize_focused_edge("right", 20) end)
-wm.bind(M | C, "Up",    function() wm.resize_focused_edge("up",    20) end)
-wm.bind(M | C, "Down",  function() wm.resize_focused_edge("down",  20) end)
-
--- Nested workspaces
-wm.bind(M,     "w",         function() wm.create_nested_workspace() end)
-wm.bind(M,     "y",         wm.enter_nested)
-wm.bind(M,     "BackSpace", wm.leave_nested)
-
--- Workspace switching (Super+1-9)
--- Send window to workspace (Super+Shift+1-9)
--- Send window to workspace silently (Alt+1-9)
-for i = 1, 9 do
-    local idx = i
-    wm.bind(M,     tostring(idx), function() wm.switch_to_workspace(idx) end)
-    wm.bind(M | S, tostring(idx), function()
-        local id = wm.get_focused()
-        if id then
-            wm.send_to_workspace(id, idx)
-            wm.switch_to_workspace(idx)
-        end
-    end)
-    wm.bind(A, tostring(idx), function()
-        local id = wm.get_focused()
-        if id then wm.send_to_workspace(id, idx) end
-    end)
-end
-
--- duckwm
-wm.bind(M | S, "r", wm.reload_config)
-wm.bind(M | S, "e", wm.quit)
-
--- ============================================================
--- Layout implementations
--- ============================================================
+local X11 = wm.PLATFORM == wm.PLATFORM_X11
+local M, S, C, A = wm.MOD_SUPER, wm.MOD_SHIFT, wm.MOD_CTRL, wm.MOD_ALT
 
 -- ------------------------------------------------------------
--- Dwindle
+-- Robustness
 -- ------------------------------------------------------------
-local function make_dwindle()
-    local next_split = "h"
-    local anchor_id  = nil
+local problems = {}
 
-    local function find_parent_split(by_id, id)
-        local node = by_id[id]
-        if not node or not node.parent then return nil, nil end
-        local parent = by_id[node.parent]
-        if not parent then return nil, nil end
-        for _, con in ipairs(parent.constraints) do
-            if con.type == "split" then return parent, con end
-        end
-        return nil, nil
-    end
+local function report(what, err)
+	local msg = what .. ": " .. tostring(err)
+	problems[#problems + 1] = msg
+	io.stderr:write("duckwm default config: " .. msg .. "\n")
+end
 
-    local function do_split(layout, focused_id, new_id)
-        local by_id = layout.by_id
-        local focused_node = by_id[focused_id]
+-- Run one part of the setup; a failure is reported, not fatal.
+local function section(name, f)
+	local ok, err = pcall(f)
+	if not ok then
+		report(name, err)
+	end
+end
 
-        -- If focused node is tiny, fall back to splitting the largest window
-        if focused_node and (focused_node.width < 20 or focused_node.height < 20) then
-            local best, best_area = nil, 0
-            for _, wid in ipairs(layout.windows) do
-                if wid ~= new_id then
-                    local nd = by_id[wid]
-                    if nd then
-                        local area = nd.width * nd.height
-                        if area > best_area then best, best_area = wid, area end
-                    end
-                end
-            end
-            if best then focused_id = best; focused_node = by_id[focused_id] end
-        end
+-- Text in the input bar, if this duckwm has wm.message; stderr otherwise.
+local function say(text, ms)
+	if type(wm.message) ~= "function" or not pcall(wm.message, text, ms) then
+		io.stderr:write("duckwm: " .. text .. "\n")
+	end
+end
 
-        local split_h  = (next_split == "h")
-        next_split     = split_h and "v" or "h"
-        local dx, dy   = wm.get_cursor_relative_to_focused()
-        local as_first = split_h and (dx < 0) or (dy < 0)
-        local axis     = split_h and "h" or "v"
+-- For use while running (keys, rules, layouts): say it on screen too.
+local function complain(what, err)
+	report(what, err)
+	say(what .. " failed (Super+F1 for details)", 4000)
+end
 
-        -- Create structural split container node
-        local cont_id = wm.create_container()
-        local cont = { id=cont_id, type="empty", x=0, y=0, width=0, height=0,
-                       constraints={}, parent=nil, parent_idx=nil }
-        table.insert(layout.nodes, cont)
-        by_id[cont_id] = cont
+-- A key action that can't take duckwm's state down with it.
+local function safe(name, f)
+	return function()
+		local ok, err = pcall(f)
+		if not ok then
+			complain(name, err)
+		end
+	end
+end
 
-        local parent, parent_con = find_parent_split(by_id, focused_id)
+local function bind(mods, key, name, f)
+	if type(f) ~= "function" then
+		return report("binding " .. name, "no such function")
+	end
+	local ok, err = pcall(wm.bind, mods, key, safe(name, f))
+	if not ok then
+		report("binding " .. name, err)
+	end
+end
 
-        if parent then
-            for i, cid in ipairs(parent_con.children) do
-                if cid == focused_id then
-                    parent_con.children[i] = cont_id
-                    break
-                end
-            end
-            cont.parent = parent.id
-        else
-            -- If focused_node was the root window, transfer its grid_cell constraint to the container
-            if focused_node then
-                for i, con in ipairs(focused_node.constraints) do
-                    if con.type == "grid_cell" then
-                        table.insert(cont.constraints, con)
-                        table.remove(focused_node.constraints, i)
-                        break
-                    end
-                end
-            end
-        end
+local function focus(id)
+	if id then
+		pcall(wm.focus, id)
+	end
+end
 
-        local children = as_first and { new_id, focused_id } or { focused_id, new_id }
-        table.insert(cont.constraints, {
-            type="split", axis=axis, count=2,
-            ratios={0.5, 0.5}, children=children, container=cont_id,
-        })
+local function set(list)
+	local t = {}
+	for _, v in ipairs(list) do
+		t[v] = true
+	end
+	return t
+end
 
-        -- Corrected: Clear child constraints but register their new parent tree relationships
-        if focused_node then 
-            focused_node.constraints = {} 
-            focused_node.parent = cont_id
-        end
-        local new_node = by_id[new_id]
-        if new_node then 
-            new_node.constraints = {} 
-            new_node.parent = cont_id
-        end
-    end
-
-    local function do_remove(layout, id)
-        local by_id = layout.by_id
-        local parent, parent_con = find_parent_split(by_id, id)
-
-        if not parent then
-            local nd = by_id[id]
-            if nd then nd.constraints = {} end
-            anchor_id = nil
-            return
-        end
-
-        local sibling_id = parent_con.children[1] == id
-            and parent_con.children[2] or parent_con.children[1]
-
-        local gp, gp_con = find_parent_split(by_id, parent.id)
-
-        if gp then
-            for i, cid in ipairs(gp_con.children) do
-                if cid == parent.id then
-                    gp_con.children[i] = sibling_id
-                    break
-                end
-            end
-            local sibling_node = by_id[sibling_id]
-            if sibling_node then sibling_node.parent = gp.id end
-        else
-            local sibling_node = by_id[sibling_id]
-            if sibling_node then
-                for _, con in ipairs(parent.constraints) do
-                    if con.type == "grid_cell" then
-                        table.insert(sibling_node.constraints, con)
-                        break
-                    end
-                end
-                sibling_node.parent = nil
-            end
-        end
-
-        wm.destroy_container(parent.id)
-        by_id[parent.id] = nil
-        for i = #layout.nodes, 1, -1 do
-            if layout.nodes[i].id == parent.id or layout.nodes[i].id == id then
-                table.remove(layout.nodes, i)
-            end
-        end
-        for i, wid in ipairs(layout.windows) do
-            if wid == id then table.remove(layout.windows, i); break end
-        end
-    end
-
-    return function(event, id, prev_id)
-        if wm.get_node_type(id) ~= "window" and wm.get_node_type(id) ~= "workspace" then return end
-
-        local layout = wm.get_layout()
-        local by_id  = layout.by_id
-        local _, _, ww, wh = wm.get_work_area() -- Ensure work area is calculated every event execution
-
-        -- Force synchronization of the base anchor bounds on any incoming event changes
-        if anchor_id and by_id[anchor_id] then
-            by_id[anchor_id].constraints = {
-                { type="fixed_x",      value=0  },
-                { type="fixed_y",      value=0  },
-                { type="fixed_width",  value=ww },
-                { type="fixed_height", value=wh },
-            }
-        end
-
-        if event == "map" then
-            local focused_id = prev_id and by_id[prev_id] and prev_id or nil
-            if not focused_id then
-                local best, best_area = nil, 0
-                for _, wid in ipairs(layout.windows) do
-                    if wid ~= id then
-                        local nd = by_id[wid]
-                        if nd then
-                            local area = nd.width * nd.height
-                            if area > best_area then best, best_area = wid, area end
-                        end
-                    end
-                end
-                focused_id = best
-            end
-
-            if not focused_id then
-                if not anchor_id or not by_id[anchor_id] then
-                    anchor_id = wm.create_container()
-                    local anchor = {
-                        id=anchor_id, type="empty", x=0, y=0, width=0, height=0,
-                        parent=nil, parent_idx=nil,
-                        constraints={
-                            { type="fixed_x",      value=0  },
-                            { type="fixed_y",      value=0  },
-                            { type="fixed_width",  value=ww },
-                            { type="fixed_height", value=wh },
-                        },
-                    }
-                    table.insert(layout.nodes, anchor)
-                    by_id[anchor_id] = anchor
-                    layout.root = anchor_id
-                end
-                local win_node = by_id[id]
-                if win_node then
-                    win_node.constraints = {{
-                        type="grid_cell", col=0, row=0, cols=1, rows=1,
-                        container=anchor_id,
-                    }}
-                end
-            else
-                do_split(layout, focused_id, id)
-            end
-
-            wm.set_layout(layout)
-            wm.focus(id)
-
-        elseif event == "unmap" then
-            do_remove(layout, id)
-            wm.set_layout(layout)
-
-        elseif event == "resize" then
-            -- Let duckwm know the dynamic geometry updates need to commit to the layout engine
-            wm.set_layout(layout)
-        end
-    end
+local function contains(list, x)
+	for _, v in ipairs(list) do
+		if v == x then
+			return true
+		end
+	end
+	return false
 end
 
 -- ------------------------------------------------------------
--- Grid
+-- Programs
 -- ------------------------------------------------------------
-local function make_grid()
-    local function best_grid(n)
-        if n <= 1 then return 1, 1 end
-        local c = math.ceil(math.sqrt(n))
-        return c, math.ceil(n / c)
-    end
+local function sh(cmd)
+	wm.spawn({ "sh", "-c", cmd })
+end
 
-    return function(event, id, prev_id)
-        if wm.get_node_type(id) ~= "window" and wm.get_node_type(id) ~= "workspace" then return end
+-- $TERMINAL, then the first of these that's installed (foot is Wayland-only).
+local TERMINALS = X11 and "kitty alacritty wezterm xterm urxvt st" or "foot kitty alacritty wezterm xterm"
 
-        local layout = wm.get_layout()
-        local by_id  = layout.by_id
+local function terminal()
+	sh(
+		'for t in "$TERMINAL" '
+			.. TERMINALS
+			.. "; do "
+			.. '[ -n "$t" ] && command -v "$t" >/dev/null 2>&1 && exec "$t"; done'
+	)
+end
 
-        local windows = {}
-        for _, wid in ipairs(layout.windows) do
-            if event ~= "unmap" or wid ~= id then
-                table.insert(windows, wid)
-            end
-        end
+local function run_prompt()
+	wm.read_line("run: ", function(cmd)
+		if cmd:match("%S") then
+			sh(cmd)
+		end
+	end)
+end
 
-        for _, nd in ipairs(layout.nodes) do nd.constraints = {} end
+local function lua_prompt()
+	wm.read_line("lua: ", function(src)
+		local _, out = wm.eval(src)
+		out = tostring(out or ""):gsub("\n+$", ""):gsub("\n", "  ")
+		if out ~= "" then
+			say(out, 4000)
+		end
+	end)
+end
 
-        if #windows == 0 then
-            wm.set_layout(layout)
-            return
-        end
+local HELP = "Super: Return terminal · R run · Shift+Q close · F float · F11 fullscreen · "
+	.. "hjkl/arrows focus (+Shift swap, +Ctrl resize) · 1-9 workspace (+Shift send) · "
+	.. ", . monitor (+Shift send) · Shift+N layout · Shift+R reload · Shift+E quit"
 
-        local root = by_id[layout.root]
-        if not root then
-            local root_id = wm.create_root_node()
-            root = { id=root_id, type="empty", x=0, y=0, width=0, height=0,
-                     constraints={}, parent=nil, parent_idx=nil }
-            table.insert(layout.nodes, root)
-            by_id[root_id] = root
-            layout.root = root_id
-        end
-
-        local _, _, ww, wh = wm.get_work_area()
-        root.constraints = {
-            { type="fixed_x",      value=0  },
-            { type="fixed_y",      value=0  },
-            { type="fixed_width",  value=ww },
-            { type="fixed_height", value=wh },
-        }
-
-        local cols, rows = best_grid(#windows)
-        for i, wid in ipairs(windows) do
-            local nd = by_id[wid]
-            if nd then
-                nd.constraints = {{
-                    type="grid_cell",
-                    col  = (i-1) % cols,
-                    row  = math.floor((i-1) / cols),
-                    cols = cols, rows = rows,
-                    container = root.id,
-                }}
-            end
-        end
-
-        wm.set_layout(layout)
-        if event == "map" then wm.focus(id) end
-    end
+local function help()
+	local text = HELP
+	if #problems > 0 then
+		text = #problems .. " problem(s): " .. table.concat(problems, " | ") .. "  —  " .. HELP
+	end
+	say(text, 10000)
 end
 
 -- ------------------------------------------------------------
--- Fair
+-- The essentials first: whatever fails below, these keys work.
 -- ------------------------------------------------------------
-local function make_fair()
-    local function grid_params(n)
-        if n == 2 then return 1, 2 end
-        local rows = math.ceil(math.sqrt(n))
-        return rows, math.ceil(n / rows)
-    end
-
-    return function(event, id, prev_id)
-        if wm.get_node_type(id) ~= "window" and wm.get_node_type(id) ~= "workspace" then return end
-
-        local layout = wm.get_layout()
-        local by_id  = layout.by_id
-
-        local windows = {}
-        for _, wid in ipairs(layout.windows) do
-            if event ~= "unmap" or wid ~= id then
-                table.insert(windows, wid)
-            end
-        end
-
-        if #windows == 0 then
-            for _, nd in ipairs(layout.nodes) do nd.constraints = {} end
-            wm.set_layout(layout)
-            return
-        end
-
-        local n = #windows
-        local rows, cols = grid_params(n)
-
-        local root = by_id[layout.root]
-
-        local col_conts  = {}
-        local col_ratios = {}
-        local row_ratios = {}
-
-        if root then
-            for _, con in ipairs(root.constraints) do
-                if con.type == "split" and con.axis == "h" then
-                    col_ratios = con.ratios
-                    for _, cid in ipairs(con.children) do
-                        if by_id[cid] then table.insert(col_conts, by_id[cid]) end
-                    end
-                    break
-                end
-            end
-            if #col_conts == 0 then
-                for _, nd in ipairs(layout.nodes) do
-                    if nd.type == "empty" and nd.id ~= root.id then
-                        for _, con in ipairs(nd.constraints) do
-                            if con.type == "grid_cell" and con.container == root.id then
-                                table.insert(col_conts, nd); break
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        for c, cc in ipairs(col_conts) do
-            for _, con in ipairs(cc.constraints) do
-                if con.type == "split" and con.axis == "v" then
-                    row_ratios[c] = con.ratios; break
-                end
-            end
-        end
-
-        if not root then
-            local root_id = wm.create_root_node()
-            root = { id=root_id, type="empty", x=0, y=0, width=0, height=0, constraints={} }
-            table.insert(layout.nodes, root)
-            by_id[root_id] = root
-            layout.root = root_id
-        end
-
-        while #col_conts < cols do
-            local cid = wm.create_container()
-            local nc = { id=cid, type="empty", x=0, y=0, width=0, height=0, constraints={} }
-            table.insert(layout.nodes, nc)
-            by_id[cid] = nc
-            table.insert(col_conts, nc)
-        end
-        while #col_conts > cols do
-            local excess = table.remove(col_conts)
-            wm.destroy_container(excess.id)
-            by_id[excess.id] = nil
-            for i = #layout.nodes, 1, -1 do
-                if layout.nodes[i].id == excess.id then
-                    table.remove(layout.nodes, i); break
-                end
-            end
-        end
-
-        for _, nd in ipairs(layout.nodes) do nd.constraints = {} end
-
-        local _, _, ww, wh = wm.get_work_area()
-        root.constraints = {
-            { type="fixed_x",      value=0  },
-            { type="fixed_y",      value=0  },
-            { type="fixed_width",  value=ww },
-            { type="fixed_height", value=wh },
-        }
-
-        if cols == 1 then
-            col_conts[1].constraints = {{
-                type="grid_cell", col=0, row=0, cols=1, rows=1, container=root.id
-            }}
-        else
-            local cr, cr_sum = {}, 0
-            for c = 1, cols do
-                cr[c] = (#col_ratios == cols and col_ratios[c]) or 1.0
-                cr_sum = cr_sum + cr[c]
-            end
-            for c = 1, cols do cr[c] = cr[c] / cr_sum end
-            local children = {}
-            for c = 1, cols do table.insert(children, col_conts[c].id) end
-            root.constraints[#root.constraints+1] = {
-                type="split", axis="h", count=cols,
-                ratios=cr, children=children, container=root.id,
-            }
-        end
-
-        local col_wins = {}
-        for c = 1, cols do col_wins[c] = {} end
-        for k, wid in ipairs(windows) do
-            local col = math.floor((k-1) / rows) + 1
-            table.insert(col_wins[col], wid)
-        end
-
-        for c = 1, cols do
-            local wins = col_wins[c]
-            local nw   = #wins
-            local rr   = row_ratios[c] or {}
-            if nw == 1 then
-                by_id[wins[1]].constraints = {{
-                    type="grid_cell", col=0, row=0,
-                    cols=1, rows=1, container=col_conts[c].id
-                }}
-            elseif nw > 1 then
-                local hr, hr_sum = {}, 0
-                for r = 1, nw do
-                    hr[r] = (#rr == nw and rr[r]) or 1.0
-                    hr_sum = hr_sum + hr[r]
-                end
-                for r = 1, nw do hr[r] = hr[r] / hr_sum end
-                local children = {}
-                for _, wid in ipairs(wins) do
-                    table.insert(children, wid)
-                    by_id[wid].constraints = {}
-                end
-                col_conts[c].constraints = {{
-                    type="split", axis="v", count=nw,
-                    ratios=hr, children=children,
-                    container=col_conts[c].id,
-                }}
-            end
-        end
-
-        wm.set_layout(layout)
-        if event == "map" then wm.focus(id) end
-    end
-end
+bind(M, "Return", "terminal", terminal)
+bind(M, "r", "run prompt", run_prompt)
+bind(M | S, "q", "close", wm.kill_client)
+bind(M | S, "r", "reload", wm.reload_config)
+bind(M | S, "e", "quit", wm.quit) -- on river this ends the whole session
+bind(M, "F1", "help", help)
 
 -- ------------------------------------------------------------
--- Meridian
+-- Behaviour
 -- ------------------------------------------------------------
-local function make_meridian()
-    local SW = wm.screen_width()
-    local SH = wm.screen_height()
+section("behaviour", function()
+	wm.set_border_width(2)
+	wm.set_gaps(0, 0, 0, 0)
+	wm.set_workspace_switch_mode("previous")
+	wm.set_click_to_focus(true)
+end)
 
-    local function fresh_state()
-        return { E_W_pct=0.15, W_W_pct=0.15, N_H_pct=0.15, S_H_pct=0.15, windows={} }
-    end
-    local state = fresh_state()
+section("pointer", function()
+	wm.set_resize_modifier(A)
+	wm.set_float_modifier(A)
+	wm.set_pan_modifier(A)
+	wm.set_pan_button(wm.BUTTON_MIDDLE)
+end)
 
-    local function is_win(id) return wm.get_node_type(id) == "window" end
-    local function is_ws(id)  return wm.get_node_type(id) == "workspace" end
+section("animation", function()
+	wm.set_animation(100, "ease_in_out")
+end)
 
-    local function place(id, x, y, w, h)
-        wm.clear_constraints(id)
-        wm.fixed_x(id, x); wm.fixed_y(id, y)
-        wm.fixed_width(id, w); wm.fixed_height(id, h)
-    end
+section("prompt keys", function()
+	wm.set_prompt_keys("emacs") -- or "vi"
+end)
 
-    local function get_strips(n)
-        local east, south, west, north = {}, {}, {}, {}
-        for i = 2, n do
-            local cycle = (i-2) % 4
-            if     cycle == 0 then table.insert(east,  i)
-            elseif cycle == 1 then table.insert(south, i)
-            elseif cycle == 2 then table.insert(west,  i)
-            else                    table.insert(north, i) end
-        end
-        return east, south, west, north
-    end
-
-    local function sync_from_graph()
-        if #state.windows == 0 then return end
-        local geo = wm.get_node_geometry(state.windows[1])
-        if not geo then return end
-        local _, wy, _, _ = wm.get_work_area()
-        local avail_h = SH - wy
-        local rel_y = geo.y - wy
-        local east, south, west, north = get_strips(#state.windows)
-
-        if #west  > 0 then state.W_W_pct = math.max(0.05, math.min(0.40, geo.x / SW)) end
-        if #east  > 0 then state.E_W_pct = math.max(0.05, math.min(0.40, (SW - geo.x - geo.width) / SW)) end
-        if #north > 0 then state.N_H_pct = math.max(0.05, math.min(0.40, rel_y / avail_h)) end
-        if #south > 0 then state.S_H_pct = math.max(0.05, math.min(0.40, (avail_h - rel_y - geo.height) / avail_h)) end
-
-        if #west > 0 and #east > 0 and state.W_W_pct + state.E_W_pct > 0.85 then
-            local scale = 0.85 / (state.W_W_pct + state.E_W_pct)
-            state.W_W_pct = state.W_W_pct * scale
-            state.E_W_pct = state.E_W_pct * scale
-        end
-        if #north > 0 and #south > 0 and state.N_H_pct + state.S_H_pct > 0.85 then
-            local scale = 0.85 / (state.N_H_pct + state.S_H_pct)
-            state.N_H_pct = state.N_H_pct * scale
-            state.S_H_pct = state.S_H_pct * scale
-        end
-    end
-
-    local function relayout()
-        local n = #state.windows
-        if n == 0 then return end
-        local _, wy, _, _ = wm.get_work_area()
-        local avail_h = SH - wy
-        local east, south, west, north = get_strips(n)
-        local ww = (#west  > 0) and math.floor(SW * state.W_W_pct) or 0
-        local ew = (#east  > 0) and math.floor(SW * state.E_W_pct) or 0
-        local nh = (#north > 0) and math.floor(avail_h * state.N_H_pct) or 0
-        local sh = (#south > 0) and math.floor(avail_h * state.S_H_pct) or 0
-        local mw = SW - ww - ew
-        local mh = avail_h - nh - sh
-        place(state.windows[1], ww, nh, mw, mh)
-        for j, idx in ipairs(east) do
-            local sh2 = math.floor(mh / #east)
-            local y   = nh + (j-1)*sh2
-            local h   = (j == #east) and (mh - (j-1)*sh2) or sh2
-            place(state.windows[idx], ww+mw, y, ew, h)
-        end
-        for j, idx in ipairs(south) do
-            local sw2 = math.floor(SW / #south)
-            local x   = (j-1)*sw2
-            local w   = (j == #south) and (SW - (j-1)*sw2) or sw2
-            place(state.windows[idx], x, nh+mh, w, sh)
-        end
-        for j, idx in ipairs(west) do
-            local sh2 = math.floor(mh / #west)
-            local y   = nh + (j-1)*sh2
-            local h   = (j == #west) and (mh - (j-1)*sh2) or sh2
-            place(state.windows[idx], 0, y, ww, h)
-        end
-        for j, idx in ipairs(north) do
-            local sw2 = math.floor(SW / #north)
-            local x   = (j-1)*sw2
-            local w   = (j == #north) and (SW - (j-1)*sw2) or sw2
-            place(state.windows[idx], x, 0, w, nh)
-        end
-    end
-
-    wm.bind(M, "p", function()
-        local fid = wm.get_focused()
-        if not fid then return end
-        for i, id in ipairs(state.windows) do
-            if id == fid and i > 1 then
-                state.windows[i] = state.windows[1]
-                state.windows[1] = fid
-                relayout(); return
-            end
-        end
-    end)
-    wm.bind(M,     "Tab", function()
-        if #state.windows < 2 then return end
-        table.insert(state.windows, table.remove(state.windows, 1))
-        relayout()
-    end)
-    wm.bind(M | S, "Tab", function()
-        if #state.windows < 2 then return end
-        table.insert(state.windows, 1, table.remove(state.windows))
-        relayout()
-    end)
-
-    return function(event, id, prev_id)
-        if not is_win(id) and not is_ws(id) then return end
-        if event == "map" then
-            if #state.windows > 0 then sync_from_graph() end
-            table.insert(state.windows, id); wm.focus(id); relayout()
-        elseif event == "unmap" then
-            sync_from_graph()
-            for i, wid in ipairs(state.windows) do
-                if wid == id then table.remove(state.windows, i); break end
-            end
-            if #state.windows == 0 then state = fresh_state() else relayout() end
-        end
-    end
-end
+section("environment", function()
+	if not X11 then
+		-- Toolkits default to X11 in places; point them at Wayland, with X11 fallback.
+		wm.setenv("XDG_CURRENT_DESKTOP", "duckwm")
+		wm.setenv("XDG_SESSION_TYPE", "wayland")
+		wm.setenv("MOZ_ENABLE_WAYLAND", "1")
+		wm.setenv("QT_QPA_PLATFORM", "wayland;xcb")
+		wm.setenv("SDL_VIDEODRIVER", "wayland,x11")
+		wm.setenv("ELECTRON_OZONE_PLATFORM_HINT", "auto")
+	end
+end)
 
 -- ------------------------------------------------------------
--- Scroller
+-- Windows
 -- ------------------------------------------------------------
-local function make_scroller()
-    local windows   = {}
-    local cols      = 1
-    local col_ws    = {}
-    local container = nil
+section("window keys", function()
+	bind(M, "f", "float", wm.toggle_floating)
+	bind(M, "F11", "fullscreen", wm.toggle_fullscreen)
+	bind(M | C, "p", "lua prompt", lua_prompt)
 
-    local function is_win(id) return wm.get_node_type(id) == "window" end
-    local function is_ws(id)  return wm.get_node_type(id) == "workspace" end
+	local MOVES = { left = { "h", "Left" }, right = { "l", "Right" }, up = { "k", "Up" }, down = { "j", "Down" } }
+	for dir, keys in pairs(MOVES) do
+		for _, k in ipairs(keys) do
+			bind(M, k, "focus " .. dir, wm["focus_" .. dir])
+			bind(M | S, k, "swap " .. dir, wm["exchange_" .. dir])
+			bind(M | C, k, "resize " .. dir, function()
+				wm.resize_focused_edge(dir, 20)
+			end)
+		end
+	end
+end)
 
-    local function get_container()
-        if not container then container = wm.create_empty_node() end
-        return container
-    end
+-- Scratchpad: Super+S makes the focused window the scratchpad, then shows
+-- and hides it; Super+Shift+Escape puts it back in the tiling. A window
+-- of class "scratchpad" becomes it by itself.
+section("scratchpad", function()
+	local pad = nil
 
-    local function find_window(id)
-        for _, w in ipairs(windows) do if w.id == id then return w end end
-        return nil
-    end
+	local function alive()
+		if pad ~= nil and wm.get_node_type(pad) == nil then
+			pad = nil
+		end
+		return pad ~= nil
+	end
 
-    local function find_window_idx(id)
-        for i, w in ipairs(windows) do if w.id == id then return i end end
-        return nil
-    end
+	bind(M, "s", "scratchpad", function()
+		if not alive() then
+			pad = wm.get_focused()
+			if not pad then
+				return
+			end
+		end
+		wm.scratchpad_toggle(pad)
+	end)
 
-    local function default_col_w()
-        local _, _, ww, _ = wm.get_work_area()
-        return ww
-    end
+	bind(M | S, "Escape", "release scratchpad", function()
+		if not alive() then
+			return
+		end
+		wm.scratchpad_show(pad) -- onto this workspace, focused
+		wm.toggle_floating() -- it floats: toggling drops it into the tiling
+		pad = nil
+	end)
 
-    local function sync_from_graph()
-        if #windows == 0 then return end
-        for c = 1, cols do
-            for _, win in ipairs(windows) do
-                if win.col == c then
-                    local geo = wm.get_node_geometry(win.id)
-                    if geo and geo.width > 0 then
-                        col_ws[c] = math.max(100, geo.width)
-                    end
-                    break
-                end
-            end
-        end
-    end
+	wm.add_rule(function(event, id)
+		if event ~= "prop" or id == pad then
+			return
+		end
+		local ok, class = pcall(wm.get_window_class, id)
+		if ok and class == "scratchpad" then
+			wm.scratchpad_hide(id)
+			pad = id
+		end
+	end)
+end)
 
-    local function total_width()
-        local total = 0
-        for c = 1, cols do
-            total = total + (col_ws[c] or default_col_w())
-        end
-        return total
-    end
-
-    local function col_offset(c)
-        local x = 0
-        for i = 1, c - 1 do
-            x = x + (col_ws[i] or default_col_w())
-        end
-        return x
-    end
-
-    local function relayout()
-        if #windows == 0 then return end
-        local _, _, ww, wh = wm.get_work_area()
-        local total = total_width()
-        if total < ww then col_ws[1] = ww; total = ww end
-        wm.set_virtual_size(total, wh)
-        local cont = get_container()
-        wm.clear_constraints(cont)
-        wm.fixed_width(cont, total)
-        wm.fixed_height(cont, wh)
-        local offsets = {}
-        local x = 0
-        for c = 1, cols do
-            offsets[c] = x
-            x = x + (col_ws[c] or ww)
-        end
-        for _, win in ipairs(windows) do
-            local cw = col_ws[win.col] or ww
-            wm.clear_constraints(win.id)
-            wm.grid_cell_abs(win.id, offsets[win.col], 0, cw, wh, cont)
-        end
-    end
-
-    return function(event, id, prev_id)
-        if not is_win(id) and not is_ws(id) then return end
-        if event == "map" then
-            sync_from_graph()
-            local new_col
-            if #windows == 0 then
-                table.insert(windows, { id = id, col = 1 })
-                col_ws[1] = col_ws[1] or default_col_w()
-                cols = 1; new_col = 1
-            else
-                local parent_idx = #windows
-                local parent = find_window(prev_id)
-                if parent then
-                    parent_idx = find_window_idx(prev_id)
-                else
-                    parent = windows[#windows]
-                end
-                new_col = parent.col + 1
-                if new_col > cols then
-                    cols = new_col
-                    col_ws[new_col] = default_col_w()
-                else
-                    for c = cols, new_col, -1 do col_ws[c + 1] = col_ws[c] end
-                    col_ws[new_col] = default_col_w()
-                    for _, w in ipairs(windows) do
-                        if w.col >= new_col then w.col = w.col + 1 end
-                    end
-                    cols = cols + 1
-                end
-                table.insert(windows, parent_idx + 1, { id = id, col = new_col })
-            end
-            relayout()
-            wm.set_pan(col_offset(new_col), 0)
-            wm.focus(id)
-        elseif event == "unmap" then
-            sync_from_graph()
-            local removed_col = nil
-            for i, w in ipairs(windows) do
-                if w.id == id then removed_col = w.col; table.remove(windows, i); break end
-            end
-            if #windows == 0 then
-                if container then wm.destroy_container(container); container = nil end
-                wm.set_virtual_size(wm.screen_width(), wm.screen_height())
-                wm.set_pan(0, 0)
-                cols = 1; col_ws = {}
-            else
-                local col_empty = true
-                for _, w in ipairs(windows) do
-                    if w.col == removed_col then col_empty = false; break end
-                end
-                if col_empty and removed_col then
-                    for c = removed_col, cols - 1 do col_ws[c] = col_ws[c + 1] end
-                    col_ws[cols] = nil
-                    for _, w in ipairs(windows) do
-                        if w.col > removed_col then w.col = w.col - 1 end
-                    end
-                    cols = cols - 1
-                end
-                relayout()
-                if prev_id and find_window(prev_id) then
-                    wm.focus(prev_id)
-                elseif #windows > 0 then
-                    wm.focus(windows[#windows].id)
-                end
-            end
-        end
-    end
-end
+-- Glue: Super+G on one floating window, then another: they stick side by side.
+section("glue", function()
+	local anchor = nil
+	bind(M, "g", "glue", function()
+		local f = wm.get_focused()
+		if not f then
+			return
+		end
+		if not anchor then
+			anchor = f
+			return
+		end
+		local a = anchor
+		anchor = nil
+		if f == a or wm.get_node_type(a) == nil then
+			return
+		end
+		wm.float_right_of(f, a)
+		wm.float_left_of(a, f)
+		wm.float_equal_height(f, a)
+		wm.float_equal_height(a, f)
+		wm.align_top(f, a)
+		wm.align_top(a, f)
+	end)
+end)
 
 -- ------------------------------------------------------------
--- Scroller2D
+-- Workspaces and monitors
 -- ------------------------------------------------------------
-local function make_scroller2d()
-    local windows   = {}
-    local cols      = 1
-    local rows      = 1
-    local container = nil
+section("workspaces", function()
+	for i = 1, 9 do
+		local key = tostring(i)
+		bind(M, key, "workspace " .. key, function()
+			wm.switch_to_workspace(i)
+		end)
+		bind(M | S, key, "send and follow to " .. key, function()
+			local id = wm.get_focused()
+			if id then
+				wm.send_to_workspace(id, i)
+				wm.switch_to_workspace(i)
+			end
+		end)
+		bind(A, key, "send to " .. key, function()
+			local id = wm.get_focused()
+			if id then
+				wm.send_to_workspace(id, i)
+			end
+		end)
+	end
 
-    local function is_win(id) return wm.get_node_type(id) == "window" end
-    local function is_ws(id)  return wm.get_node_type(id) == "workspace" end
+	-- Nested workspaces
+	bind(M, "w", "new nested workspace", function()
+		wm.create_nested_workspace()
+	end)
+	bind(M, "e", "enter nested", wm.enter_nested)
+	bind(M, "Escape", "leave nested", wm.leave_nested)
+end)
 
-    local function get_container()
-        if not container then container = wm.create_empty_node() end
-        return container
-    end
+section("monitors", function()
+	for key, dir in pairs({ comma = "left", period = "right" }) do
+		bind(M, key, "monitor " .. dir, function()
+			wm.focus_output(dir)
+		end)
+		bind(M | S, key, "send to monitor " .. dir, function()
+			local id = wm.get_focused()
+			if id then
+				wm.send_to_output(id, dir)
+			end
+		end)
+	end
+end)
 
-    local function find_window(id)
-        for _, w in ipairs(windows) do if w.id == id then return w end end
-        return nil
-    end
-
-    local function find_window_idx(id)
-        for i, w in ipairs(windows) do if w.id == id then return i end end
-        return nil
-    end
-
-    local function relayout()
-        if #windows == 0 then return end
-        local _, _, ww, wh = wm.get_work_area()
-        local vw, vh = ww * cols, wh * rows
-        wm.set_virtual_size(vw, vh)
-        local cont = get_container()
-        wm.clear_constraints(cont)
-        wm.fixed_width(cont, vw); wm.fixed_height(cont, vh)
-        for _, win in ipairs(windows) do
-            wm.clear_constraints(win.id)
-            wm.grid_cell(win.id, win.col-1, win.row-1, cols, rows, cont)
-        end
-    end
-
-    wm.bind(M, "t", function()
-        local focused = wm.get_focused()
-        if not focused then return end
-        local w = find_window(focused)
-        if not w then return end
-        w.dir = (w.dir == "right") and "down" or "right"
-    end)
-
-    return function(event, id, prev_id)
-        if not is_win(id) and not is_ws(id) then return end
-        if event == "map" then
-            if #windows == 0 then
-                table.insert(windows, {id=id, col=1, row=1, dir="right"})
-                cols = 1; rows = 1
-            else
-                local parent_idx = #windows
-                local parent = find_window(prev_id)
-                if parent then parent_idx = find_window_idx(prev_id)
-                else parent = windows[#windows] end
-                local new_col = parent.col
-                local new_row = parent.row
-                if parent.dir == "right" then
-                    new_col = parent.col + 1
-                    if new_col > cols then cols = new_col
-                    else
-                        for _, w in ipairs(windows) do
-                            if w.col >= new_col then w.col = w.col + 1 end
-                        end
-                        cols = cols + 1
-                    end
-                else
-                    new_row = parent.row + 1
-                    if new_row > rows then rows = new_row
-                    else
-                        for _, w in ipairs(windows) do
-                            if w.row >= new_row then w.row = w.row + 1 end
-                        end
-                        rows = rows + 1
-                    end
-                end
-                table.insert(windows, parent_idx + 1, {id=id, col=new_col, row=new_row, dir="right"})
-            end
-            relayout(); wm.focus(id)
-        elseif event == "unmap" then
-            for i, w in ipairs(windows) do
-                if w.id == id then table.remove(windows, i); break end
-            end
-            if #windows == 0 then
-                if container then wm.destroy_container(container); container = nil end
-                wm.set_virtual_size(wm.screen_width(), wm.screen_height())
-                wm.set_pan(0, 0)
-                cols = 1; rows = 1
-            else
-                cols = 1; rows = 1
-                for _, w in ipairs(windows) do
-                    if w.col > cols then cols = w.col end
-                    if w.row > rows then rows = w.row end
-                end
-                relayout()
-            end
-        elseif event == "resize" then
-            local _, _, ww, wh = wm.get_work_area()
-            local max_col_w = ww
-            local max_row_h = wh
-            for _, win in ipairs(windows) do
-                local geo = wm.get_node_geometry(win.id)
-                if geo then
-                    max_col_w = math.max(max_col_w, geo.width)
-                    max_row_h = math.max(max_row_h, geo.height)
-                end
-            end
-            local vw = math.ceil(max_col_w / cols) * cols
-            local vh = math.ceil(max_row_h / rows) * rows
-            wm.set_virtual_size(vw, vh)
-            local cont = get_container()
-            wm.remove_constraint(cont, "fixed_width")
-            wm.remove_constraint(cont, "fixed_height")
-            wm.fixed_width(cont, vw)
-            wm.fixed_height(cont, vh)
-        end
-    end
-end
-
--- ------------------------------------------------------------
--- Fibonacci
--- ------------------------------------------------------------
-local function make_fibonacci()
-    local PHI   = (1 + math.sqrt(5)) / 2
-    local RATIO = 1 / PHI
-    local REST  = 1 - RATIO
-
-    local windows    = {}
-    local containers = {}
-    local anchor     = nil
-
-    local function is_win(id) return wm.get_node_type(id) == "window" end
-    local function is_ws(id)  return wm.get_node_type(id) == "workspace" end
-
-    local function get_anchor()
-        if not anchor then anchor = wm.create_container() end
-        return anchor
-    end
-
-    local function reset()
-        for _, c in ipairs(containers) do wm.destroy_container(c) end
-        containers = {}; windows = {}; anchor = nil
-    end
-
-    local steps = {
-        { axis = "h", ratios = {RATIO, REST}, win_idx = 1 },
-        { axis = "v", ratios = {RATIO, REST}, win_idx = 1 },
-        { axis = "h", ratios = {REST, RATIO}, win_idx = 2 },
-        { axis = "v", ratios = {REST, RATIO}, win_idx = 2 },
-    }
-
-    local function default_ratio(step_idx)
-        local s = steps[step_idx]
-        return { s.ratios[1], s.ratios[2] }
-    end
-
-    local function next_step(step_idx)
-        return (step_idx % 4) + 1
-    end
-
-    local function find_idx(id)
-        for i, w in ipairs(windows) do
-            if w.id == id then return i end
-        end
-        return nil
-    end
-
-    local function rebuild(extra_ratios)
-        local n = #windows
-        if n == 0 then return end
-        local saved = extra_ratios or {}
-        for i, cont in ipairs(containers) do
-            if not saved[i] then
-                local r = wm.get_split_ratios(cont)
-                if r then saved[i] = { r[1], r[2] } end
-            end
-        end
-        for _, c in ipairs(containers) do wm.clear_constraints(c) end
-        for _, w in ipairs(windows) do wm.clear_constraints(w.id) end
-        if n == 1 then
-            wm.grid_cell(windows[1].id, 0, 0, 1, 1, get_anchor())
-            return
-        end
-        while #containers < n - 1 do
-            table.insert(containers, wm.create_container())
-        end
-        while #containers > n - 1 do
-            wm.destroy_container(table.remove(containers))
-            saved[#containers + 1] = nil
-        end
-        wm.grid_cell(containers[1], 0, 0, 1, 1, get_anchor())
-        for i = 1, n - 1 do
-            local step    = steps[windows[i].step]
-            local cur_win = windows[i].id
-            local rest    = (i < n - 1) and containers[i + 1] or windows[n].id
-            local r       = saved[i] or default_ratio(windows[i].step)
-            local children = step.win_idx == 1 and { cur_win, rest } or { rest, cur_win }
-            wm.split(containers[i], step.axis, { r[1], r[2] }, children)
-        end
-    end
-
-    return function(event, id, prev_id)
-        if not is_win(id) and not is_ws(id) then return end
-        if event == "map" then
-            local insert_at = #windows + 1
-            local step_idx  = 1
-            if prev_id then
-                local idx = find_idx(prev_id)
-                if idx then
-                    insert_at = idx + 1
-                    step_idx  = next_step(windows[idx].step)
-                end
-            elseif #windows > 0 then
-                step_idx = next_step(windows[#windows].step)
-            end
-            table.insert(windows, insert_at, { id = id, step = step_idx })
-            for i = insert_at + 1, #windows do
-                windows[i].step = next_step(windows[i - 1].step)
-            end
-            rebuild(); wm.focus(id)
-        elseif event == "unmap" then
-            local saved = {}
-            for i, cont in ipairs(containers) do
-                local r = wm.get_split_ratios(cont)
-                if r then saved[i] = { r[1], r[2] } end
-            end
-            local idx = find_idx(id)
-            if idx then
-                table.remove(windows, idx)
-                for i = idx, #windows do
-                    windows[i].step = i == 1 and 1 or next_step(windows[i-1].step)
-                end
-                for i = idx, #windows do saved[i] = saved[i + 1] end
-                saved[#windows + 1] = nil
-            end
-            if #windows == 0 then reset() else rebuild(saved) end
-        end
-    end
-end
-
--- ------------------------------------------------------------
--- Zoom
--- ------------------------------------------------------------
-local function make_zoom()
-    local windows    = {}
-    local current    = 1
-    local STRIP_H    = 80
-    local main_cont  = nil
-    local strip_cont = nil
-
-    local function is_win(id) return wm.get_node_type(id) == "window" end
-    local function is_ws(id)  return wm.get_node_type(id) == "workspace" end
-
-    local function find_idx(id)
-        for i, wid in ipairs(windows) do if wid == id then return i end end
-        return nil
-    end
-
-    local function get_strip_cont()
-        if not strip_cont then strip_cont = wm.create_container() end
-        return strip_cont
-    end
-
-    local function relayout()
-        local n = #windows
-        if n == 0 then return end
-        local _, wy, _, _ = wm.get_work_area()
-        local sw = wm.screen_width()
-        local sh = wm.screen_height()
-        local available_h = sh - wy
-
-        if n == 1 then
-            wm.clear_constraints(windows[1])
-            wm.fixed_x(windows[1], 0); wm.fixed_y(windows[1], 0)
-            wm.fixed_width(windows[1], sw); wm.fixed_height(windows[1], available_h)
-            wm.show_window(windows[1])
-            return
-        end
-
-        local main_h = available_h - STRIP_H
-        wm.clear_constraints(windows[current])
-        wm.fixed_x(windows[current], 0); wm.fixed_y(windows[current], 0)
-        wm.fixed_width(windows[current], sw); wm.fixed_height(windows[current], main_h)
-        wm.show_window(windows[current])
-
-        local sc = get_strip_cont()
-        local saved = {}
-        if strip_cont then
-            local r = wm.get_split_ratios(strip_cont)
-            if r then saved = r end
-        end
-        wm.clear_constraints(sc)
-        wm.fixed_x(sc, 0); wm.fixed_y(sc, main_h)
-        wm.fixed_width(sc, sw); wm.fixed_height(sc, STRIP_H)
-
-        local strip_wins = {}
-        for i, id in ipairs(windows) do
-            if i ~= current then table.insert(strip_wins, id) end
-        end
-        for _, id in ipairs(strip_wins) do wm.clear_constraints(id) end
-
-        if #strip_wins == 1 then
-            wm.grid_cell(strip_wins[1], 0, 0, 1, 1, sc)
-        else
-            local ratios = {}
-            for i = 1, #strip_wins do
-                ratios[i] = saved[i] or (1.0 / #strip_wins)
-            end
-            wm.split(sc, "h", ratios, strip_wins)
-        end
-        for _, id in ipairs(strip_wins) do wm.show_window(id) end
-    end
-
-    local function reset()
-        if main_cont  then wm.destroy_container(main_cont);  main_cont  = nil end
-        if strip_cont then wm.destroy_container(strip_cont); strip_cont = nil end
-        windows = {}; current = 1
-    end
-
-    wm.bind(M, "Tab", function()
-        if #windows < 2 then return end
-        current = (current % #windows) + 1
-        relayout()
-        if windows[current] then wm.focus(windows[current]) end
-    end)
-
-    wm.bind(M | S, "Tab", function()
-        if #windows < 2 then return end
-        current = ((current - 2) % #windows) + 1
-        relayout()
-        if windows[current] then wm.focus(windows[current]) end
-    end)
-
-    return function(event, id, prev_id)
-        if not is_win(id) and not is_ws(id) then return end
-        if event == "map" then
-            local insert_at = #windows + 1
-            if prev_id then
-                local idx = find_idx(prev_id)
-                if idx then insert_at = idx + 1 end
-            end
-            table.insert(windows, insert_at, id)
-            current = insert_at
-            relayout(); wm.focus(id)
-        elseif event == "unmap" then
-            local idx = find_idx(id)
-            if idx then
-                table.remove(windows, idx)
-                if #windows == 0 then
-                    reset()
-                else
-                    if current > idx then current = current - 1 end
-                    current = math.min(current, #windows)
-                    relayout()
-                    if windows[current] then wm.focus(windows[current]) end
-                end
-            end
-        end
-    end
-end
-
--- ============================================================
--- Layout registry and cycling
--- ============================================================
-local layouts = {
-    make_dwindle, make_grid, make_fair,
-    make_meridian,
-    make_scroller, make_scroller2d,
-    make_fibonacci, make_zoom,
-}
-local layout_names = {
-    "dwindle", "grid", "fair",
-    "meridian",
-    "scroller", "scroller2d",
-    "fibonacci", "zoom",
-}
-
-wm.bind(M | S, "n", function()
-    local idx = (wm.get_arranger_index() % #layouts) + 1
-    wm.set_arranger(layouts[idx], layout_names[idx])
-    wm.set_arranger_index(idx)
+-- Zoom: Super+minus out, Super+equal in, Super+0 the whole canvas and back.
+section("zoom", function()
+	bind(M, "minus", "zoom out", function()
+		wm.set_zoom(math.max(0.25, wm.get_zoom() - 0.25))
+	end)
+	bind(M, "equal", "zoom in", function()
+		wm.set_zoom(math.min(1, wm.get_zoom() + 0.25))
+	end)
+	bind(M, "0", "zoom toggle", function()
+		wm.set_zoom(wm.get_zoom() < 1 and 1 or 0)
+	end)
 end)
 
 -- ============================================================
--- Arranger bootstrap
+-- Layouts. An arranger gets a snapshot s of its workspace and returns the
+-- whole layout and the state to keep; duckwm stores the state per
+-- workspace. Window constraints are relative to the work area.
 -- ============================================================
-local DEFAULT_LAYOUT = "dwindle"
+local L = {}
 
-wm.set_default_arranger(function()
-    for i, name in ipairs(layout_names) do
-        if name == DEFAULT_LAYOUT then
-            return layouts[i]()
-        end
-    end
-    return make_dwindle()
-end, DEFAULT_LAYOUT)
+function L.key(k)
+	return { key = k }
+end
+
+function L.fixed(x, y, w, h)
+	return {
+		{ type = "fixed_x", value = x },
+		{ type = "fixed_y", value = y },
+		{ type = "fixed_width", value = math.max(0, w) },
+		{ type = "fixed_height", value = math.max(0, h) },
+	}
+end
+
+function L.at(id, x, y, w, h)
+	return { id = id, constraints = L.fixed(x, y, w, h) }
+end
+
+function L.cell_abs(container, x, y, w, h)
+	return { type = "grid_cell_abs", x = x, y = y, w = math.max(0, w), h = math.max(0, h), container = container }
+end
+
+function L.split(container, axis, children, ratios)
+	if not ratios then
+		ratios = {}
+		for i = 1, #children do
+			ratios[i] = 1 / #children
+		end
+	end
+	return { type = "split", container = container, axis = axis, ratios = ratios, children = children }
+end
+
+-- The tiled windows, without the one being unmapped.
+function L.windows(s)
+	local out = {}
+	for _, w in ipairs(s.windows or {}) do
+		if not (s.event == "unmap" and w.id == s.id) then
+			out[#out + 1] = w.id
+		end
+	end
+	return out
+end
+
+function L.geometry(s, id)
+	for _, w in ipairs(s.windows or {}) do
+		if w.id == id then
+			return w.geometry
+		end
+	end
+end
+
+function L.area(s, id)
+	local g = L.geometry(s, id)
+	return g and g.width * g.height or 0
+end
+
+-- The state as stored, or a fresh default if it's missing or not a table.
+function L.state(s, default)
+	return type(s.state) == "table" and s.state or default
+end
+
+-- Keyed container k's split ratios as duckwm has them: resizes end up here.
+function L.ratios_of(s, k)
+	for _, n in ipairs((s.layout or {}).nodes or {}) do
+		if type(n.id) == "table" and n.id.key == k then
+			for _, c in ipairs(n.constraints or {}) do
+				if c.type == "split" then
+					return c.ratios
+				end
+			end
+		end
+	end
+end
+
+-- Nested rows ("h") and columns ("v"). A branch of one child without an
+-- explicit key is just that child. opts: ratios, key.
+function L.branch(axis, kids, opts)
+	opts = opts or {}
+	if #kids == 0 then
+		return nil
+	end
+	if #kids == 1 and opts.key == nil then
+		return kids[1]
+	end
+	local ratios = opts.ratios
+	if ratios and #ratios ~= #kids then
+		ratios = nil
+	end
+	return { axis = axis, kids = kids, ratios = ratios, key = opts.key }
+end
+
+-- A tree as nodes: keyed containers holding splits. Keys are depth-first
+-- from 0 unless given; a container's ratios as duckwm has them win over the
+-- tree's while it has the same number of children.
+function L.compile(s, t)
+	local wa = s.work_area
+	if t == nil then
+		return {}
+	end
+	if type(t) ~= "table" then
+		return { L.at(t, 0, 0, wa.width, wa.height) }
+	end
+	local branches, taken = {}, {}
+	local function walk(b)
+		branches[#branches + 1] = b
+		if b.key then
+			taken[b.key] = true
+		end
+		for _, c in ipairs(b.kids) do
+			if type(c) == "table" then
+				walk(c)
+			end
+		end
+	end
+	walk(t)
+	local auto = 0
+	for _, b in ipairs(branches) do
+		if b.key then
+			b.k = b.key
+		else
+			while taken[auto] do
+				auto = auto + 1
+			end
+			b.k, auto = auto, auto + 1
+		end
+	end
+	local nodes = {}
+	for _, b in ipairs(branches) do
+		local stored = L.ratios_of(s, b.k)
+		local ratios = (stored and #stored == #b.kids) and stored or b.ratios
+		local kids = {}
+		for i, c in ipairs(b.kids) do
+			kids[i] = type(c) == "table" and L.key(c.k) or c
+		end
+		local cons = b == t and L.fixed(0, 0, wa.width, wa.height) or {}
+		cons[#cons + 1] = L.split(L.key(b.k), b.axis, kids, ratios)
+		nodes[#nodes + 1] = { id = L.key(b.k), constraints = cons }
+		for _, c in ipairs(b.kids) do
+			if type(c) ~= "table" then
+				nodes[#nodes + 1] = { id = c, constraints = {} }
+			end
+		end
+	end
+	return nodes
+end
+
+-- The reply: the whole layout and the state to keep; a new window gets focus.
+function L.done(s, nodes, state)
+	if s.event == "map" then
+		focus(s.id)
+	end
+	return { nodes = nodes }, state
+end
+
+-- ------------------------------------------------------------
+-- Split direction, per window: where the next window goes in scroller2d
+-- and manual ("h": to the right, "v": below), shown on the focused border.
+-- ------------------------------------------------------------
+local DIRS = {}
+
+local function dir_of(w)
+	return DIRS[w] or "h"
+end
+
+local function indicate(windows, focused)
+	for _, w in ipairs(windows) do
+		if w ~= focused then
+			pcall(wm.clear_node_indicator, w)
+		end
+	end
+	if focused and contains(windows, focused) then
+		pcall(wm.set_node_indicator, focused, dir_of(focused) == "h" and "right" or "bottom")
+	end
+end
+
+-- ------------------------------------------------------------
+-- Grid: as square as fits, filled row by row. No state, nothing to go
+-- wrong: also what any other layout falls back to if it fails.
+-- ------------------------------------------------------------
+local function grid(s)
+	local ws = L.windows(s)
+	if #ws == 0 then
+		return L.done(s, {})
+	end
+	local cols = math.ceil(math.sqrt(#ws))
+	local rows = math.ceil(#ws / cols)
+	local W, H = s.work_area.width, s.work_area.height
+	local nodes = {}
+	for i, w in ipairs(ws) do
+		local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
+		local x0, x1 = math.floor(c * W / cols), math.floor((c + 1) * W / cols)
+		local y0, y1 = math.floor(r * H / rows), math.floor((r + 1) * H / rows)
+		nodes[i] = L.at(w, x0, y0, x1 - x0, y1 - y0)
+	end
+	return L.done(s, nodes)
+end
+
+-- Fair: columns of near-equal windows; two side by side, then as square as possible.
+local function fair(s)
+	local ws = L.windows(s)
+	local rows = #ws == 2 and 1 or math.max(1, math.ceil(math.sqrt(#ws)))
+	local columns = {}
+	for i = 1, #ws, rows do
+		local col = {}
+		for j = i, math.min(#ws, i + rows - 1) do
+			col[#col + 1] = ws[j]
+		end
+		columns[#columns + 1] = L.branch("v", col)
+	end
+	return L.done(s, L.compile(s, L.branch("h", columns)))
+end
+
+-- Dwindle: each new window splits the focused one, alternating direction,
+-- on the side of the cursor. A tree is a window, or { k, axis, a, b }.
+local function dw_leaves(t, out)
+	out = out or {}
+	if t == nil then
+		return out
+	end
+	if type(t) ~= "table" then
+		out[#out + 1] = t
+		return out
+	end
+	dw_leaves(t.a, out)
+	dw_leaves(t.b, out)
+	return out
+end
+
+local function dw_remove(t, w)
+	if type(t) ~= "table" then
+		if t == w then
+			return nil
+		end
+		return t
+	end
+	local a, b = dw_remove(t.a, w), dw_remove(t.b, w)
+	if a == nil then
+		return b
+	end
+	if b == nil then
+		return a
+	end
+	return { k = t.k, axis = t.axis, a = a, b = b }
+end
+
+local function dw_replace(t, target, new)
+	if type(t) ~= "table" then
+		return t == target and new or t
+	end
+	return { k = t.k, axis = t.axis, a = dw_replace(t.a, target, new), b = dw_replace(t.b, target, new) }
+end
+
+local function dw_build(t)
+	if type(t) ~= "table" then
+		return t
+	end
+	return L.branch(t.axis, { dw_build(t.a), dw_build(t.b) }, { key = t.k })
+end
+
+local function dwindle(s)
+	local st = L.state(s, { h = true, key = 1 })
+	if type(st.key) ~= "number" then
+		st.key = 1
+	end
+	local present = set(L.windows(s))
+	for _, w in ipairs(dw_leaves(st.tree)) do
+		if not present[w] then
+			st.tree = dw_remove(st.tree, w)
+		end
+	end
+	local have = set(dw_leaves(st.tree))
+	for _, w in ipairs(L.windows(s)) do
+		if not have[w] then
+			if st.tree == nil then
+				st.tree = w
+			else
+				local ls = dw_leaves(st.tree)
+				local target = ls[1]
+				for _, x in ipairs(ls) do
+					if L.area(s, x) > L.area(s, target) then
+						target = x
+					end
+				end
+				if s.prev_id and contains(ls, s.prev_id) then
+					local g = L.geometry(s, s.prev_id)
+					if not g or (g.width >= 20 and g.height >= 20) then
+						target = s.prev_id
+					end
+				end
+				local first = ((st.h and s.cursor_dx or s.cursor_dy) or 0) < 0
+				local split = {
+					k = st.key,
+					axis = st.h and "h" or "v",
+					a = first and w or target,
+					b = first and target or w,
+				}
+				st.tree = dw_replace(st.tree, target, split)
+				st.h, st.key = not st.h, st.key + 1
+			end
+			have[w] = true
+		end
+	end
+	return L.done(s, L.compile(s, dw_build(st.tree)), st)
+end
+
+-- Scroller2D: rows of windows on a canvas wider than the screen, panned to
+-- the focused one. A window opens right of the focused one, pushing along
+-- only the windows after it in that row; or, with the focused window's
+-- direction "v" (Super+T), below it.
+-- State: { rows = { { h = height, cells = { {window, x, width}, ... } }, ... } }.
+local function scroller2d(s)
+	local W, H = s.work_area.width, s.work_area.height
+	local st = L.state(s, {})
+	local present = set(L.windows(s))
+	if s.event == "unmap" then
+		DIRS[s.id] = nil
+	end
+
+	-- What's still open, each row closing the gap a closed window leaves.
+	local rows, gone = {}, nil
+	for _, r in ipairs(type(st.rows) == "table" and st.rows or {}) do
+		if type(r) == "table" and type(r.cells) == "table" then
+			local cells, shift = {}, 0
+			for _, c in ipairs(r.cells) do
+				if type(c) == "table" and present[c[1]] then
+					cells[#cells + 1] = { c[1], c[2] - shift, c[3] }
+				elseif type(c) == "table" then
+					shift = shift + (c[3] or 0)
+					if c[1] == s.id then
+						gone = { cells = cells, before = #cells }
+					end
+				end
+			end
+			if #cells > 0 then
+				rows[#rows + 1] = { h = r.h or H, cells = cells }
+			end
+		end
+	end
+
+	local function find(win)
+		for ri, r in ipairs(rows) do
+			for ci, c in ipairs(r.cells) do
+				if c[1] == win then
+					return ri, ci
+				end
+			end
+		end
+	end
+	-- Move the cells of row r that start at or after x along by d.
+	local function push(r, x, d)
+		for _, c in ipairs(r.cells) do
+			if c[2] >= x then
+				c[2] = c[2] + d
+			end
+		end
+	end
+	local function free(r, x0, x1)
+		for _, c in ipairs(r.cells) do
+			if c[2] < x1 and c[2] + c[3] > x0 then
+				return false
+			end
+		end
+		return true
+	end
+	local function sort(r)
+		table.sort(r.cells, function(a, b)
+			return a[2] < b[2]
+		end)
+	end
+
+	for _, win in ipairs(L.windows(s)) do
+		if not find(win) then
+			if #rows == 0 then
+				rows[1] = { h = H, cells = { { win, 0, W } } }
+			else
+				local ri, ci = find(s.prev_id)
+				if not ri then
+					ri = #rows
+					ci = #rows[ri].cells
+				end
+				local p = rows[ri].cells[ci]
+				if dir_of(p[1]) == "h" then -- right of the parent, its row pushed along
+					local x = p[2] + p[3]
+					push(rows[ri], x, W)
+					table.insert(rows[ri].cells, { win, x, W })
+					sort(rows[ri])
+				else -- under the parent, as wide as it
+					local below = rows[ri + 1]
+					if below and free(below, p[2], p[2] + p[3]) then
+						table.insert(below.cells, { win, p[2], p[3] })
+						sort(below)
+					else
+						table.insert(rows, ri + 1, { h = H, cells = { { win, p[2], p[3] } } })
+					end
+				end
+			end
+		end
+	end
+
+	if #rows == 0 then
+		wm.set_virtual_size(W, H)
+		wm.set_pan(0, 0)
+		return L.done(s, {}, false)
+	end
+
+	if s.event == "resize" then -- keep the sizes the user dragged to
+		for _, r in ipairs(rows) do
+			local h = 0
+			for _, c in ipairs(r.cells) do
+				local g = L.geometry(s, c[1])
+				if g then
+					local w = math.max(100, g.width)
+					push(r, c[2] + c[3], w - c[3])
+					c[3] = w
+					h = math.max(h, g.height)
+				end
+			end
+			if h > 0 then
+				r.h = math.max(100, h)
+			end
+		end
+	end
+
+	local nodes, ids, rect, y, vw = {}, {}, {}, 0, W
+	for _, r in ipairs(rows) do
+		for _, c in ipairs(r.cells) do
+			ids[#ids + 1] = c[1]
+			rect[c[1]] = { c[2], y, c[3], r.h }
+			nodes[#nodes + 1] = { id = c[1], constraints = { L.cell_abs(L.key(0), c[2], y, c[3], r.h) } }
+			vw = math.max(vw, c[2] + c[3])
+		end
+		y = y + r.h
+	end
+	local vh = math.max(y, H)
+	nodes[#nodes + 1] = { id = L.key(0), constraints = L.fixed(0, 0, vw, vh) }
+	wm.set_virtual_size(vw, vh)
+
+	-- Pan just enough to have win on screen.
+	local function reveal(win)
+		local r = rect[win]
+		if not r then
+			return
+		end
+		local px, py = wm.get_pan()
+		if r[1] < px or r[1] + r[3] > px + W then
+			px = r[1]
+		end
+		if r[2] < py or r[2] + r[4] > py + H then
+			py = r[2]
+		end
+		wm.set_pan(px, py)
+	end
+
+	if s.event == "map" or s.event == "focus" then
+		reveal(s.id)
+		indicate(ids, s.id)
+	elseif s.event == "unmap" then
+		local t
+		if present[s.prev_id] then
+			t = s.prev_id
+		elseif gone and #gone.cells > 0 then -- its left neighbour, or the one that took its place
+			t = gone.cells[math.max(1, gone.before)][1]
+		else
+			t = rows[1].cells[1][1]
+		end
+		reveal(t)
+		focus(t)
+		indicate(ids, t)
+	end
+	return L.done(s, nodes, { rows = rows })
+end
+
+-- Manual: i3-style. A new window joins the focused one's split if that split
+-- runs in the focused window's direction (Super+T); otherwise the two get a
+-- split of their own. A tree is a window, or { k, axis, kids, ratios }.
+local function m_leaves(t, out)
+	out = out or {}
+	if t == nil then
+		return out
+	end
+	if type(t) ~= "table" then
+		out[#out + 1] = t
+		return out
+	end
+	for _, c in ipairs(t.kids) do
+		m_leaves(c, out)
+	end
+	return out
+end
+
+local function m_containers(t, out)
+	out = out or {}
+	if type(t) == "table" then
+		out[#out + 1] = t
+		for _, c in ipairs(t.kids) do
+			m_containers(c, out)
+		end
+	end
+	return out
+end
+
+-- The container holding target, and where.
+local function m_parent(t, target)
+	if type(t) ~= "table" then
+		return nil
+	end
+	for i, c in ipairs(t.kids) do
+		if c == target then
+			return t, i
+		end
+		local p, j = m_parent(c, target)
+		if p then
+			return p, j
+		end
+	end
+end
+
+local function renorm(r)
+	local sum, out = 0, {}
+	for _, v in ipairs(r) do
+		sum = sum + v
+	end
+	for i, v in ipairs(r) do
+		out[i] = sum > 0 and v / sum or 1 / #r
+	end
+	return out
+end
+
+local function m_insert(s, st, win)
+	if st.tree == nil then
+		st.tree = win
+		return
+	end
+	local ls = m_leaves(st.tree)
+	local f = ls[1]
+	if s.prev_id and contains(ls, s.prev_id) then
+		f = s.prev_id
+	else
+		for _, x in ipairs(ls) do
+			if L.area(s, x) > L.area(s, f) then
+				f = x
+			end
+		end
+	end
+	local axis = dir_of(f)
+	DIRS[win] = axis -- a new window inherits its parent's direction
+	local p, i = m_parent(st.tree, f)
+	if p and p.axis == axis then -- join f's split, right after it, with f's share
+		table.insert(p.kids, i + 1, win)
+		table.insert(p.ratios, i + 1, p.ratios[i] or 1 / #p.kids)
+		p.ratios = renorm(p.ratios)
+		return
+	end
+	local pair = { k = st.key, axis = axis, kids = { f, win }, ratios = { 0.5, 0.5 } }
+	st.key = st.key + 1
+	if p then
+		p.kids[i] = pair
+	else
+		st.tree = pair
+	end
+end
+
+local function m_remove(st, win)
+	local p, i = m_parent(st.tree, win)
+	if not p then -- the lone root window
+		st.tree = nil
+		return
+	end
+	table.remove(p.kids, i)
+	table.remove(p.ratios, i)
+	p.ratios = renorm(p.ratios)
+	if #p.kids == 1 then -- a split of one: its child takes its place
+		local gp, j = m_parent(st.tree, p)
+		if gp then
+			gp.kids[j] = p.kids[1]
+		else
+			st.tree = p.kids[1]
+		end
+	end
+end
+
+local function m_build(t)
+	if type(t) ~= "table" then
+		return t
+	end
+	local kids = {}
+	for i, c in ipairs(t.kids) do
+		kids[i] = m_build(c)
+	end
+	return L.branch(t.axis, kids, { key = t.k, ratios = t.ratios })
+end
+
+local function manual(s)
+	local st = L.state(s, { key = 1 })
+	if type(st.key) ~= "number" then
+		st.key = 1
+	end
+	for _, c in ipairs(m_containers(st.tree)) do -- ratios as duckwm has them: resizes stick
+		local r = L.ratios_of(s, c.k)
+		if r and #r == #c.kids then
+			c.ratios = r
+		end
+	end
+	local present = set(L.windows(s))
+	for _, w in ipairs(m_leaves(st.tree)) do
+		if not present[w] then
+			m_remove(st, w)
+			DIRS[w] = nil
+		end
+	end
+	local have = set(m_leaves(st.tree))
+	for _, w in ipairs(L.windows(s)) do
+		if not have[w] then
+			m_insert(s, st, w)
+		end
+	end
+	local ids = m_leaves(st.tree)
+	if s.event == "map" or s.event == "focus" then
+		indicate(ids, s.id)
+	elseif s.event == "unmap" and #ids > 0 then
+		indicate(ids, contains(ids, s.prev_id) and s.prev_id or nil)
+	end
+	return L.done(s, L.compile(s, m_build(st.tree)), st)
+end
+
+-- ============================================================
+-- Arrangers. set_arranger takes a factory; state lives in duckwm, so every
+-- workspace shares the one function. A layout that fails is reported and
+-- laid out as a grid this time, its state reset so the next call starts over.
+-- ============================================================
+local function arranger(name, f)
+	return function()
+		return function(_, _, _, s)
+			local ok, layout, state = pcall(f, s)
+			if ok then
+				return layout, state
+			end
+			complain("layout " .. name, layout)
+			local nodes = grid(s)
+			return nodes, false
+		end
+	end
+end
+
+local LAYOUTS = {
+	{ "fair", fair },
+	{ "grid", grid },
+	{ "dwindle", dwindle },
+	{ "scroller2d", scroller2d },
+	{ "manual", manual },
+}
+
+local function use(i)
+	wm.set_arranger(arranger(LAYOUTS[i][1], LAYOUTS[i][2]), LAYOUTS[i][1])
+	wm.set_arranger_index(i)
+	say("layout: " .. LAYOUTS[i][1], 1500)
+end
+
+section("layouts", function()
+	-- Super+Shift+N: the next layout on this workspace.
+	bind(M | S, "n", "next layout", function()
+		use((wm.get_arranger_index() or 0) % #LAYOUTS + 1)
+	end)
+	-- Super+T: where the next window goes (right or below), in scroller2d and manual.
+	bind(M, "t", "split direction", function()
+		local f = wm.get_focused()
+		local name = wm.get_arranger_name()
+		if not f or (name ~= "scroller2d" and name ~= "manual") then
+			return
+		end
+		DIRS[f] = dir_of(f) == "h" and "v" or "h"
+		indicate({ f }, f)
+	end)
+	wm.set_default_arranger(arranger("fair", fair), "fair")
+end)

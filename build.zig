@@ -21,6 +21,20 @@ const MetaStep = struct {
         return self;
     }
 
+    /// A description as LuaLS doc comments: every line prefixed, blank lines
+    /// kept as bare "---" so paragraphs and code blocks survive.
+    fn doc_comment(b: *std.Build, buf: *std.ArrayListUnmanaged(u8), text: []const u8) !void {
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |line| {
+            const l = std.mem.trimEnd(u8, line, " \t\r");
+            if (l.len == 0) {
+                try buf.appendSlice(b.allocator, "---\n");
+            } else {
+                try buf.print(b.allocator, "--- {s}\n", .{l});
+            }
+        }
+    }
+
     fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
         @setEvalBranchQuota(100000);
         const self: *MetaStep = @fieldParentPtr("step", step);
@@ -39,7 +53,7 @@ const MetaStep = struct {
                 try buf.print(b.allocator, "--- {s}\n---@type integer\nwm.{s} = 0\n\n", .{ con.desc, con.name });
             }
             inline for (api.entries) |entry| {
-                try buf.print(b.allocator, "--- {s}\n", .{entry.desc});
+                try doc_comment(b, &buf, entry.desc);
                 inline for (entry.params) |p| {
                     try buf.print(b.allocator, "---@param {s} {s}\n", .{ p.name, p.typ });
                 }
