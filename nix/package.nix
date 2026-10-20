@@ -8,6 +8,7 @@
   libx11,
   libxft,
   libxcursor,
+  libxrandr,
   # river
   river,
   wayland,
@@ -85,6 +86,7 @@ stdenv.mkDerivation {
         libx11
         libxft
         libxcursor
+        libxrandr
       ]
   );
 

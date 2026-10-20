@@ -1,4 +1,5 @@
 pub const WM = @import("wm/core.zig").WM;
+pub const output = @import("wm/output.zig");
 pub const KeybindKey = @import("wm/core.zig").KeybindKey;
 pub const Keybind = @import("wm/core.zig").Keybind;
 pub const platform_id = @import("wm/backend.zig").platform_id;

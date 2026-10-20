@@ -11,6 +11,16 @@ pub const platform = struct {
     pub const river = 2;
 };
 
+/// A monitor, as a backend reports it.
+pub const OutputInfo = struct {
+    /// Stays the same while it's connected.
+    id: u32,
+    /// Where it is, in global coordinates.
+    rect: Rect,
+    /// rect minus the docks and bars on it.
+    usable: Rect,
+};
+
 pub const Event = union(enum) {
     /// A bound key was pressed.
     key: KeyCombo,
@@ -18,7 +28,7 @@ pub const Event = union(enum) {
     expose: WindowHandle,
     /// The keyboard mapping changed; bindings must be grabbed again.
     keymap_changed,
-    /// Docks or panels changed the reserved screen area.
+    /// Monitors or docks changed: outputs and work areas must be read again.
     reserved_area_changed,
     /// A new top-level window wants to be shown.
     map_request: MapRequest,
@@ -87,6 +97,15 @@ pub const Rect = struct {
     y: i32,
     width: u32,
     height: u32,
+
+    pub fn inset(r: Rect, i: Insets) Rect {
+        return .{
+            .x = r.x + @as(i32, @intCast(i.left)),
+            .y = r.y + @as(i32, @intCast(i.top)),
+            .width = r.width -| i.left -| i.right,
+            .height = r.height -| i.top -| i.bottom,
+        };
+    }
 };
 
 pub const Size = struct {

@@ -33,6 +33,7 @@
           libx11
           libxft
           libxcursor
+          libxrandr
           stdenv.cc.libc.dev
 
           # river backend

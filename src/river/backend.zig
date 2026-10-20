@@ -153,6 +153,7 @@ const Window = struct {
 };
 
 const Output = struct {
+    id: u32,
     state: *State,
     obj: *river.OutputV1,
     layer: ?*river.LayerShellOutputV1 = null,
@@ -187,6 +188,7 @@ const ButtonBinding = struct {
 const State = struct {
     allocator: std.mem.Allocator,
     display: *wl.Display,
+    next_output_id: u32 = 1,
     registry: *wl.Registry,
 
     wm: ?*river.WindowManagerV1 = null,
@@ -374,7 +376,8 @@ const State = struct {
 
     fn add_output(s: *State, obj: *river.OutputV1) void {
         const o = s.allocator.create(Output) catch return obj.destroy();
-        o.* = .{ .state = s, .obj = obj };
+        o.* = .{ .state = s, .obj = obj, .id = s.next_output_id };
+        s.next_output_id += 1;
         obj.setListener(*Output, output_listener, o);
         if (s.layer_shell) |ls| {
             if (ls.getOutput(obj)) |lo| {
@@ -383,7 +386,7 @@ const State = struct {
             } else |_| {}
         }
         s.outputs.append(s.allocator, o) catch {};
-        if (s.primary == null) s.set_primary(o);
+        if (s.primary == null) s.set_primary(o) else s.push(.reserved_area_changed);
     }
 
     fn set_primary(s: *State, o: ?*Output) void {
@@ -403,6 +406,7 @@ const State = struct {
         if (o.layer) |l| l.destroy();
         o.obj.destroy();
         if (s.primary == o) s.set_primary(if (s.outputs.items.len > 0) s.outputs.items[0] else null);
+        s.push(.reserved_area_changed);
         s.allocator.destroy(o);
     }
 
@@ -517,8 +521,8 @@ const State = struct {
             }
 
             if (s.fullscreen == w.handle and !w.fullscreen) {
-                if (s.primary) |p| {
-                    w.obj.fullscreen(p.obj);
+                if (s.output_at(w.want_pos)) |o| {
+                    w.obj.fullscreen(o.obj);
                     w.obj.informFullscreen();
                     w.fullscreen = true;
                 }
@@ -934,6 +938,14 @@ const State = struct {
         s.push_prompt_key(kc);
         s.repeat_next_ms = now + @divTrunc(1000, @max(1, s.repeat_rate));
     }
+
+    /// The output a point is on (the primary if none).
+    fn output_at(s: *State, p: types.Point) ?*Output {
+        for (s.outputs.items) |o| {
+            if (p.x >= o.x and p.x < o.x + o.width and p.y >= o.y and p.y < o.y + o.height) return o;
+        }
+        return s.primary;
+    }
 };
 
 // --- Helpers ---
@@ -1166,12 +1178,12 @@ fn output_listener(_: *river.OutputV1, event: river.OutputV1.Event, o: *Output) 
         .position => |e| {
             o.x = e.x;
             o.y = e.y;
-            if (s.primary == o) s.push(.reserved_area_changed);
+            s.push(.reserved_area_changed);
         },
         .dimensions => |e| {
             o.width = e.width;
             o.height = e.height;
-            if (s.primary == o) s.push(.reserved_area_changed);
+            s.push(.reserved_area_changed);
         },
         .removed => s.remove_output(o),
         else => {},
@@ -1182,7 +1194,7 @@ fn layer_output_listener(_: *river.LayerShellOutputV1, event: river.LayerShellOu
     switch (event) {
         .non_exclusive_area => |e| {
             o.usable = .{ .x = e.x, .y = e.y, .width = nonneg(e.width), .height = nonneg(e.height) };
-            if (o.state.primary == o) o.state.push(.reserved_area_changed);
+            o.state.push(.reserved_area_changed);
         },
     }
 }
@@ -1972,4 +1984,30 @@ pub const Backend = struct {
         const w = wait orelse return -1;
         return @intCast(std.math.clamp(w, 0, std.math.maxInt(i32)));
     }
+
+    pub fn outputs(self: *Backend, buf: []types.OutputInfo) []types.OutputInfo {
+        const s = self.state;
+        var count: usize = 0;
+        if (s.primary) |p| {
+            buf[0] = output_info(s, p);
+            count = 1;
+        }
+        for (s.outputs.items) |o| {
+            if (o == s.primary or count == buf.len) continue;
+            if (o.width <= 0 or o.height <= 0) continue; // not configured yet
+            buf[count] = output_info(s, o);
+            count += 1;
+        }
+        return buf[0..count];
+    }
 };
+
+fn output_info(s: *const State, o: *const Output) types.OutputInfo {
+    const rect: types.Rect = .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
+    var usable = o.usable orelse rect;
+    if (o == s.primary) if (s.error_bar) |bar| {
+        usable.y += @intCast(bar.height);
+        usable.height -|= bar.height;
+    };
+    return .{ .id = o.id, .rect = rect, .usable = usable };
+}

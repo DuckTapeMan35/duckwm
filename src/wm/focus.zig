@@ -1,6 +1,7 @@
 const std = @import("std");
-const WM = @import("core.zig").WM;
 const graph_mod = @import("graph");
+const output = @import("output.zig");
+const WM = @import("core.zig").WM;
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
@@ -119,7 +120,14 @@ pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
 }
 
 fn focus_via_edges(wm: *WM, comptime dir: Direction) void {
-    if (find_focus_target(wm, dir)) |target| set_focus(wm, target);
+    if (find_focus_target(wm, dir)) |target| return set_focus(wm, target);
+    // Nothing further this way on this output: on to the next one.
+    _ = output.focus_across(wm, switch (dir) {
+        .Left => .left,
+        .Right => .right,
+        .Up => .up,
+        .Down => .down,
+    });
 }
 
 pub fn focus_left(wm: *WM) anyerror!void {
@@ -136,6 +144,12 @@ pub fn focus_down(wm: *WM) anyerror!void {
 }
 
 pub fn set_focus(wm: *WM, node: *Node) void {
+    // A window showing on another output: that output takes focus first.
+    if (node.owner_graph) |og| {
+        if (output.of(wm, og)) |o| {
+            if (o != wm.output and output.visible(wm, o) == og) output.focus(wm, o);
+        }
+    }
     wm.journal.set(wm, "focused", node);
     wm.focus_dirty = true;
     if (!wm.is_shown(node)) return; // nothing on screen to focus (yet)
@@ -147,8 +161,8 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     // Snap pan to bring the focused window into view
     if (!node.floating and g == wm.visible_graph) {
         const work = wm.get_work_area();
-        const screen_w = @as(i32, @intCast(wm.screen_width));
-        const screen_h = @as(i32, @intCast(wm.screen_height));
+        const screen_w = work.x + @as(i32, @intCast(work.width));
+        const screen_h = work.y + @as(i32, @intCast(work.height));
         const win_w = @as(i32, @intCast(node.width));
         const win_h = @as(i32, @intCast(node.height));
         var pan_changed = false;

@@ -22,6 +22,7 @@ const swallow = @import("swallow.zig");
 const startup = @import("startup.zig");
 const prompt = @import("prompt.zig");
 const input_bar = @import("input_bar.zig");
+const output_mod = @import("output.zig");
 
 const Graph = graph.Graph;
 const Node = graph.Node;
@@ -41,8 +42,13 @@ pub const WM = struct {
     screen_height: u32,
 
     // ---- graphs and workspaces ----
-    /// The root graph; workspaces are nested graphs inside or parallel to it.
-    graph: Graph,
+    /// Every output; each has its own workspaces.
+    outputs: std.ArrayListUnmanaged(*output_mod.Output) = .empty,
+    /// The output commands, new windows and arrangers act on; the navigation
+    /// fields below are its.
+    output: *output_mod.Output = undefined,
+    /// The focused output's root graph: its workspaces.
+    root: *Graph = undefined,
     /// The workspace commands and arrangers act on.
     current_graph: *Graph = undefined,
     /// The workspace on screen. Differs from current_graph only while an
@@ -167,8 +173,6 @@ pub const WM = struct {
     resize_refresh_interval: i64 = 16, // ms
     last_flushed_edge_x: i32 = -1,
     last_flushed_edge_y: i32 = -1,
-    /// The work area at the last reserved_area_changed, to tell when its size changed.
-    last_work_area: types.Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
     // ---- pointer drags: moving and resizing floats ----
     float_move_modifier: ?types.Mods = null,
@@ -222,7 +226,6 @@ pub const WM = struct {
             .allocator = allocator,
             .screen_width = size.width,
             .screen_height = size.height,
-            .graph = Graph.init(allocator),
             .journal = graph.Journal.init(allocator),
         };
     }
@@ -245,7 +248,7 @@ pub const WM = struct {
         self.next_workspace_number.deinit(self.allocator);
         self.effects.deinit(self.allocator);
         self.journal.deinit();
-        navigation.free_graph(self, &self.graph);
+        output_mod.deinit_all(self);
         if (self.startup_done) {
             navigation.free_graph(self, self.scratch_graph);
             self.allocator.destroy(self.scratch_graph);

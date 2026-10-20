@@ -54,7 +54,7 @@ pub fn reset_vm(wm: *WM) !*Lua {
     wm.rules.clearRetainingCapacity();
     if (wm.default_arranger) |cb| wm.release_callback(cb);
     wm.default_arranger = null;
-    wm.reset_arrangers(&wm.graph);
+    for (wm.outputs.items) |o| wm.reset_arrangers(&o.root);
     wm.cancel_prompt();
     if (wm.lua) |old| old.deinit();
     wm.lua = null;

@@ -13,8 +13,8 @@ const NodeList = std.ArrayListUnmanaged(*Node);
 
 /// The graph holding the current workspace and its siblings.
 pub fn parent_graph(wm: *WM) *Graph {
-    const pn = wm.current_graph.parent_node orelse return &wm.graph;
-    return pn.owner_graph orelse &wm.graph;
+    const pn = wm.current_graph.parent_node orelse return wm.root;
+    return pn.owner_graph orelse wm.root;
 }
 
 /// Where "the previous workspace" can be found when switching back.

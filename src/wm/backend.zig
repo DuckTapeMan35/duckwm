@@ -55,6 +55,7 @@ comptime {
         "show_prompt",
         "show_message",
         "hide_prompt",
+        "outputs",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

@@ -4,6 +4,7 @@ const types = @import("types");
 const core = @import("core.zig");
 const lifecycle = @import("lifecycle.zig");
 const settings = @import("settings.zig");
+const output = @import("output.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -46,7 +47,7 @@ pub fn commit(wm: *WM) void {
 
 /// Ask for g's state to be pushed to the screen at the next commit.
 pub fn flush(wm: *WM, g: *Graph) !void {
-    if (g == wm.visible_graph) wm.scene_dirty = true;
+    if (output.is_visible(wm, g)) wm.scene_dirty = true;
 }
 
 /// Recompute and push the current layout. Becomes mark_dirty once commits land.
@@ -57,7 +58,7 @@ pub fn relayout(wm: *WM) void {
 }
 
 pub fn resolve(wm: *WM, g: *Graph) !void {
-    const work = get_work_area(wm);
+    const work = output.work_area_of(wm, g);
     for (g.nodes.items) |node| {
         if (node.floating) continue;
         switch (node.content) {
@@ -100,13 +101,7 @@ pub fn resolve(wm: *WM, g: *Graph) !void {
 }
 
 pub fn get_work_area(wm: *WM) types.Rect {
-    const r = wm.backend.reserved_insets();
-    return .{
-        .x = @intCast(r.left),
-        .y = @intCast(r.top),
-        .width = wm.screen_width -| r.left -| r.right,
-        .height = wm.screen_height -| r.top -| r.bottom,
-    };
+    return wm.output.usable;
 }
 
 /// what color each side of node's border should be right now.
@@ -156,7 +151,8 @@ pub fn frame_options(wm: *WM, node: *Node) types.FrameOptions {
 }
 /// Will node be on screen after the next commit?
 pub fn is_shown(wm: *WM, node: *Node) bool {
-    if (node.owner_graph != wm.visible_graph) return false;
+    const og = node.owner_graph orelse return false;
+    if (!output.is_visible(wm, og)) return false;
     return switch (node.content) {
         .window => !node.hidden,
         .workspace => preview_visible(wm, node),
@@ -176,28 +172,34 @@ fn preview_visible(wm: *WM, node: *Node) bool {
 }
 
 fn apply_scene(wm: *WM) !void {
-    const g = wm.visible_graph;
     wm.flushing = true;
     defer wm.flushing = false;
 
-    try compute_scene(wm, g);
-
-    const fullscreen: ?types.WindowHandle = if (g.fullscreen_node) |n| switch (n.content) {
-        .window => |w| w,
-        else => null,
-    } else null;
+    // One scene for every output: whatever isn't in it gets hidden.
+    wm.scene.clearRetainingCapacity();
+    var fullscreen: ?types.WindowHandle = null;
+    for (wm.outputs.items) |o| {
+        const g = output.visible(wm, o);
+        try compute_scene(wm, g);
+        if (fullscreen == null) {
+            if (g.fullscreen_node) |n| {
+                if (n.content == .window) fullscreen = n.content.window;
+            }
+        }
+    }
     wm.backend.apply_windows(wm.scene.items, fullscreen);
 
-    for (g.nodes.items) |node| {
-        if (node.content == .workspace and preview_visible(wm, node)) wm.repaint_preview(node);
+    for (wm.outputs.items) |o| {
+        for (output.visible(wm, o).nodes.items) |node| {
+            if (node.content == .workspace and preview_visible(wm, node)) wm.repaint_preview(node);
+        }
     }
 }
 
 /// the desired state of every visible window in g.
 fn compute_scene(wm: *WM, g: *Graph) !void {
-    wm.scene.clearRetainingCapacity();
     const bw: u32 = @intCast(@max(0, wm.border_width));
-    const work = get_work_area(wm);
+    const work = output.work_area_of(wm, g);
     const view = view_of(g, work);
 
     for (g.nodes.items) |node| {
@@ -313,7 +315,7 @@ fn view_of(g: *const Graph, work: types.Rect) View {
 }
 
 pub fn zoom_of(wm: *WM, g: *const Graph) f64 {
-    return view_of(g, get_work_area(wm)).z;
+    return view_of(g, output.work_area_of(wm, g)).z;
 }
 
 fn scaled(v: i32, z: f64) i32 {

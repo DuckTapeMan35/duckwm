@@ -8,8 +8,8 @@ const Node = graph_mod.Node;
 pub fn center_node(wm: *WM, node: *Node) void {
     if (node.width < 10) node.width = 800;
     if (node.height < 10) node.height = 600;
-    node.x = @as(i32, @intCast(wm.screen_width / 2)) - @as(i32, @intCast(node.width / 2));
-    node.y = @as(i32, @intCast(wm.screen_height / 2)) - @as(i32, @intCast(node.height / 2));
+    node.x = wm.output.rect.x + @as(i32, @intCast(wm.screen_width / 2)) - @as(i32, @intCast(node.width / 2));
+    node.y = wm.output.rect.y + @as(i32, @intCast(wm.screen_height / 2)) - @as(i32, @intCast(node.height / 2));
 }
 
 /// Float or tile n, telling its workspace's arranger: an unmap while it's
@@ -82,8 +82,8 @@ pub fn toggle_fullscreen(wm: *WM) !void {
         try g.replace_constraints(n, &.{});
         wm.journal.set(n, "floating", true);
         wm.journal.set(g, "fullscreen_node", n);
-        n.x = 0;
-        n.y = 0;
+        n.x = wm.output.rect.x;
+        n.y = wm.output.rect.y;
         n.width = wm.screen_width;
         n.height = wm.screen_height;
     }

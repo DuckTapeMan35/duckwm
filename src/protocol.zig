@@ -309,6 +309,11 @@ pub const CommandId = enum(u32) {
     get_arranger_name = 906,
     get_arranger_index = 907,
     set_arranger_index = 908,
+
+    // outputs: 1000-1099
+    get_outputs = 1000,
+    focus_output = 1001,
+    send_to_output = 1002,
 };
 
 /// One request. The payload's fields are the arguments, in order.
@@ -551,6 +556,11 @@ pub const Command = union(CommandId) {
     get_arranger_name,
     get_arranger_index,
     set_arranger_index: struct { index: i32 },
+
+    // outputs
+    get_outputs,
+    focus_output: struct { dir: Dir },
+    send_to_output: struct { id: NodeId, dir: Dir },
 };
 
 /// A batch of commands, run as one transaction: all of them take effect, or none do.

@@ -213,6 +213,7 @@ pub fn build(b: *std.Build) void {
     });
     xlib_tc.linkSystemLibrary("xft", .{ .use_pkg_config = .force });
     xlib_tc.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .force });
+    xlib_tc.linkSystemLibrary("xrandr", .{ .use_pkg_config = .force });
 
     // Plain libc (fork/exec, getenv/setenv, /proc reading) for core and config.
     const libc_tc = b.addTranslateC(.{
@@ -256,6 +257,7 @@ pub fn build(b: *std.Build) void {
     x11_mod.addImport("types", types_mod);
     x11_mod.linkSystemLibrary("X11", .{});
     x11_mod.linkSystemLibrary("Xcursor", .{});
+    x11_mod.linkSystemLibrary("Xrandr", .{});
 
     const platform_mod = switch (platform) {
         .x11 => x11_mod,
@@ -358,6 +360,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "duckwm", .module = mod },
                 .{ .name = "graph", .module = graph_mod },
                 .{ .name = "wm", .module = wm_mod },
+                .{ .name = "types", .module = types_mod },
                 .{ .name = "config", .module = lua_mod },
                 .{ .name = "ziglua", .module = zlua },
             },

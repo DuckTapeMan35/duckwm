@@ -6,6 +6,7 @@ const lifecycle = @import("lifecycle.zig");
 const requests = @import("requests.zig");
 const pointer = @import("pointer.zig");
 const input_bar = @import("input_bar.zig");
+const output = @import("output.zig");
 const WM = core.WM;
 
 pub fn handle_event(wm: *WM, ev: types.Event) void {
@@ -20,14 +21,16 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
         .expose => |h| window_exposed(wm, h),
         .keymap_changed => wm.regrab_keys(),
         .reserved_area_changed => {
-            const size = wm.backend.screen_size();
-            wm.screen_width = size.width;
-            wm.screen_height = size.height;
-            const work = wm.get_work_area();
-            const resized = work.width != wm.last_work_area.width or work.height != wm.last_work_area.height;
-            wm.last_work_area = work;
-            if (resized) rearrange_all(wm, &wm.graph);
-            wm.relayout();
+            output.sync(wm) catch |err| std.debug.print("outputs: {}\n", .{err});
+            for (wm.outputs.items) |o| {
+                const resized = o.usable.width != o.arranged.width or o.usable.height != o.arranged.height;
+                o.arranged = o.usable;
+                if (resized) rearrange_all(wm, &o.root);
+                const g = output.visible(wm, o);
+                wm.resolve(g) catch {};
+                wm.flush(g) catch {};
+            }
+            wm.rebuild_focus_edges() catch {};
         },
         .map_request => |req| lifecycle.window_mapped(wm, req) catch |err| {
             std.debug.print("map_request: {}\n", .{err});

@@ -184,7 +184,7 @@ pub fn reload(wm: *WM) void {
         };
         return;
     };
-    remap_all_graphs(wm, &wm.graph);
+    for (wm.outputs.items) |o| remap_all_graphs(wm, &o.root);
     wm.hide_error();
     wm.run_commands_file();
     std.debug.print("config reloaded successfully\n", .{});
@@ -245,7 +245,7 @@ pub fn load(wm: *WM) !void {
         }
 
         wm.reload_fn = reload;
-        remap_all_graphs(wm, &wm.graph);
+        for (wm.outputs.items) |o| remap_all_graphs(wm, &o.root);
         return;
     }
 

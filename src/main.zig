@@ -1,5 +1,7 @@
 const std = @import("std");
 const duckwm = @import("duckwm");
+const types = @import("types");
+const output = @import("wm").output;
 const WM = duckwm.WM;
 const Config = duckwm.Config;
 
@@ -43,9 +45,9 @@ fn mainImpl(init: std.process.Init) !void {
     defer _ = da.deinit();
 
     var wm = try WM.create(da.allocator());
-    wm.current_graph = &wm.graph;
-    wm.commands_path = commands_path;
     defer wm.deinit();
+    try output.init_all(&wm);
+    wm.commands_path = commands_path;
 
     const handler = std.os.linux.Sigaction{
         .handler = .{ .handler = @ptrCast(&signal_handler) },

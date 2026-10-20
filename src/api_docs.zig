@@ -552,6 +552,30 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .category = "Workspaces",
+        .name = "get_outputs",
+        .desc = "The monitors, the focused one first if it's the primary: id, x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.",
+        .params = &.{},
+        .ret = "{ id: integer, x: integer, y: integer, width: integer, height: integer, focused: boolean }[]",
+    },
+    .{
+        .category = "Workspaces",
+        .name = "focus_output",
+        .desc = "Focus the nearest monitor in a direction: what was focused there last, or its top-left window. The pointer moves there too.",
+        .params = &.{.{ .name = "dir", .typ = "'left'|'right'|'up'|'down'" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Workspaces",
+        .name = "send_to_output",
+        .desc = "Move a window to the workspace showing on the nearest monitor in a direction. Focus doesn't follow.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "dir", .typ = "'left'|'right'|'up'|'down'" },
+        },
+        .ret = "nil",
+    },
 
     // =========================================================
     // Layout & Arrangers

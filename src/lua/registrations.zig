@@ -31,7 +31,7 @@ pub const handwritten = blk: {
 pub const all = handwritten ++ @import("bridge.zig").registrations;
 
 comptime {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(1_000_000);
     for (api.entries) |entry| {
         if (std.mem.eql(u8, entry.category, "Guides")) continue;
         const found = for (all) |reg| {

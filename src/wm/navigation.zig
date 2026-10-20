@@ -4,6 +4,7 @@ const types = @import("types");
 const core = @import("core.zig");
 const focus = @import("focus.zig");
 const registry = @import("registry.zig");
+const output = @import("output.zig");
 pub const WorkspaceSwitchMode = @import("protocol").WorkspaceSwitchMode;
 const WM = core.WM;
 const Graph = graph.Graph;
@@ -96,6 +97,8 @@ pub fn activate_window(wm: *WM, node: *Node) !void {
         return;
     }
 
+    if (output.of(wm, target)) |o| output.focus(wm, o);
+
     if (target != wm.current_graph) {
         // get onto a shared ancestor of the target
         var target_anc = std.AutoHashMapUnmanaged(*Graph, void){};
@@ -177,7 +180,7 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     }
 
     // Hide frame if target is not visible
-    if (target_graph != saved_graph) {
+    if (!output.is_visible(wm, target_graph)) {
         if (node.window()) |h| wm.backend.hide_window(h);
     } else {
         wm.resolve(target_graph) catch {};
@@ -195,9 +198,9 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
 
 pub fn sync_workspace_state(wm: *WM) void {
     const parent_graph: *graph.Graph = if (wm.current_graph.parent_node) |pn|
-        pn.owner_graph orelse &wm.graph
+        pn.owner_graph orelse wm.root
     else
-        &wm.graph;
+        wm.root;
 
     var count: u32 = 0;
     var current: u32 = 0;
@@ -225,9 +228,9 @@ pub fn sync_window_workspace(wm: *WM, win: types.WindowHandle) void {
     const owner = node.owner_graph orelse return;
 
     const parent_graph: *graph.Graph = if (owner.parent_node) |pn|
-        pn.owner_graph orelse &wm.graph
+        pn.owner_graph orelse wm.root
     else
-        &wm.graph;
+        wm.root;
 
     var idx: u32 = 0;
     for (parent_graph.nodes.items) |n| {
@@ -260,6 +263,7 @@ pub fn create_workspace_node_with_preview(wm: *WM, owner_graph: *graph.Graph) !*
     wm.journal.external(undo_free_graph, wm, @intFromPtr(sub));
     const node = try owner_graph.add_node(.{ .workspace = sub });
     sub.parent_node = node;
+    sub.output = owner_graph.output;
     node.floating = false;
     node.hidden = true;
     node.preview_window = try wm.backend.create_preview_window(wm.frame_options(node));
@@ -274,6 +278,7 @@ pub fn add_workspace_node(wm: *WM, parent: *graph.Graph) !*Node {
     wm.journal.external(undo_free_graph, wm, @intFromPtr(sub));
     const node = try parent.add_node(.{ .workspace = sub });
     sub.parent_node = node;
+    sub.output = parent.output;
     node.floating = false;
     _ = try wm.register_node(null, node);
     return node;
@@ -285,8 +290,8 @@ pub fn add_workspace_node(wm: *WM, parent: *graph.Graph) !*Node {
 pub fn create_initial_workspace(wm: *WM) !void {
     // Root container
     const root_node = try wm.current_graph.add_node(.empty);
-    root_node.width = wm.screen_width;
-    root_node.height = wm.screen_height;
+    root_node.width = wm.get_work_area().width;
+    root_node.height = wm.get_work_area().height;
     root_node.x = 0;
     root_node.y = 0;
     _ = try wm.register_node(null, root_node);
@@ -296,6 +301,7 @@ pub fn create_initial_workspace(wm: *WM) !void {
 
     const ws_node = try wm.current_graph.add_node(.{ .workspace = sub });
     sub.parent_node = ws_node;
+    sub.output = wm.current_graph.output;
     ws_node.floating = false;
     const pw = try wm.backend.create_preview_window(wm.frame_options(ws_node));
     ws_node.preview_window = pw;
@@ -333,7 +339,7 @@ fn find_leave_target(wm: *WM) ?usize {
     while (i > 0) {
         i -= 1;
         const g = wm.workspace_stack.items[i];
-        if (g == &wm.graph) break;
+        if (g == wm.root) break;
         if (g.id.level < current_level) return i;
     }
     return null;

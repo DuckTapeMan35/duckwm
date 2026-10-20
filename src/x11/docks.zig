@@ -6,6 +6,14 @@ pub const Strut = struct { left: u32 = 0, right: u32 = 0, top: u32 = 0, bottom: 
 
 const Dock = struct { strut: Strut, rect: types.Rect };
 
+/// Is r's middle on monitor m?
+pub fn on(m: types.Rect, r: types.Rect) bool {
+    const cx = r.x + @as(i32, @intCast(r.width / 2));
+    const cy = r.y + @as(i32, @intCast(r.height / 2));
+    return cx >= m.x and cx < m.x + @as(i32, @intCast(m.width)) and
+        cy >= m.y and cy < m.y + @as(i32, @intCast(m.height));
+}
+
 pub const Docks = struct {
     map: std.AutoHashMapUnmanaged(c.Window, Dock) = .empty,
 
@@ -68,5 +76,30 @@ pub const Docks = struct {
             .left = @intCast(@max(0, left)),
             .right = @intCast(@max(0, right)),
         };
+    }
+
+    /// How far the docks on monitor m reach into it from each edge.
+    pub fn insets_on(self: *const Docks, m: types.Rect) types.Insets {
+        var r_: types.Insets = .{};
+        const mx1 = m.x + @as(i32, @intCast(m.width));
+        const my1 = m.y + @as(i32, @intCast(m.height));
+        var it = self.map.valueIterator();
+        while (it.next()) |d| {
+            if (!on(m, d.rect)) continue;
+            const r = d.rect;
+            const w: i32 = @intCast(r.width);
+            const h: i32 = @intCast(r.height);
+            const s = d.strut;
+            if (s.top > 0) {
+                r_.top = @max(r_.top, @as(u32, @intCast(@max(0, r.y + h - m.y))));
+            } else if (s.bottom > 0) {
+                r_.bottom = @max(r_.bottom, @as(u32, @intCast(@max(0, my1 - r.y))));
+            } else if (s.left > 0) {
+                r_.left = @max(r_.left, @as(u32, @intCast(@max(0, r.x + w - m.x))));
+            } else if (s.right > 0) {
+                r_.right = @max(r_.right, @as(u32, @intCast(@max(0, mx1 - r.x))));
+            }
+        }
+        return r_;
     }
 };

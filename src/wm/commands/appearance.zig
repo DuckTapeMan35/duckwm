@@ -162,7 +162,7 @@ pub fn set_gaps(wm: *WM, args: Args(.set_gaps), _: Allocator) !Value {
     wm.default_gap_inner_v = gaps.inner_v;
     wm.default_gap_outer_h = gaps.outer_h;
     wm.default_gap_outer_v = gaps.outer_v;
-    set_gaps_recursive(&wm.graph, gaps);
+    for (wm.outputs.items) |o| set_gaps_recursive(&o.root, gaps);
     wm.relayout();
     return .nil;
 }

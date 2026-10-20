@@ -163,6 +163,8 @@ pub const Backend = struct {
     self_inflicted: [8]SerialRange = undefined,
     self_inflicted_len: usize = 0,
     self_inflicted_next: usize = 0,
+    /// XRandR's first event code, or -1 without it.
+    rr_event_base: c_int = -1,
 
     pub const Strut = docks_mod.Strut;
 
@@ -230,32 +232,40 @@ pub const Backend = struct {
     }
 
     pub fn dock_restack(self: *Backend) void {
-        const size = self.screen_size();
-        var top: i32 = 0;
-        var bottom: i32 = 0;
-        var left: i32 = 0;
-        var right: i32 = 0;
+        var rects: [16]types.Rect = undefined;
+        var ids: [16]u32 = undefined;
+        const n = self.monitor_rects(&rects, &ids);
+        // Per monitor, how far its top, bottom, left and right are taken so far.
+        var used = std.mem.zeroes([16][4]i32);
         var it = self.docks.map.iterator();
         while (it.next()) |e| {
             const win = e.key_ptr.*;
             const d = e.value_ptr;
+            const mi = for (rects[0..n], 0..) |m, i| {
+                if (docks_mod.on(m, d.rect)) break i;
+            } else 0;
+            const m = rects[mi];
+            const mw: i32 = @intCast(m.width);
+            const mh: i32 = @intCast(m.height);
+            const w: i32 = @intCast(d.rect.width);
+            const h: i32 = @intCast(d.rect.height);
             const s = d.strut;
             if (s.top > 0) {
-                d.rect.x = 0;
-                d.rect.y = top;
-                top += @intCast(s.top);
+                d.rect.x = m.x;
+                d.rect.y = m.y + used[mi][0];
+                used[mi][0] += h;
             } else if (s.bottom > 0) {
-                bottom += @intCast(s.bottom);
-                d.rect.x = 0;
-                d.rect.y = @as(i32, @intCast(size.height)) - bottom;
+                used[mi][1] += h;
+                d.rect.x = m.x;
+                d.rect.y = m.y + mh - used[mi][1];
             } else if (s.left > 0) {
-                d.rect.x = left;
-                d.rect.y = 0;
-                left += @intCast(s.left);
+                d.rect.x = m.x + used[mi][2];
+                d.rect.y = m.y;
+                used[mi][2] += w;
             } else if (s.right > 0) {
-                right += @intCast(s.right);
-                d.rect.x = @as(i32, @intCast(size.width)) - right;
-                d.rect.y = 0;
+                used[mi][3] += w;
+                d.rect.x = m.x + mw - used[mi][3];
+                d.rect.y = m.y;
             } else continue;
             _ = c.XMoveWindow(self.display, win, d.rect.x, d.rect.y);
         }
@@ -724,6 +734,12 @@ pub const Backend = struct {
         if (wm_detected) return error.AnotherWmRunning;
 
         _ = c.XSetErrorHandler(on_x_error);
+        var ev_base: c_int = 0;
+        var err_base: c_int = 0;
+        if (c.XRRQueryExtension(self.display, &ev_base, &err_base) != 0) {
+            self.rr_event_base = ev_base;
+            c.XRRSelectInput(self.display, self.root, c.RRScreenChangeNotifyMask);
+        }
         self.announce_supported();
         _ = c.XSync(self.display, 0);
     }
@@ -1240,6 +1256,10 @@ pub const Backend = struct {
     }
 
     fn translate(self: *Backend, e: *c.XEvent) ?types.Event {
+        if (self.rr_event_base >= 0 and e.type == self.rr_event_base + c.RRScreenChangeNotify) {
+            _ = c.XRRUpdateConfiguration(e);
+            return .reserved_area_changed;
+        }
         switch (e.type) {
             c.KeyPress => {
                 if (self.bar) |b| if (b.grabbed) return prompt_key(&e.xkey);
@@ -1656,5 +1676,48 @@ pub const Backend = struct {
         const b = self.bar orelse return -1;
         const d = b.deadline orelse return -1;
         return @intCast(std.math.clamp(d - now_ms(), 0, std.math.maxInt(i32)));
+    }
+
+    /// The monitors' rectangles, primary first; the whole screen without XRandR.
+    fn monitor_rects(self: *const Backend, buf: []types.Rect, ids: []u32) usize {
+        var n: c_int = 0;
+        const mons = c.XRRGetMonitors(self.display, self.root, 1, &n);
+        defer if (mons != null) {
+            c.XRRFreeMonitors(mons);
+        };
+        var count: usize = 0;
+        var i: usize = 0;
+        while (mons != null and i < @as(usize, @intCast(@max(0, n))) and count < buf.len) : (i += 1) {
+            const m = mons[i];
+            const r: types.Rect = .{ .x = m.x, .y = m.y, .width = @intCast(m.width), .height = @intCast(m.height) };
+            const id: u32 = @truncate(m.name);
+            if (m.primary != 0 and count > 0) {
+                buf[count] = buf[0];
+                ids[count] = ids[0];
+                buf[0] = r;
+                ids[0] = id;
+            } else {
+                buf[count] = r;
+                ids[count] = id;
+            }
+            count += 1;
+        }
+        if (count == 0) {
+            const s = self.screen_size();
+            buf[0] = .{ .x = 0, .y = 0, .width = s.width, .height = s.height };
+            ids[0] = 0;
+            count = 1;
+        }
+        return count;
+    }
+
+    pub fn outputs(self: *Backend, buf: []types.OutputInfo) []types.OutputInfo {
+        var rects: [16]types.Rect = undefined;
+        var ids: [16]u32 = undefined;
+        const n = @min(self.monitor_rects(&rects, &ids), buf.len);
+        for (buf[0..n], rects[0..n], ids[0..n]) |*o, r, id| {
+            o.* = .{ .id = id, .rect = r, .usable = r.inset(self.docks.insets_on(r)) };
+        }
+        return buf[0..n];
     }
 };

@@ -10,6 +10,7 @@ const settings = @import("settings.zig");
 const luaconv = @import("luaconv.zig");
 const layouts = @import("commands/layouts.zig");
 const util = @import("commands/util.zig");
+const output = @import("output.zig");
 
 const wire = protocol.wire;
 const WM = core.WM;
@@ -169,7 +170,7 @@ fn run_arranger(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32,
 
 /// Everything an arranger needs for one event.
 fn snapshot(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, prev_id: ?u32, a: std.mem.Allocator) !protocol.Snapshot {
-    const wa = wm.get_work_area();
+    const wa = output.work_area_of(wm, g);
     // As get_cursor_relative_to_focused.
     var dx: i32 = 0;
     var dy: i32 = 0;
@@ -264,7 +265,7 @@ pub fn drop_client(self: *WM, client: u32) void {
     if (self.default_arranger) |cb| {
         if (owned_by(cb, client)) self.default_arranger = null;
     }
-    drop_arrangers(&self.graph, client);
+    for (self.outputs.items) |o| drop_arrangers(&o.root, client);
 
     if (self.prompt_cb) |cb| if (owned_by(cb, client)) {
         self.prompt_cb = null;

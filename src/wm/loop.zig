@@ -3,18 +3,15 @@ const core = @import("core.zig");
 const settings = @import("settings.zig");
 const registry = @import("registry.zig");
 const ipc = @import("ipc.zig");
+const output = @import("output.zig");
 const WM = core.WM;
 
 pub fn run(wm: *WM) !void {
-    wm.current_graph = &wm.graph;
-    wm.graph.on_node_free = registry.on_node_freed;
-    wm.graph.on_node_free_ctx = wm;
     wm.backend.start() catch |err| {
         std.debug.print("duckwm: backend failed to start: {}\n", .{err});
         return;
     };
-    wm.graph.journal = &wm.journal;
-    try wm.create_initial_workspace();
+    try output.populate(wm);
     wm.scratch_graph = try wm.create_workspace_graph(1);
     wm.visible_graph = wm.current_graph;
 

@@ -227,6 +227,10 @@ message ResizeFocusedCorner {
   sint32 dy = 2;
 }
 
+message SetZoom {
+  double zoom = 1;
+}
+
 message SetFloating {
   uint32 id = 1;
   bool floating = 2;
@@ -641,6 +645,15 @@ message SetArrangerIndex {
   sint32 index = 1;
 }
 
+message FocusOutput {
+  Dir dir = 1;
+}
+
+message SendToOutput {
+  uint32 id = 1;
+  Dir dir = 2;
+}
+
 message Request {
   repeated Command commands = 1;
 }
@@ -795,6 +808,8 @@ message Command {
     ResizeCorner resize_corner = 311;
     ResizeFocusedEdge resize_focused_edge = 312;
     ResizeFocusedCorner resize_focused_corner = 313;
+    SetZoom set_zoom = 314;
+    Empty get_zoom = 315;
     One get_window_class = 400;
     One get_window_name = 401;
     One get_window_pid = 402;
@@ -891,5 +906,8 @@ message Command {
     Empty get_arranger_name = 906;
     Empty get_arranger_index = 907;
     SetArrangerIndex set_arranger_index = 908;
+    Empty get_outputs = 1000;
+    FocusOutput focus_output = 1001;
+    SendToOutput send_to_output = 1002;
   }
 }
