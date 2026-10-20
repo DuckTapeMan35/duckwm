@@ -398,9 +398,14 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(quack);
 
     // ---- Steps ----
+    const sysconfdir = b.option(
+        []const u8,
+        "sysconfdir",
+        "Where install-config puts duckwm/config.lua, relative to the prefix (default: ../etc, so /etc for --prefix /usr)",
+    ) orelse "../etc";
     const install_config = b.addInstallFile(
         b.path("config/default.lua"),
-        "../etc/duckwm/config.lua", // relative to prefix: /etc/duckwm/config.lua when prefix=/usr
+        b.fmt("{s}/duckwm/config.lua", .{sysconfdir}),
     );
     const install_step = b.step("install-config", "Install default config to etc/duckwm/");
     install_step.dependOn(&install_config.step);
@@ -412,6 +417,24 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const meta_gen = MetaStep.create(b);
+    // Everything zig build install puts under the prefix besides the binaries
+    // and the protocol: the X session, the LuaLS config, docs, and the
+    // generated stubs and API reference (generated first).
+    for ([_][2][]const u8{
+        .{ "dist/duckwm.desktop", "share/xsessions/duckwm.desktop" },
+        .{ "dist/luarc.json", "share/duckwm/luarc.json" },
+        .{ "README.md", "share/doc/duckwm/README.md" },
+    }) |f| b.getInstallStep().dependOn(&b.addInstallFile(b.path(f[0]), f[1]).step);
+
+    for ([_][2][]const u8{
+        .{ "meta/wm.lua", "share/duckwm/meta/wm.lua" },
+        .{ "API.md", "share/doc/duckwm/API.md" },
+        .{ "API.norg", "share/doc/duckwm/API.norg" },
+    }) |f| {
+        const s = b.addInstallFile(b.path(f[0]), f[1]);
+        s.step.dependOn(&meta_gen.step);
+        b.getInstallStep().dependOn(&s.step);
+    }
     const meta_step = b.step("meta", "Regenerate LuaLS meta and API docs");
     meta_step.dependOn(&meta_gen.step);
     const proto_step = b.step("proto", "Regenerate proto/duckwm.proto from src/protocol.zig");

@@ -96,13 +96,15 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
-    make install PREFIX=$out SYSCONFDIR=$out/etc \
-      BUILD_FLAGS="--system ${deps} -Doptimize=ReleaseFast -Dplatform=${platform}"
+    zig build install install-config --prefix $out -Dsysconfdir=etc \
+      --system ${deps} -Doptimize=ReleaseFast -Dplatform=${platform}
     runHook postInstall
   '';
 
   postInstall = ''
-    install -Dm644 dist/luarc.json $out/share/duckwm/luarc.json
+    # The stubs live in the system profile on NixOS, not /usr/share.
+    substituteInPlace $out/share/duckwm/luarc.json \
+      --replace-fail "/usr/share/duckwm/meta" "/run/current-system/sw/share/duckwm/meta"
   ''
   + (
     if isRiver then
