@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("types");
 const scene = @import("scene.zig");
+const output = @import("output.zig");
 const graph_mod = @import("graph");
 const Node = graph_mod.Node;
 const WM = @import("core.zig").WM;
@@ -309,7 +310,13 @@ pub fn enter(wm: *WM, h: types.WindowHandle) void {
     if (!wm.focus_follows_mouse) return;
     const node = node_of(wm, h) orelse return;
     if (wm.focused == node) return;
-    if (wm.current_graph != node.owner_graph) return;
+    const og = node.owner_graph orelse return;
+    if (og != wm.current_graph) {
+        // On another monitor: follow it there, if it's the workspace showing.
+        const o = output.of(wm, og) orelse return;
+        if (output.visible(wm, o) != og) return;
+        output.focus(wm, o);
+    }
     wm.set_focus(node);
     wm.flush(wm.current_graph) catch {};
 }
