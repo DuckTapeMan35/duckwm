@@ -40,7 +40,7 @@ const MetaStep = struct {
         const self: *MetaStep = @fieldParentPtr("step", step);
         const b = self.b;
         const io = b.graph.io;
-        const root = std.Io.Dir.cwd();
+        const root = b.build_root.handle;
 
         root.createDirPath(io, "meta") catch |e| if (e != error.PathAlreadyExists) return e;
 

@@ -909,5 +909,6 @@ message Command {
     Empty get_outputs = 1000;
     FocusOutput focus_output = 1001;
     SendToOutput send_to_output = 1002;
+    Empty get_output_states = 1003;
   }
 }

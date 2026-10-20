@@ -322,12 +322,32 @@ pub fn load(wm: *WM, o: *Output) void {
 
 /// Park core's navigation fields back in the focused output.
 fn save(wm: *WM) void {
+    save_nav(wm);
+    wm.output.last_focused = if (wm.focused) |f| wm.get_id_for_node(f) else null;
+}
+
+fn save_nav(wm: *WM) void {
     const o = wm.output;
     o.current_graph = wm.current_graph;
     o.visible_graph = wm.visible_graph;
     o.previous_graph = wm.previous_graph;
     o.workspace_stack = wm.workspace_stack;
-    o.last_focused = if (wm.focused) |f| wm.get_id_for_node(f) else null;
+}
+
+/// Load o's navigation state into core's fields for a moment, to read it,
+/// without focusing it. Hand the result to give_back.
+pub fn borrow(wm: *WM, o: *Output) ?*Output {
+    if (o == wm.output) return null;
+    const prev = wm.output;
+    save_nav(wm);
+    load(wm, o);
+    return prev;
+}
+
+pub fn give_back(wm: *WM, prev: ?*Output) void {
+    const p = prev orelse return;
+    save_nav(wm);
+    load(wm, p);
 }
 
 fn undo_focus(ctx: *anyopaque, arg: u64) void {

@@ -585,6 +585,13 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .category = "Workspaces",
+        .name = "get_output_states",
+        .desc = "What every monitor shows, in one call (for bars): its id, x, y, whether it's focused, the positions of its workspaces with content (as get_workspace_positions), the current one's position, its level, layout name and window count, and its focused window (id, title, class) or nil.",
+        .params = &.{},
+        .ret = "{ id: integer, x: integer, y: integer, focused: boolean, workspaces: integer[], current: integer|nil, level: integer, layout: string|nil, windows: integer, window: { id: integer, title: string|nil, class: string|nil }|nil }[]",
+    },
 
     // =========================================================
     // Layout & Arrangers

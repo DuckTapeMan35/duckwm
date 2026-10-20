@@ -314,6 +314,7 @@ pub const CommandId = enum(u32) {
     get_outputs = 1000,
     focus_output = 1001,
     send_to_output = 1002,
+    get_output_states = 1003,
 };
 
 /// One request. The payload's fields are the arguments, in order.
@@ -561,6 +562,7 @@ pub const Command = union(CommandId) {
     get_outputs,
     focus_output: struct { dir: Dir },
     send_to_output: struct { id: NodeId, dir: Dir },
+    get_output_states,
 };
 
 /// A batch of commands, run as one transaction: all of them take effect, or none do.
