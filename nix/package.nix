@@ -103,8 +103,12 @@ stdenv.mkDerivation {
 
   postInstall = ''
     # The stubs live in the system profile on NixOS, not /usr/share.
-    substituteInPlace $out/share/duckwm/luarc.json \
-      --replace-fail "/usr/share/duckwm/meta" "/run/current-system/sw/share/duckwm/meta"
+    cat > $out/share/duckwm/luarc.json <<'EOF'
+    {
+      "runtime.version": "Lua 5.4",
+      "workspace.library": ["/run/current-system/sw/share/duckwm/meta"]
+    }
+    EOF
   ''
   + (
     if isRiver then
