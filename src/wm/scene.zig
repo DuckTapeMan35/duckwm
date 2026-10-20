@@ -224,13 +224,17 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
             },
             .workspace => {
                 if (!preview_visible(wm, node)) continue;
+                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view);
+                const tiled = !node.floating;
+                if (tiled and !overlaps(r, out)) continue;
                 try wm.scene.append(wm.allocator, .{
                     .handle = node.preview_window.?,
-                    .frame = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view),
+                    .frame = r,
                     .border_width = bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
-                    .tiled = !node.floating,
+                    .tiled = tiled,
                     .interactive = node.floating and wm.float_moving and wm.float_move_window == node.preview_window.?,
+                    .clip = if (tiled) out else null,
                 });
             },
             .empty => {},

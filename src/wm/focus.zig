@@ -153,46 +153,26 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     wm.journal.set(wm, "focused", node);
     wm.focus_dirty = true;
     if (!wm.is_shown(node)) return; // nothing on screen to focus (yet)
-    const g = wm.current_graph;
     wm.focus_clock += 1;
     node.focus_serial = wm.focus_clock;
     node.urgent = false;
 
-    // Snap pan to bring the focused window into view
-    if (!node.floating and g == wm.visible_graph) {
-        const work = wm.get_work_area();
-        const screen_w = work.x + @as(i32, @intCast(work.width));
-        const screen_h = work.y + @as(i32, @intCast(work.height));
-        const win_w = @as(i32, @intCast(node.width));
-        const win_h = @as(i32, @intCast(node.height));
-        var pan_changed = false;
-
-        const vis_left = node.x - g.pan_x;
-        if (vis_left < work.x) {
-            g.pan_x = node.x - work.x;
-            pan_changed = true;
-        } else if (vis_left + win_w > screen_w) {
-            g.pan_x = node.x + win_w - screen_w;
-            pan_changed = true;
-        }
-
-        const vis_top = node.y - g.pan_y;
-        if (vis_top < work.y) {
-            g.pan_y = node.y - work.y;
-            pan_changed = true;
-        } else if (vis_top + win_h > screen_h) {
-            g.pan_y = node.y + win_h - screen_h;
-            pan_changed = true;
-        }
-
-        if (g.pan_x < 0) {
-            g.pan_x = 0;
-            pan_changed = true;
-        }
-        if (g.pan_y < 0) {
-            g.pan_y = 0;
-            pan_changed = true;
-        }
+    // Pan the window's own workspace just enough to have it on its monitor.
+    const g = node.owner_graph orelse return;
+    if (!node.floating and output.is_visible(wm, g)) {
+        const work = output.work_area_of(wm, g);
+        const right = work.x + @as(i32, @intCast(work.width));
+        const bottom = work.y + @as(i32, @intCast(work.height));
+        const nw: i32 = @intCast(node.width);
+        const nh: i32 = @intCast(node.height);
+        var px = g.pan_x;
+        var py = g.pan_y;
+        if (node.x - px < work.x) px = node.x - work.x else if (node.x - px + nw > right) px = node.x + nw - right;
+        if (node.y - py < work.y) py = node.y - work.y else if (node.y - py + nh > bottom) py = node.y + nh - bottom;
+        px = @max(0, px);
+        py = @max(0, py);
+        if (px != g.pan_x) g.set(g, "pan_x", px);
+        if (py != g.pan_y) g.set(g, "pan_y", py);
     }
 
     // Focus changes border colors (and which window counts as fullscreen-focused).
