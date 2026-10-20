@@ -147,7 +147,12 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     // A window showing on another output: that output takes focus first.
     if (node.owner_graph) |og| {
         if (output.of(wm, og)) |o| {
-            if (o != wm.output and output.visible(wm, o) == og) output.focus(wm, o);
+            if (o != wm.output and output.visible(wm, o) == og) {
+                // An arranger or rule is running: switching output now would
+                // swap the workspace it borrowed. Leave focus where it is.
+                if (wm.hold_output > 0) return;
+                output.focus(wm, o);
+            }
         }
     }
     wm.journal.set(wm, "focused", node);

@@ -128,6 +128,8 @@ pub fn release(wm: *WM, cb: Callback) void {
 }
 
 pub fn call_rules(wm: *WM, event: [:0]const u8, node_id: u32) void {
+    wm.hold_output += 1;
+    defer wm.hold_output -= 1;
     // By index: a rule may add rules, which can move the list.
     var i: usize = 0;
     while (i < wm.rules.items.len) : (i += 1) {
@@ -150,6 +152,15 @@ pub fn call_rules(wm: *WM, event: [:0]const u8, node_id: u32) void {
 /// Call the arranger for graph (made from the default factory if it has none).
 pub fn call_arranger(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, prev_id: ?u32) void {
     if (g.arranger == null and wm.default_arranger == null) return;
+    // What the arranger runs (set_pan, set_virtual_size, focus...) acts on the
+    // current workspace: make that g, and hold the output still meanwhile.
+    const saved = wm.current_graph;
+    wm.current_graph = g;
+    wm.hold_output += 1;
+    defer {
+        wm.hold_output -= 1;
+        wm.current_graph = saved;
+    }
     const m = wm.tx_begin();
     if (g.arranger == null) {
         g.arranger = instantiate(wm, wm.default_arranger.?, g) catch return wm.tx_end(m, false);

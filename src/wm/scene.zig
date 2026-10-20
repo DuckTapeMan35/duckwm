@@ -101,7 +101,7 @@ pub fn resolve(wm: *WM, g: *Graph) !void {
 }
 
 pub fn get_work_area(wm: *WM) types.Rect {
-    return wm.output.usable;
+    return output.work_area_of(wm, wm.current_graph);
 }
 
 /// what color each side of node's border should be right now.

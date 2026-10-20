@@ -82,6 +82,9 @@ pub const WM = struct {
     saved_focus_follows_mouse: bool = true,
     ffm_suspended: bool = false,
     click_to_focus: bool = false,
+    /// > 0 while an arranger or rule runs: focus can't move to another output
+    /// then, as that would swap workspaces out from under the code that called it.
+    hold_output: u32 = 0,
 
     // ---- commit ----
     /// The scene from the last commit: the desired state of every visible window.
