@@ -96,14 +96,14 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Core",
         .name = "exec_once",
-        .desc = "Spawn a subprocess at startup only. Calls after startup_done is set are ignored. Use for autostart entries.",
+        .desc = "Spawn a process at startup only; ignored on reloads. Use for autostart entries.",
         .params = &.{.{ .name = "argv", .typ = "string[]" }},
         .ret = "nil",
     },
     .{
         .category = "Core",
         .name = "set_cursor_theme",
-        .desc = "Set the X11 cursor theme and size. Sets XCURSOR_THEME/XCURSOR_SIZE env vars and the RESOURCE_MANAGER root window property so both env-aware and X11 apps pick it up.",
+        .desc = "Set the cursor theme and size, on X11 and river. Sets XCURSOR_THEME/XCURSOR_SIZE for spawned apps, and on X11 the RESOURCE_MANAGER property too.",
         .params = &.{
             .{ .name = "theme", .typ = "string" },
             .{ .name = "size", .typ = "integer" },
@@ -113,21 +113,21 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Core",
         .name = "screen_width",
-        .desc = "Return the total screen width in pixels.",
+        .desc = "Return the focused monitor's width in pixels.",
         .params = &.{},
         .ret = "integer",
     },
     .{
         .category = "Core",
         .name = "screen_height",
-        .desc = "Return the total screen height in pixels.",
+        .desc = "Return the focused monitor's height in pixels.",
         .params = &.{},
         .ret = "integer",
     },
     .{
         .category = "Core",
         .name = "get_work_area",
-        .desc = "Return the usable work area as (x, y, width, height), accounting for docks and bars that have set _NET_WM_STRUT_PARTIAL.",
+        .desc = "The usable area of the current workspace's monitor as (x, y, width, height): the monitor minus the docks and bars on it (_NET_WM_STRUT_PARTIAL on X11, layer-shell exclusive zones on river).",
         .params = &.{},
         .ret = "integer, integer, integer, integer",
     },
@@ -163,8 +163,8 @@ pub const entries = [_]ApiEntry{
         .ret = "nil",
     },
     .{
+        .category = "Keybindings",
         .name = "unbind",
-        .category = "Input",
         .desc = "Remove a key's bind, whether it was made by bind or bind_commands.",
         .params = &.{
             .{ .name = "mods", .typ = "integer" },
@@ -190,6 +190,16 @@ pub const entries = [_]ApiEntry{
         .params = &.{.{ .name = "keys", .typ = "'emacs'|'vi'" }},
         .ret = "nil",
     },
+    .{
+        .category = "Input",
+        .name = "message",
+        .desc = "Show text in the input bar for timeout_ms milliseconds (0: 3 seconds). Ignored while a line is being typed.",
+        .params = &.{
+            .{ .name = "text", .typ = "string" },
+            .{ .name = "timeout_ms", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
 
     // =========================================================
     // Window Management
@@ -197,7 +207,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Window Management",
         .name = "kill_client",
-        .desc = "Send WM_DELETE_WINDOW to the focused client. If the client does not support it, it is killed with XKillClient.",
+        .desc = "Ask the focused window to close (WM_DELETE_WINDOW on X11; on river, a close request). On X11, a client that doesn't support it is killed.",
         .params = &.{},
         .ret = "nil",
     },
@@ -221,7 +231,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Window Management",
         .name = "toggle_fullscreen",
-        .desc = "Toggle fullscreen on the focused window. The window is moved to cover the entire screen including the work area.",
+        .desc = "Toggle fullscreen on the focused window. The window is moved to cover its whole monitor, docks and bars included.",
         .params = &.{},
         .ret = "nil",
     },
@@ -423,14 +433,14 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Workspaces",
         .name = "switch_to_workspace",
-        .desc = "Switch to a workspace by 1-based index at the current nesting level. Creates missing workspaces on demand.",
+        .desc = "Switch to a workspace by 1-based index at the current nesting level, on the focused monitor. Creates missing workspaces on demand.",
         .params = &.{.{ .name = "index", .typ = "integer" }},
         .ret = "nil",
     },
     .{
         .category = "Workspaces",
         .name = "send_to_workspace",
-        .desc = "Send a window node to a workspace by 1-based index at the current nesting level. Creates missing workspaces on demand.",
+        .desc = "Send a window node to a workspace by 1-based index at the current nesting level, on the focused monitor. Creates missing workspaces on demand.",
         .params = &.{
             .{ .name = "node_id", .typ = "integer" },
             .{ .name = "index", .typ = "integer" },
@@ -554,7 +564,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Workspaces",
         .name = "get_outputs",
-        .desc = "The monitors, the focused one first if it's the primary: id, x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.",
+        .desc = "The monitors, the primary first: id, x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.",
         .params = &.{},
         .ret = "{ id: integer, x: integer, y: integer, width: integer, height: integer, focused: boolean }[]",
     },
@@ -583,13 +593,19 @@ pub const entries = [_]ApiEntry{
         .category = "Layout & Arrangers",
         .name = "set_arranger",
         .desc =
-        \\Switch the arranger for the current workspace. factory is a function that returns an arranger function. The arranger function receives (event, id, prev_id) where event is one of:
-        \\  'map'     — a window was added to the layout
-        \\  'unmap'   — a window was removed from the layout
-        \\  'resize'  — a window was resized by the user
-        \\  'pre_map' — fires before 'map', before constraints are applied (use for setup)
-        \\  'focus'   — fires when a window gains focus; id is the newly focused node. Use for per-window indicators or focus-driven layout changes.
-        \\The arranger should set constraints on nodes using the constraint API.
+        \\Set the current workspace's arranger. factory is called once per workspace and returns the
+        \\arranger: a function(event, id, prev_id, snapshot) that returns the whole layout
+        \\({ nodes = ... }, or nil to keep the current one) and the state to keep (nil keeps the old one).
+        \\event is one of:
+        \\  'map'     — a window joined the layout
+        \\  'unmap'   — a window is leaving it (the snapshot still lists it)
+        \\  'resize'  — the user resized a window
+        \\  'focus'   — a window gained focus
+        \\  'pre_map' — before 'map', before the window is placed
+        \\  'area'    — the work area changed size (a bar, the monitor)
+        \\The snapshot has event, id, prev_id, work_area, windows, focused, cursor_dx, cursor_dy,
+        \\layout (as duckwm has it, with the user's resizes) and state. Keys bound while the
+        \\factory runs belong to that workspace. The guide walks through writing one.
         ,
         .params = &.{
             .{ .name = "factory", .typ = "function" },
@@ -602,7 +618,7 @@ pub const entries = [_]ApiEntry{
         .name = "set_default_arranger",
         .desc = "Set the default arranger factory used for new workspaces. The factory is called with no arguments and must return an arranger function. See set_arranger for the full list of events the arranger receives.",
         .params = &.{
-            .{ .name = "fn", .typ = "function" },
+            .{ .name = "factory", .typ = "function" },
             .{ .name = "name", .typ = "string?" },
         },
         .ret = "nil",
@@ -775,18 +791,17 @@ pub const entries = [_]ApiEntry{
         .category = "Layout & Arrangers",
         .name = "get_layout",
         .desc =
-        \\Return the current graph as a rich Lua table with:
+        \\Return the current workspace's graph as a Lua table with:
         \\  nodes    — array of all node tables
-        \\  by_id    — map id -> node table (same objects as nodes, O(1) lookup)
         \\  windows  — array of window/workspace node ids
         \\  focused  — id of currently focused node, or nil
-        \\  root     — id of root container node, or nil
+        \\  root     — id of the first container that's no split's child, or nil
         \\Each node table has: id, type, x, y, width, height, constraints, parent, parent_idx.
-        \\parent is the id of the split container that owns this node, or nil if root.
-        \\parent_idx is 1 or 2 indicating which child slot in the parent split.
+        \\parent is the id of the container whose split holds this node, or nil.
+        \\parent_idx is its 1-based position among that split's children.
         ,
         .params = &.{},
-        .ret = "{ nodes: node[], by_id: table, windows: integer[], focused: integer|nil, root: integer|nil }",
+        .ret = "{ nodes: table[], windows: integer[], focused: integer|nil, root: integer|nil }",
     },
     .{
         .category = "Layout & Arrangers",
@@ -797,7 +812,7 @@ pub const entries = [_]ApiEntry{
         \\described in each node's constraints array. Nodes are matched by id.
         \\Typically called after mutating the table returned by get_layout.
         ,
-        .params = &.{.{ .name = "layout", .typ = "{ nodes: node[] }" }},
+        .params = &.{.{ .name = "layout", .typ = "{ nodes: table[] }" }},
         .ret = "nil",
     },
     .{
@@ -823,9 +838,8 @@ pub const entries = [_]ApiEntry{
         .name = "left_of",
         .desc =
         \\Constrain a so that a.right == b.left (a is immediately left of b).
-        \\The constraint solver is iterative and runs up to 50 passes. Constraints are applied
-        \\in declaration order each pass until the layout converges. Circular constraints may
-        \\not converge — avoid them.
+        \\Positional constraints like this one are strong rather than required: when they
+        \\conflict with others, the solver relaxes them instead of failing.
         ,
         .params = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret = "nil",
@@ -882,21 +896,21 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Constraints",
         .name = "equal_width",
-        .desc = "Constrain: a.width == b.width. Symmetric — applied via averaging each pass.",
+        .desc = "Constrain: a.width == b.width. Strong, like the positional constraints.",
         .params = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret = "nil",
     },
     .{
         .category = "Constraints",
         .name = "equal_height",
-        .desc = "Constrain: a.height == b.height. Symmetric — applied via averaging each pass.",
+        .desc = "Constrain: a.height == b.height. Strong, like the positional constraints.",
         .params = &.{ .{ .name = "a", .typ = "integer" }, .{ .name = "b", .typ = "integer" } },
         .ret = "nil",
     },
     .{
         .category = "Constraints",
         .name = "fixed_ratio",
-        .desc = "Constrain: width / height == ratio. Applied each solver pass.",
+        .desc = "Constrain: width / height == ratio. Strong.",
         .params = &.{ .{ .name = "id", .typ = "integer" }, .{ .name = "ratio", .typ = "number" } },
         .ret = "nil",
     },
@@ -937,7 +951,6 @@ pub const entries = [_]ApiEntry{
         .desc =
         \\Place a node in a cell of a grid defined by a container node.
         \\col and row are 0-based. The container's geometry is divided into cols x rows equal cells.
-        \\The last cell in each axis absorbs rounding pixels.
         ,
         .params = &.{
             .{ .name = "id", .typ = "integer" },
@@ -969,8 +982,8 @@ pub const entries = [_]ApiEntry{
         .desc =
         \\Split a container atomically into N children along an axis.
         \\ratios is a table of N numbers that need not sum to 1 — they are normalized internally.
-        \\The last child absorbs rounding pixels. This is the preferred way to divide space
-        \\proportionally; it is more efficient than chaining left_of/right_of constraints.
+        \\This is the preferred way to divide space proportionally: it's one required constraint
+        \\per child, where chaining left_of/right_of gives strong ones that can be relaxed.
         ,
         .params = &.{
             .{ .name = "container", .typ = "integer" },
@@ -1315,7 +1328,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Appearance",
         .name = "set_border_side_colors_focused_only",
-        .desc = "When true, per-side border color overrides are only shown on the focused window. Unfocused windows show their base unfocused color on all sides. Default: false.",
+        .desc = "When true, per-side border color overrides are only shown on the focused window. Unfocused windows show their base unfocused color on all sides. Default: true.",
         .params = &.{.{ .name = "enabled", .typ = "boolean" }},
         .ret = "nil",
     },
@@ -1371,16 +1384,6 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
-    .{
-        .category = "Appearance",
-        .name = "message",
-        .desc = "Show text in the input bar for timeout_ms milliseconds (0: 3 seconds). Ignored while a line is being typed.",
-        .params = &.{
-            .{ .name = "text", .typ = "string" },
-            .{ .name = "timeout_ms", .typ = "integer" },
-        },
-        .ret = "nil",
-    },
 
     // =========================================================
     // Rules
@@ -1397,7 +1400,7 @@ pub const entries = [_]ApiEntry{
         \\  'prop'    — fires when WM_CLASS or window title changes (for apps that set class late)
         \\Returns a handle that can be passed to remove_rule.
         ,
-        .params = &.{.{ .name = "fn", .typ = "function(event: string, id: integer)" }},
+        .params = &.{.{ .name = "fn", .typ = "fun(event: string, id: integer)" }},
         .ret = "integer",
     },
     .{
