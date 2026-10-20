@@ -198,6 +198,7 @@ fn apply_scene(wm: *WM) !void {
 
 /// the desired state of every visible window in g.
 fn compute_scene(wm: *WM, g: *Graph) !void {
+    const out = (output.of(wm, g) orelse wm.output).rect;
     const bw: u32 = @intCast(@max(0, wm.border_width));
     const work = output.work_area_of(wm, g);
     const view = view_of(g, work);
@@ -207,13 +208,18 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
             .window => |win| {
                 if (node.hidden) continue;
                 const is_fullscreen = wm.focused == node and g.fullscreen_node == node;
+                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view);
+                // Scrolled or panned off its own monitor: not onto the next one.
+                const tiled = !node.floating and !is_fullscreen;
+                if (tiled and !overlaps(r, out)) continue;
                 try wm.scene.append(wm.allocator, .{
                     .handle = win,
-                    .frame = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view),
+                    .frame = r,
                     .border_width = if (is_fullscreen) 0 else bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     .tiled = !node.floating,
                     .interactive = node.floating and wm.float_moving and wm.float_move_window == win,
+                    .clip = if (tiled) out else null,
                 });
             },
             .workspace => {
@@ -320,4 +326,9 @@ pub fn zoom_of(wm: *WM, g: *const Graph) f64 {
 
 fn scaled(v: i32, z: f64) i32 {
     return @intFromFloat(@round(@as(f64, @floatFromInt(v)) * z));
+}
+
+fn overlaps(a: types.Rect, b: types.Rect) bool {
+    return a.x < b.x + @as(i32, @intCast(b.width)) and b.x < a.x + @as(i32, @intCast(a.width)) and
+        a.y < b.y + @as(i32, @intCast(b.height)) and b.y < a.y + @as(i32, @intCast(a.height));
 }

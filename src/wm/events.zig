@@ -56,6 +56,7 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
         .button_release => pointer.button_release(wm),
         .pointer_motion => |p| pointer.motion(wm, p),
         .pointer_enter => |h| pointer.enter(wm, h),
+        .pointer_output => |id| pointer.output_entered(wm, id),
         .prompt_key => |k| input_bar.key(wm, k),
     }
     return true;

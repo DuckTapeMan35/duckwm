@@ -335,3 +335,18 @@ fn resume_ffm(wm: *WM) void {
     wm.focus_follows_mouse = wm.saved_focus_follows_mouse;
     wm.ffm_suspended = false;
 }
+
+/// The pointer crossed onto another monitor: with focus-follows-mouse, focus
+/// goes with it, to what was focused there last. The window under the pointer
+/// takes over from that through enter.
+pub fn output_entered(wm: *WM, id: u32) void {
+    if (!wm.focus_follows_mouse) return;
+    const o = output.find(wm, id) orelse return;
+    if (o == wm.output) return;
+    output.focus(wm, o);
+    const last = if (wm.output.last_focused) |lid| wm.get_node_by_id(lid) else null;
+    if (last) |n| {
+        if (n.owner_graph == wm.current_graph) wm.set_focus(n) else wm.clear_focus();
+    } else wm.clear_focus();
+    wm.flush(wm.current_graph) catch {};
+}

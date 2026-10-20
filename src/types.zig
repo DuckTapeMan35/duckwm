@@ -51,6 +51,8 @@ pub const Event = union(enum) {
     pointer_motion: Point,
     /// The pointer entered a managed window (for focus-follows-mouse).
     pointer_enter: WindowHandle,
+    /// The pointer moved onto another output (its backend id).
+    pointer_output: u32,
     /// Only while the input bar holds the keyboard; binds don't fire then.
     prompt_key: PromptKey,
 };
@@ -180,6 +182,8 @@ pub const WindowState = struct {
     /// Being dragged right now: move the frame, but hold the client's
     /// ConfigureNotify until the drag ends.
     interactive: bool = false,
+    /// Tiled: its output's rectangle; whatever lies outside isn't drawn.
+    clip: ?Rect = null,
 };
 
 pub const InitialHints = struct {

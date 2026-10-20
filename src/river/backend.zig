@@ -30,6 +30,28 @@ const prompt_pad: i32 = 4;
 
 const frame_interval_ms: i64 = 16;
 
+/// The part of a window, borders included, inside its output, relative to its
+/// content's corner. Null when all of it is inside: no clipping needed.
+fn out_clip_box(r: anytype, bw: u32, out: ?types.Rect) ?types.Rect {
+    const o = out orelse return null;
+    const b: i32 = @intCast(bw);
+    const fx0 = r.pos.x - b;
+    const fy0 = r.pos.y - b;
+    const fx1 = r.pos.x + @as(i32, @intCast(r.size.width)) + b;
+    const fy1 = r.pos.y + @as(i32, @intCast(r.size.height)) + b;
+    const x0 = @max(fx0, o.x);
+    const y0 = @max(fy0, o.y);
+    const x1 = @min(fx1, o.x + @as(i32, @intCast(o.width)));
+    const y1 = @min(fy1, o.y + @as(i32, @intCast(o.height)));
+    if (x0 == fx0 and y0 == fy0 and x1 == fx1 and y1 == fy1) return null;
+    return .{
+        .x = x0 - r.pos.x,
+        .y = y0 - r.pos.y,
+        .width = @intCast(@max(1, x1 - x0)), // 0 would mean "don't clip"
+        .height = @intCast(@max(1, y1 - y0)),
+    };
+}
+
 /// A side drawn in a color of its own, over river's one-color border.
 const Odd = struct { side: types.Side, color: u32 };
 
@@ -145,6 +167,9 @@ const Window = struct {
     anim_from_size: types.Size = .{ .width = 0, .height = 0 },
     /// Content clip box last sent.
     clip: ?types.Size = null,
+    /// The output core keeps it on (tiled only), and the clip box last sent for it.
+    want_out: ?types.Rect = null,
+    out_clip: ?types.Rect = null,
     /// The odd side core wants, and the surface drawing it.
     want_odd: ?Odd = null,
     ind: ?surface.ShellSurface = null,
@@ -198,6 +223,8 @@ const State = struct {
     seat: ?*river.SeatV1 = null,
     layer_seat: ?*river.LayerShellSeatV1 = null,
     outputs: std.ArrayListUnmanaged(*Output) = .empty,
+    /// The output the pointer was last on, to report crossings.
+    pointer_output: u32 = 0,
     /// Until multimonitor: the first output is "the screen".
     primary: ?*Output = null,
 
@@ -649,6 +676,13 @@ const State = struct {
             if (!w.fullscreen and (w.clip == null or !size_eql(w.clip.?, r.size))) {
                 w.obj.setContentClipBox(0, 0, @intCast(r.size.width), @intCast(r.size.height));
                 w.clip = r.size;
+            }
+            if (!w.fullscreen) {
+                const box = out_clip_box(r, w.want_border_width, w.want_out);
+                if (!std.meta.eql(w.out_clip, box)) {
+                    if (box) |b| w.obj.setClipBox(b.x, b.y, @intCast(b.width), @intCast(b.height)) else w.obj.setClipBox(0, 0, 0, 0);
+                    w.out_clip = box;
+                }
             }
             if (w.border_width != w.want_border_width or !opt_eql(w.border_color, w.want_border_color)) {
                 send_borders(w);
@@ -1284,7 +1318,13 @@ fn wl_keyboard_listener(_: *wl.Keyboard, event: wl.Keyboard.Event, s: *State) vo
 
 fn seat_listener(_: *river.SeatV1, event: river.SeatV1.Event, s: *State) void {
     switch (event) {
-        .pointer_position => |e| s.pointer_pos = .{ .x = e.x, .y = e.y },
+        .pointer_position => |e| {
+            s.pointer_pos = .{ .x = e.x, .y = e.y };
+            if (s.output_at(s.pointer_pos)) |o| if (o.id != s.pointer_output) {
+                s.pointer_output = o.id;
+                s.push(.{ .pointer_output = o.id });
+            };
+        },
         .pointer_enter => |e| {
             const h = s.handle_of(e.window);
             s.hovered = h;
@@ -1639,6 +1679,7 @@ pub const Backend = struct {
             w.want_pos = new_pos;
             w.want_size = new_size;
             w.want_tiled = st.tiled;
+            w.want_out = st.clip;
             w.want_border_width = bw;
             s.order.append(s.allocator, st.handle) catch {};
         }
