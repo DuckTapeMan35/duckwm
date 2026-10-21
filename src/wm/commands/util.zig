@@ -37,6 +37,7 @@ pub fn type_name(n: *const Node) []const u8 {
         .window => "window",
         .empty => "empty",
         .workspace => "workspace",
+        .group => "group",
     };
 }
 

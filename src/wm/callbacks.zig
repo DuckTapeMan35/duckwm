@@ -11,6 +11,7 @@ const luaconv = @import("luaconv.zig");
 const layouts = @import("commands/layouts.zig");
 const util = @import("commands/util.zig");
 const output = @import("output.zig");
+const groups = @import("groups.zig");
 
 const wire = protocol.wire;
 const WM = core.WM;
@@ -21,6 +22,8 @@ pub const Rule = struct { id: u32, cb: Callback };
 
 /// What a callback handed back besides running its commands (arrangers only).
 pub const Reply = struct { layout: ?protocol.LayoutSpec = null, state: ?protocol.Value = null };
+
+const Found = struct { kb: settings.Keybind, owner: ?*Graph };
 
 /// Run a callback, inside the caller's transaction. An error means it failed
 /// (already reported); the caller rolls back.
@@ -205,12 +208,29 @@ fn snapshot(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, pre
     };
 }
 
-/// The bind a press runs: the current workspace's before global ones, and
+/// The bind a press runs: those of the groups the focused window is in
+/// (innermost first), then the current workspace's, then global ones; and
 /// within each, a client's over the commands file's over the config's.
-fn find_bind(wm: *WM, combo: types.KeyCombo) ?settings.Keybind {
-    for ([_]?@TypeOf(wm.current_graph){ wm.current_graph, null }) |owner| {
+fn find_bind(wm: *WM, combo: types.KeyCombo) ?Found {
+    var owners: [groups.max_depth + 2]?*Graph = undefined;
+    var n: usize = 0;
+    if (wm.focused) |f| {
+        if (f.owner_graph) |og| {
+            if (og.within(wm.current_graph)) {
+                var g = og;
+                while (g.is_group) : (n += 1) {
+                    owners[n] = g;
+                    g = g.parent_node.?.owner_graph.?;
+                }
+            }
+        }
+    }
+    owners[n] = wm.current_graph;
+    owners[n + 1] = null;
+    for (owners[0 .. n + 2]) |owner| {
         for ([_]settings.Layer{ .client, .commands, .config }) |layer| {
-            if (wm.keybinds.get(.{ .combo = combo, .owner = owner, .layer = layer })) |kb| return kb;
+            if (wm.keybinds.get(.{ .combo = combo, .owner = owner, .layer = layer })) |kb|
+                return .{ .kb = kb, .owner = owner };
         }
     }
     return null;
@@ -218,7 +238,19 @@ fn find_bind(wm: *WM, combo: types.KeyCombo) ?settings.Keybind {
 
 /// Run whatever is bound to combo, if anything.
 pub fn handle_key(wm: *WM, combo: types.KeyCombo) void {
-    const kb = find_bind(wm, combo) orelse return;
+    const found = find_bind(wm, combo) orelse return;
+    const kb = found.kb;
+    // A group's bind acts on its group, as the group's arranger does.
+    const saved_graph = wm.current_graph;
+    const in_group = if (found.owner) |o| o.is_group else false;
+    if (in_group) {
+        wm.current_graph = found.owner.?;
+        wm.hold_output += 1;
+    }
+    defer if (in_group) {
+        wm.hold_output -= 1;
+        wm.current_graph = saved_graph;
+    };
     switch (kb) {
         .zig => |action| action(wm) catch |err| {
             std.debug.print("Keybinding error: {}\n", .{err});
@@ -292,6 +324,6 @@ fn drop_arrangers(g: *Graph, client: u32) void {
         }
     }
     for (g.nodes.items) |node| {
-        if (node.content == .workspace) drop_arrangers(node.content.workspace, client);
+        if (node.inner()) |sub| drop_arrangers(sub, client);
     }
 }

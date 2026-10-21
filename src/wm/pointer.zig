@@ -2,10 +2,11 @@ const std = @import("std");
 const types = @import("types");
 const scene = @import("scene.zig");
 const output = @import("output.zig");
+const groups = @import("groups.zig");
 const graph_mod = @import("graph");
+const float_mod = @import("float.zig");
 const Node = graph_mod.Node;
 const WM = @import("core.zig").WM;
-const float_mod = @import("float.zig");
 
 fn node_of(wm: *WM, h: ?types.WindowHandle) ?*Node {
     const id = wm.window_to_node_id.get(h orelse return null) orelse return null;
@@ -210,7 +211,7 @@ fn resize_floating(wm: *WM, focused: *Node, pos: types.Point) void {
 }
 
 fn resize_tiled(wm: *WM, pos: types.Point) void {
-    const g = wm.current_graph;
+    const g = groups.active(wm);
     const dx = pos.x - wm.resize_end_x;
     const dy = pos.y - wm.resize_end_y;
 
@@ -295,14 +296,19 @@ fn finish_resize(wm: *WM) void {
         return;
     }
     wm.sync_constraints_from_geometry();
-    for (wm.current_graph.nodes.items) |n| {
-        if (n.floating) continue;
-        switch (n.content) {
-            .window, .workspace => if (wm.get_id_for_node(n)) |id| {
-                wm.call_arranger(wm.current_graph, .resize, id, null);
-            },
-            .empty => {},
+    var g = node.owner_graph orelse wm.current_graph;
+    while (true) {
+        for (g.nodes.items) |n| {
+            if (n.floating) continue;
+            switch (n.content) {
+                .window, .workspace, .group => if (wm.get_id_for_node(n)) |id| {
+                    wm.call_arranger(g, .resize, id, null);
+                },
+                .empty => {},
+            }
         }
+        if (!g.is_group) break;
+        g = g.parent_node.?.owner_graph.?;
     }
 }
 
@@ -311,10 +317,10 @@ pub fn enter(wm: *WM, h: types.WindowHandle) void {
     const node = node_of(wm, h) orelse return;
     if (wm.focused == node) return;
     const og = node.owner_graph orelse return;
-    if (og != wm.current_graph) {
+    if (!og.within(wm.current_graph)) {
         // On another monitor: follow it there, if it's the workspace showing.
         const o = output.of(wm, og) orelse return;
-        if (output.visible(wm, o) != og) return;
+        if (output.visible(wm, o) != og.workspace()) return;
         output.focus(wm, o);
     }
     wm.set_focus(node);
@@ -346,7 +352,7 @@ pub fn output_entered(wm: *WM, id: u32) void {
     output.focus(wm, o);
     const last = if (wm.output.last_focused) |lid| wm.get_node_by_id(lid) else null;
     if (last) |n| {
-        if (n.owner_graph == wm.current_graph) wm.set_focus(n) else wm.clear_focus();
+        if (n.owner_graph != null and n.owner_graph.?.within(wm.current_graph)) wm.set_focus(n) else wm.clear_focus();
     } else wm.clear_focus();
     wm.flush(wm.current_graph) catch {};
 }

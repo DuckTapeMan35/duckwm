@@ -45,7 +45,7 @@ fn apply(wm: *WM, g: *Graph, factory: types.Callback) !void {
     for (g.nodes.items) |node| {
         if (node.floating) continue;
         switch (node.content) {
-            .window, .workspace => {
+            .window, .workspace, .group => {
                 if (node.content == .workspace and node.preview_window == null) continue;
                 if (wm.get_id_for_node(node)) |id| try ids.append(wm.allocator, id);
             },
@@ -100,9 +100,9 @@ pub fn set_arranger(wm: *WM, args: Args(.set_arranger), _: Allocator) !Value {
 
 pub fn register_arranger(wm: *WM, args: Args(.register_arranger), _: Allocator) !Value {
     const node = try util.node(wm, args.id);
-    if (node.content != .workspace) return error.NotAWorkspace;
+    const g = node.inner() orelse return error.NotAWorkspace;
     const factory = try util.callback(wm, args.factory);
-    try apply(wm, node.content.workspace, factory);
+    try apply(wm, g, factory);
     wm.release_callback(factory);
     if (args.name) |n| try set_name(wm, node.content.workspace, n);
     return .nil;

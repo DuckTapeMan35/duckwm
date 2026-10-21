@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
 const util = @import("util.zig");
+const groups = @import("../groups.zig");
 const graph_mod = @import("graph");
 const WM = core.WM;
 const Value = command.Value;
@@ -13,14 +14,8 @@ const NodeList = std.ArrayListUnmanaged(*Node);
 
 /// The graph holding the current workspace and its siblings.
 pub fn parent_graph(wm: *WM) *Graph {
-    const pn = wm.current_graph.parent_node orelse return wm.root;
-    return pn.owner_graph orelse wm.root;
-}
-
-/// Where "the previous workspace" can be found when switching back.
-pub fn siblings(wm: *WM) []const *Node {
-    if (wm.current_graph.parent_node == null) return wm.current_graph.nodes.items;
-    return parent_graph(wm).nodes.items;
+    const pn = wm.current_graph.workspace().parent_node orelse return wm.root;
+    return if (pn.owner_graph) |og| og.workspace() else wm.root;
 }
 
 fn by_id(wm: *WM, a: *Node, b: *Node) bool {
@@ -31,7 +26,8 @@ fn by_id(wm: *WM, a: *Node, b: *Node) bool {
 
 fn sorted_workspaces(wm: *WM, g: *Graph, out: *NodeList) !void {
     out.clearRetainingCapacity();
-    for (g.nodes.items) |n| {
+    var it = groups.Nodes.init(g);
+    while (it.next()) |n| {
         if (n.content == .workspace) try out.append(wm.allocator, n);
     }
     std.sort.heap(*Node, out.items, wm, by_id);
@@ -40,7 +36,7 @@ fn sorted_workspaces(wm: *WM, g: *Graph, out: *NodeList) !void {
 /// Does the workspace hold any windows or nested workspaces?
 pub fn has_content(sub: *Graph) bool {
     for (sub.nodes.items) |n| switch (n.content) {
-        .window, .workspace => return true,
+        .window, .workspace, .group => return true,
         .empty => {},
     };
     return false;
@@ -54,7 +50,7 @@ fn ensure(wm: *WM, parent: *Graph, list: *NodeList, count: usize) !void {
 
 /// Enter target, or the previous workspace if target is already current
 /// and the switch mode is "previous".
-pub fn enter_or_back(wm: *WM, target: *Node, candidates: []const *Node) !void {
+pub fn enter_or_back(wm: *WM, target: *Node) !void {
     const current = wm.current_graph;
     if (target.content.workspace != current) {
         wm.journal.set(wm, "previous_graph", current);
@@ -62,12 +58,12 @@ pub fn enter_or_back(wm: *WM, target: *Node, candidates: []const *Node) !void {
     }
     if (wm.workspace_switch_mode != .previous) return;
     const prev = wm.previous_graph orelse return;
-    for (candidates) |n| {
-        if (n.content == .workspace and n.content.workspace == prev) {
-            wm.journal.set(wm, "previous_graph", current);
-            return wm.enter_workspace(n);
-        }
-    }
+    const pn = prev.parent_node orelse return;
+    const og = pn.owner_graph orelse return;
+    // Same level: the previous one's parent is the current one's.
+    if (og.workspace() != parent_graph(wm)) return;
+    wm.journal.set(wm, "previous_graph", current);
+    return wm.enter_workspace(pn);
 }
 
 pub fn switch_to(wm: *WM, index: usize) !void {
@@ -76,7 +72,7 @@ pub fn switch_to(wm: *WM, index: usize) !void {
     const parent = parent_graph(wm);
     try sorted_workspaces(wm, parent, &list);
     try ensure(wm, parent, &list, index);
-    try enter_or_back(wm, list.items[index - 1], list.items);
+    try enter_or_back(wm, list.items[index - 1]);
 }
 
 pub fn send_to(wm: *WM, node_id: u32, index: usize) !void {
@@ -151,9 +147,13 @@ pub fn current_position(wm: *WM) !?usize {
 /// 1-based numbers of the workspaces at the current level that are current or have content.
 pub fn level_numbers(wm: *WM, a: std.mem.Allocator) ![]u32 {
     const level = wm.current_graph.id.level;
-    const parent: *Graph = if (wm.current_graph.parent_node) |pn| pn.owner_graph orelse wm.current_graph else wm.current_graph;
+    const parent: *Graph = if (wm.current_graph.parent_node) |pn|
+        (if (pn.owner_graph) |og| og.workspace() else wm.current_graph)
+    else
+        wm.current_graph;
     var out: std.ArrayListUnmanaged(u32) = .empty;
-    for (parent.nodes.items) |n| {
+    var it = groups.Nodes.init(parent);
+    while (it.next()) |n| {
         if (n.content != .workspace) continue;
         const sub = n.content.workspace;
         if (sub.id.level != level) continue;
@@ -179,7 +179,7 @@ pub fn send_to_workspace(wm: *WM, args: Args(.send_to_workspace), _: Allocator) 
 pub fn enter_workspace_by_id(wm: *WM, args: Args(.enter_workspace_by_id), _: Allocator) !Value {
     const n = try util.node(wm, args.id);
     if (n.content != .workspace) return error.NotAWorkspace;
-    try enter_or_back(wm, n, siblings(wm));
+    try enter_or_back(wm, n);
     return .nil;
 }
 

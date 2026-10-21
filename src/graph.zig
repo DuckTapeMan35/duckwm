@@ -6,6 +6,7 @@ const NodeContent = union(enum) {
     window: types.WindowHandle,
     empty,
     workspace: *Graph,
+    group: *Graph,
 };
 
 pub const SplitAxis = enum {
@@ -166,7 +167,14 @@ pub const Node = struct {
         return switch (self.content) {
             .window => |w| w,
             .workspace => self.preview_window,
-            .empty => null,
+            .empty, .group => null,
+        };
+    }
+
+    pub fn inner(self: *const Node) ?*Graph {
+        return switch (self.content) {
+            .workspace, .group => |g| g,
+            else => null,
         };
     }
 };
@@ -349,6 +357,9 @@ pub const Graph = struct {
     gap_inner_v: u32 = 0,
     gap_outer_h: u32 = 0,
     gap_outer_v: u32 = 0,
+    /// A group's outline, overriding the WM-wide one (width 0: none).
+    outline_width: ?u32 = null,
+    outline_color: ?u32 = null,
     pan_x: i32 = 0,
     pan_y: i32 = 0,
     work_x: i32 = 0,
@@ -368,6 +379,12 @@ pub const Graph = struct {
     arranger: ?types.Callback = null,
     arranger_index: i32 = 0,
     arranger_name: []const u8 = "",
+    /// The arranger's state (an encoded protocol.Value; empty: none yet).
+    arranger_state: []const u8 = "",
+    is_group: bool = false,
+    /// The size a group's arranger last laid it out for (to tell when it must again).
+    arranged_w: u32 = 0,
+    arranged_h: u32 = 0,
     preview_bg: ?u32 = null,
     preview_win_bg: ?u32 = null,
     preview_border: ?u32 = null,
@@ -377,8 +394,6 @@ pub const Graph = struct {
     on_node_free: ?*const fn (*anyopaque, *Node) void = null,
     on_node_free_ctx: *anyopaque = undefined,
     journal: ?*Journal = null,
-    /// The arranger's state (an encoded protocol.Value; empty: none yet).
-    arranger_state: []const u8 = "",
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Graph {
@@ -399,8 +414,8 @@ pub const Graph = struct {
 
     fn free_subgraph(self: *Graph, sub: *Graph) void {
         for (sub.nodes.items) |child| {
-            if (child.content == .workspace) {
-                self.free_subgraph(child.content.workspace);
+            if (child.inner()) |inner| {
+                self.free_subgraph(inner);
             }
             if (self.on_node_free) |cb| cb(self.on_node_free_ctx, child);
             child.deinit(self.allocator);
@@ -443,11 +458,19 @@ pub const Graph = struct {
 
     pub fn remove_constraint_at(self: *Graph, node: *Node, i: usize) void {
         const old = node.constraints.orderedRemove(i);
-        if (self.jr()) |j| j.push(.{ .constraint_removed = .{ .node = node, .index = i, .value = old } });
+        if (self.jr()) |j| j.push(.{ .constraint_removed = .{
+            .node = node,
+            .index = i,
+            .value = old,
+        } });
     }
 
     pub fn change_constraint_at(self: *Graph, node: *Node, i: usize, new: Constraint) void {
-        if (self.jr()) |j| j.push(.{ .constraint_changed = .{ .node = node, .index = i, .old = node.constraints.items[i] } });
+        if (self.jr()) |j| j.push(.{ .constraint_changed = .{
+            .node = node,
+            .index = i,
+            .old = node.constraints.items[i],
+        } });
         node.constraints.items[i] = new;
     }
 
@@ -529,6 +552,23 @@ pub const Graph = struct {
         }
     }
 
+    /// The workspace g is in: g itself, unless it's a group.
+    pub fn workspace(self: *const Graph) *Graph {
+        var g = @constCast(self);
+        while (g.is_group) g = g.parent_node.?.owner_graph.?;
+        return g;
+    }
+
+    /// Is self g, or a group somewhere inside g?
+    pub fn within(self: *const Graph, g: *const Graph) bool {
+        var cur = self;
+        while (true) {
+            if (cur == g) return true;
+            if (!cur.is_group) return false;
+            cur = cur.parent_node.?.owner_graph.?;
+        }
+    }
+
     /// Drop or shrink every constraint in this graph that refers to node.
     fn strip_references(self: *Graph, node: *Node) void {
         for (self.nodes.items) |n| {
@@ -588,7 +628,7 @@ pub const Graph = struct {
 
     /// Final teardown of a removed node (immediately, or at commit).
     pub fn destroy_node(self: *Graph, node: *Node) void {
-        if (node.content == .workspace) self.free_subgraph(node.content.workspace);
+        if (node.inner()) |sub| self.free_subgraph(sub);
         if (self.on_node_free) |cb| cb(self.on_node_free_ctx, node);
         node.deinit(self.allocator);
         self.allocator.destroy(node);

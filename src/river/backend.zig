@@ -118,6 +118,31 @@ const PromptBar = struct {
 
 const Stacked = struct { node: *river.NodeV1, serial: u64 };
 
+/// A group's outline: one surface covering the visible part of its frame,
+/// transparent in the middle and taking no input.
+const OutlineSurf = struct {
+    surf: surface.ShellSurface,
+    in_scene: bool = false,
+    want: types.Outline,
+    /// What its buffer was last painted for (null: never).
+    drawn: ?OutlinePaint = null,
+    pos: ?types.Point = null,
+};
+
+/// What an outline's buffer depends on: everything but where it is.
+const OutlinePaint = struct {
+    /// The buffer: the visible part of the frame.
+    w: u32,
+    h: u32,
+    /// The whole frame, relative to the buffer (it may stick out of it).
+    x: i32,
+    y: i32,
+    fw: i32,
+    fh: i32,
+    t: i32,
+    color: u32,
+};
+
 const Shown = struct { pos: types.Point, size: types.Size };
 
 const Window = struct {
@@ -262,6 +287,8 @@ const State = struct {
     shm: ?*wl.Shm = null,
     fonts: surface.Fonts = .{},
     previews: std.AutoHashMapUnmanaged(types.WindowHandle, *Preview) = .empty,
+    /// Group outlines, by core's key.
+    outlines: std.AutoHashMapUnmanaged(u64, *OutlineSurf) = .empty,
     error_bar: ?*ErrorBar = null,
     prompt_bar: ?*PromptBar = null,
     scratch: std.ArrayListUnmanaged(Stacked) = .empty,
@@ -701,6 +728,9 @@ const State = struct {
             }
         }
 
+        // Above the tiled windows, below floating ones.
+        s.render_outlines();
+
         std.mem.sort(Stacked, s.scratch.items, {}, struct {
             fn lt(_: void, a: Stacked, b: Stacked) bool {
                 return a.serial < b.serial;
@@ -770,6 +800,61 @@ const State = struct {
             p.surf.node.setPosition(p.want_pos.x, p.want_pos.y);
             p.pos = p.want_pos;
         }
+    }
+
+    /// Drop the outlines that left the scene; paint, place and raise the rest.
+    fn render_outlines(s: *State) void {
+        var gone: std.ArrayListUnmanaged(u64) = .empty;
+        defer gone.deinit(s.allocator);
+        var it = s.outlines.iterator();
+        while (it.next()) |e| {
+            if (!e.value_ptr.*.in_scene) gone.append(s.allocator, e.key_ptr.*) catch {};
+        }
+        for (gone.items) |k| {
+            const os = s.outlines.fetchRemove(k).?.value;
+            os.surf.destroy();
+            s.allocator.destroy(os);
+        }
+
+        const shm = s.shm orelse return;
+        var vit = s.outlines.valueIterator();
+        while (vit.next()) |op| {
+            const os = op.*;
+            const o = os.want;
+            const want: OutlinePaint = .{
+                .w = o.clip.width,
+                .h = o.clip.height,
+                .x = o.rect.x - o.clip.x,
+                .y = o.rect.y - o.clip.y,
+                .fw = @intCast(o.rect.width),
+                .fh = @intCast(o.rect.height),
+                .t = @intCast(o.width),
+                .color = o.color,
+            };
+            if (!os.surf.mapped or os.drawn == null or !std.meta.eql(os.drawn.?, want)) {
+                os.surf.draw(shm, want.w, want.h, &want, paint_outline) catch continue;
+                os.drawn = want;
+            }
+            const pos: types.Point = .{ .x = o.clip.x, .y = o.clip.y };
+            if (os.pos == null or os.pos.?.x != pos.x or os.pos.?.y != pos.y) {
+                os.surf.node.setPosition(pos.x, pos.y);
+                os.pos = pos;
+            }
+            os.surf.node.placeTop();
+        }
+    }
+
+    /// A surface for an outline: it mustn't take clicks meant for what's under it.
+    fn create_outline_surface(s: *State) !surface.ShellSurface {
+        const wm = s.wm orelse return error.NoWindowManager;
+        const comp = s.compositor orelse return error.NoCompositor;
+        var surf = try surface.ShellSurface.create(wm, comp);
+        errdefer surf.destroy();
+        // An empty input region (applied with its first buffer).
+        const region = try comp.createRegion();
+        defer region.destroy();
+        surf.surface.setInputRegion(region);
+        return surf;
     }
 
     /// The odd side's strip, just outside the content at r. Its node, to stack
@@ -1072,6 +1157,11 @@ fn odd_side(b: types.BorderColors) ?Odd {
 
 fn paint_solid(cv: surface.Canvas, color: *const u32) void {
     cv.fill(0, 0, cv.width, cv.height, color.*);
+}
+
+/// The frame's outline; the rest stays as the new buffer starts: transparent.
+fn paint_outline(cv: surface.Canvas, p: *const OutlinePaint) void {
+    cv.outline(p.x, p.y, p.fw, p.fh, p.t, p.color);
 }
 
 /// 0xRRGGBB to the protocol's four 32-bit (pre-multiplied, here opaque) components.
@@ -1446,6 +1536,12 @@ pub const Backend = struct {
             s.allocator.destroy(pp.*);
         }
         s.previews.deinit(s.allocator);
+        var oit = s.outlines.valueIterator();
+        while (oit.next()) |op| {
+            op.*.surf.destroy();
+            s.allocator.destroy(op.*);
+        }
+        s.outlines.deinit(s.allocator);
         _ = s.destroy_error_bar();
         _ = s.destroy_prompt_bar();
         if (s.keyboard) |kb| kb.release();
@@ -1684,6 +1780,32 @@ pub const Backend = struct {
             s.order.append(s.allocator, st.handle) catch {};
         }
         s.fullscreen = fullscreen;
+        s.mark();
+    }
+
+    /// The group outlines to show; any other goes at the next render.
+    pub fn apply_outlines(self: *Backend, list: []const types.Outline) void {
+        const s = self.state;
+        var it = s.outlines.valueIterator();
+        while (it.next()) |op| op.*.in_scene = false;
+        for (list) |o| {
+            const os = s.outlines.get(o.key) orelse blk: {
+                const new = s.allocator.create(OutlineSurf) catch continue;
+                const surf = s.create_outline_surface() catch {
+                    s.allocator.destroy(new);
+                    continue;
+                };
+                new.* = .{ .surf = surf, .want = o };
+                s.outlines.put(s.allocator, o.key, new) catch {
+                    new.surf.destroy();
+                    s.allocator.destroy(new);
+                    continue;
+                };
+                break :blk new;
+            };
+            os.want = o;
+            os.in_scene = true;
+        }
         s.mark();
     }
 

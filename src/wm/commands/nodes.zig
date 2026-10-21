@@ -149,7 +149,7 @@ pub fn get_all_windows(wm: *WM, _: void, arena: Allocator) !Value {
         const h: types.WindowHandle = switch (n.content) {
             .window => |w| w,
             .workspace => n.preview_window orelse continue,
-            .empty => continue,
+            .group, .empty => continue,
         };
         if (wm.window_to_node_id.get(h)) |id| try out.append(arena, .{ .integer = id });
     }

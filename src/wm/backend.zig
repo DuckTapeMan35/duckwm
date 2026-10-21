@@ -33,6 +33,7 @@ comptime {
         "set_click_to_focus",
         "draw_borders",
         "apply_windows",
+        "apply_outlines",
         "hide_window",
         "raise_window",
         "release_window",

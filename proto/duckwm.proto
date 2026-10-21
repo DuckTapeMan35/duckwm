@@ -654,6 +654,15 @@ message SendToOutput {
   Dir dir = 2;
 }
 
+message CreateGroup {
+  repeated uint32 ids = 1;
+}
+
+message MoveToGroup {
+  uint32 id = 1;
+  optional uint32 group = 2;
+}
+
 message Request {
   repeated Command commands = 1;
 }
@@ -910,5 +919,10 @@ message Command {
     FocusOutput focus_output = 1001;
     SendToOutput send_to_output = 1002;
     Empty get_output_states = 1003;
+    CreateGroup create_group = 1100;
+    One ungroup = 1101;
+    MoveToGroup move_to_group = 1102;
+    One get_group = 1103;
+    One get_group_members = 1104;
   }
 }

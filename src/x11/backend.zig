@@ -95,6 +95,34 @@ fn argb_visual(display: *c.Display) ?*c.Visual {
     return null;
 }
 
+/// The four sides of an outline (top, bottom, left, right), each cut to its
+/// clip; null where nothing of a side is visible.
+fn outline_strips(o: types.Outline) [4]?types.Rect {
+    const x = o.rect.x;
+    const y = o.rect.y;
+    const w: i32 = @intCast(o.rect.width);
+    const h: i32 = @intCast(o.rect.height);
+    const t: i32 = @intCast(@min(o.width, @min(o.rect.width, o.rect.height) / 2));
+    const sides = [4][4]i32{
+        .{ x, y, w, t },
+        .{ x, y + h - t, w, t },
+        .{ x, y + t, t, h - 2 * t },
+        .{ x + w - t, y + t, t, h - 2 * t },
+    };
+    var out: [4]?types.Rect = undefined;
+    for (sides, &out) |s, *r| {
+        const x0 = @max(s[0], o.clip.x);
+        const y0 = @max(s[1], o.clip.y);
+        const x1 = @min(s[0] + s[2], o.clip.x + @as(i32, @intCast(o.clip.width)));
+        const y1 = @min(s[1] + s[3], o.clip.y + @as(i32, @intCast(o.clip.height)));
+        r.* = if (x1 > x0 and y1 > y0)
+            .{ .x = x0, .y = y0, .width = @intCast(x1 - x0), .height = @intCast(y1 - y0) }
+        else
+            null;
+    }
+    return out;
+}
+
 fn clamp16(v: i32) i32 {
     return @max(-32768, @min(32767, v));
 }
@@ -132,6 +160,13 @@ comptime {
 
 const SerialRange = struct { start: c_ulong, end: c_ulong };
 
+/// A group's outline: four thin windows, one per side.
+const OutlineWins = struct {
+    wins: [4]c.Window,
+    color: u32,
+    gen: u32,
+};
+
 const Applied = struct {
     frame: types.Rect,
     configure_pending: bool,
@@ -156,6 +191,9 @@ pub const Backend = struct {
     click_to_focus: bool = false,
     applied: std.AutoHashMapUnmanaged(c.Window, Applied) = .empty,
     apply_gen: u32 = 0,
+    /// Group outlines, by core's key.
+    outlines: std.AutoHashMapUnmanaged(u64, OutlineWins) = .empty,
+    outline_gen: u32 = 0,
     renderer: preview_mod.Renderer = .{},
     event_buf: c.XEvent = undefined,
     overlays: std.AutoHashMapUnmanaged(c.Window, void) = .empty,
@@ -184,6 +222,11 @@ pub const Backend = struct {
         self.docks.deinit(self.allocator);
         self.frames.deinit(self.allocator);
         self.applied.deinit(self.allocator);
+        var oit = self.outlines.valueIterator();
+        while (oit.next()) |o| {
+            for (o.wins) |w| _ = c.XDestroyWindow(self.display, w);
+        }
+        self.outlines.deinit(self.allocator);
         self.overlays.deinit(self.allocator);
         self.ignore_unmaps.deinit(self.allocator);
         self.renderer.deinit(self.allocator, self.display);
@@ -1103,7 +1146,12 @@ pub const Backend = struct {
         }
 
         // Stacking: docks on top, tiled frames at the bottom, fullscreen above everything.
+        // Outlines first, so the tiled frames lowered after them end up below.
         self.raise_docks();
+        var oit = self.outlines.valueIterator();
+        while (oit.next()) |o| {
+            for (o.wins) |w| _ = c.XLowerWindow(self.display, w);
+        }
         for (states) |s| {
             if (!s.tiled) continue;
             if (self.frames.frame_of(@intCast(s.handle))) |f| _ = c.XLowerWindow(self.display, f);
@@ -1166,6 +1214,56 @@ pub const Backend = struct {
             .mapped = true,
             .gen = self.apply_gen,
         }) catch {};
+    }
+
+    /// The group outlines to show (before apply_windows, which stacks them);
+    /// any other is destroyed.
+    pub fn apply_outlines(self: *Backend, list: []const types.Outline) void {
+        self.outline_gen +%= 1;
+        for (list) |o| {
+            const e = self.outlines.getOrPut(self.allocator, o.key) catch continue;
+            if (!e.found_existing) {
+                var wins: [4]c.Window = undefined;
+                for (&wins) |*w| w.* = self.create_outline_strip(o.color);
+                e.value_ptr.* = .{ .wins = wins, .color = o.color, .gen = 0 };
+            } else if (e.value_ptr.color != o.color) {
+                for (e.value_ptr.wins) |w| {
+                    _ = c.XSetWindowBackground(self.display, w, o.color);
+                    _ = c.XClearWindow(self.display, w);
+                }
+                e.value_ptr.color = o.color;
+            }
+            e.value_ptr.gen = self.outline_gen;
+            for (e.value_ptr.wins, outline_strips(o)) |w, strip| {
+                if (strip) |r| {
+                    _ = c.XMoveResizeWindow(self.display, w, clamp16(r.x), clamp16(r.y), r.width, r.height);
+                    _ = c.XMapWindow(self.display, w);
+                } else {
+                    _ = c.XUnmapWindow(self.display, w);
+                }
+            }
+        }
+
+        // Not in this list: its group is gone or off screen.
+        var gone: std.ArrayListUnmanaged(u64) = .empty;
+        defer gone.deinit(self.allocator);
+        var it = self.outlines.iterator();
+        while (it.next()) |e| {
+            if (e.value_ptr.gen != self.outline_gen) gone.append(self.allocator, e.key_ptr.*) catch {};
+        }
+        for (gone.items) |k| {
+            const o = self.outlines.fetchRemove(k).?.value;
+            for (o.wins) |w| _ = c.XDestroyWindow(self.display, w);
+        }
+    }
+
+    /// One side of an outline: an override-redirect window that's all background.
+    fn create_outline_strip(self: *Backend, color: u32) c.Window {
+        const win = c.XCreateSimpleWindow(self.display, self.root, 0, 0, 1, 1, 0, 0, color);
+        var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
+        wa.override_redirect = 1;
+        _ = c.XChangeWindowAttributes(self.display, win, c.CWOverrideRedirect, &wa);
+        return win;
     }
 
     /// Hide h now, without waiting for the next apply.

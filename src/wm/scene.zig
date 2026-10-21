@@ -5,6 +5,7 @@ const core = @import("core.zig");
 const lifecycle = @import("lifecycle.zig");
 const settings = @import("settings.zig");
 const output = @import("output.zig");
+const groups = @import("groups.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -57,7 +58,7 @@ pub fn relayout(wm: *WM) void {
     flush(wm, wm.current_graph) catch {};
 }
 
-pub fn resolve(wm: *WM, g: *Graph) !void {
+pub fn resolve(wm: *WM, g: *Graph) anyerror!void {
     const work = output.work_area_of(wm, g);
     for (g.nodes.items) |node| {
         if (node.floating) continue;
@@ -97,6 +98,12 @@ pub fn resolve(wm: *WM, g: *Graph) !void {
     g.work_x = work.x;
     g.work_y = work.y;
 
+    // Top down: each group inside the rectangle just solved for it.
+    for (g.nodes.items) |node| {
+        if (node.content == .group) try resolve(wm, node.content.group);
+    }
+    if (g.is_group) return;
+    groups.rearrange_resized(wm, g);
     wm.backend.publish_work_area(work);
 }
 
@@ -156,7 +163,7 @@ pub fn is_shown(wm: *WM, node: *Node) bool {
     return switch (node.content) {
         .window => !node.hidden,
         .workspace => preview_visible(wm, node),
-        .empty => false,
+        .group, .empty => false,
     };
 }
 
@@ -177,38 +184,63 @@ fn apply_scene(wm: *WM) !void {
 
     // One scene for every output: whatever isn't in it gets hidden.
     wm.scene.clearRetainingCapacity();
+    wm.outlines.clearRetainingCapacity();
     var fullscreen: ?types.WindowHandle = null;
     for (wm.outputs.items) |o| {
         const g = output.visible(wm, o);
         try compute_scene(wm, g);
         if (fullscreen == null) {
-            if (g.fullscreen_node) |n| {
+            if (fullscreen_in(g)) |n| {
                 if (n.content == .window) fullscreen = n.content.window;
             }
         }
     }
+    wm.backend.apply_outlines(wm.outlines.items);
     wm.backend.apply_windows(wm.scene.items, fullscreen);
 
-    for (wm.outputs.items) |o| {
-        for (output.visible(wm, o).nodes.items) |node| {
-            if (node.content == .workspace and preview_visible(wm, node)) wm.repaint_preview(node);
+    for (wm.outputs.items) |o| repaint_previews(wm, output.visible(wm, o));
+}
+
+/// Repaint the previews in g and in its groups.
+fn repaint_previews(wm: *WM, g: *Graph) void {
+    for (g.nodes.items) |node| switch (node.content) {
+        .workspace => if (preview_visible(wm, node)) wm.repaint_preview(node),
+        .group => |sub| repaint_previews(wm, sub),
+        else => {},
+    };
+}
+
+/// The fullscreen window of g or of a group in it.
+fn fullscreen_in(g: *Graph) ?*Node {
+    if (g.fullscreen_node) |n| return n;
+    for (g.nodes.items) |n| {
+        if (n.content == .group) {
+            if (fullscreen_in(n.content.group)) |f| return f;
         }
     }
+    return null;
 }
 
 /// the desired state of every visible window in g.
 fn compute_scene(wm: *WM, g: *Graph) !void {
     const out = (output.of(wm, g) orelse wm.output).rect;
-    const bw: u32 = @intCast(@max(0, wm.border_width));
     const work = output.work_area_of(wm, g);
-    const view = view_of(g, work);
+    try compute_nodes(wm, g, work, work, view_of(g, work), out);
+}
+
+/// g's windows (g: a workspace, or a group in one). Tiled nodes take their
+/// gaps from work and are drawn with the workspace's view from its corner
+/// (origin); nothing tiled is drawn outside clip.
+fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view: View, clip: types.Rect) anyerror!void {
+    const bw: u32 = @intCast(@max(0, wm.border_width));
+    const out = clip;
 
     for (g.nodes.items) |node| {
         switch (node.content) {
             .window => |win| {
                 if (node.hidden) continue;
                 const is_fullscreen = wm.focused == node and g.fullscreen_node == node;
-                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view);
+                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, origin, view);
                 // Scrolled or panned off its own monitor: not onto the next one.
                 const tiled = !node.floating and !is_fullscreen;
                 if (tiled and !overlaps(r, out)) continue;
@@ -224,7 +256,7 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
             },
             .workspace => {
                 if (!preview_visible(wm, node)) continue;
-                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, view);
+                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, origin, view);
                 const tiled = !node.floating;
                 if (tiled and !overlaps(r, out)) continue;
                 try wm.scene.append(wm.allocator, .{
@@ -237,9 +269,40 @@ fn compute_scene(wm: *WM, g: *Graph) !void {
                     .clip = if (tiled) out else null,
                 });
             },
-            .empty => {},
+            .group => |sub| {
+                if (node.hidden) continue;
+                const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, origin, view);
+                const inner_clip = intersect(r, out) orelse continue;
+                const ol = groups.outline_of(wm, sub);
+                if (ol.width > 0) try wm.outlines.append(wm.allocator, .{
+                    .key = @intFromPtr(sub),
+                    .rect = r,
+                    .clip = inner_clip,
+                    .width = ol.width,
+                    .color = ol.color,
+                });
+                // Its nodes are drawn no further out than its frame.
+                const area = groups.area(wm, sub);
+                if (node.floating) {
+                    // A floating group isn't panned or zoomed: drawn as laid out.
+                    try compute_nodes(wm, sub, area, area, .{ .z = 1.0, .pan_x = 0, .pan_y = 0 }, inner_clip);
+                } else {
+                    try compute_nodes(wm, sub, area, origin, view, inner_clip);
+                }
+            },
+            .empty,
+            => {},
         }
     }
+}
+
+fn intersect(a: types.Rect, b: types.Rect) ?types.Rect {
+    const x0 = @max(a.x, b.x);
+    const y0 = @max(a.y, b.y);
+    const x1 = @min(a.x + @as(i32, @intCast(a.width)), b.x + @as(i32, @intCast(b.width)));
+    const y1 = @min(a.y + @as(i32, @intCast(a.height)), b.y + @as(i32, @intCast(b.height)));
+    if (x1 <= x0 or y1 <= y0) return null;
+    return .{ .x = x0, .y = y0, .width = @intCast(x1 - x0), .height = @intCast(y1 - y0) };
 }
 
 fn wants_borders(wm: *WM, node: *Node) bool {
@@ -254,7 +317,19 @@ fn floating_rect(node: *const Node) types.Rect {
     return .{ .x = node.x, .y = node.y, .width = @max(1, node.width), .height = @max(1, node.height) };
 }
 
-fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect, v: View) types.Rect {
+/// node's rectangle on the canvas with g's gaps taken off, as drawn at zoom 1
+/// with no pan (what a group lays its own nodes out in).
+pub fn gapped_rect(g: *const Graph, node: *const Node, work: types.Rect) types.Rect {
+    return tiled_rect(g, node, work, work, .{
+        .z = 1.0,
+        .pan_x = 0,
+        .pan_y = 0,
+    });
+}
+
+/// Where tiled node is drawn: outer gaps where it meets the edges of the area
+/// it's laid out in (work), scaled by the view from the workspace's corner (origin).
+fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect, origin: types.Rect, v: View) types.Rect {
     const nw: i32 = @intCast(node.width);
     const nh: i32 = @intCast(node.height);
     const ww: i32 = @intCast(work.width);
@@ -273,10 +348,10 @@ fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect, v: View) typ
     const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
 
     // Both edges scaled, so neighbours still meet exactly; gaps stay their size.
-    const x0 = work.x + scaled(node.x - work.x - v.pan_x, v.z);
-    const x1 = work.x + scaled(node.x + nw - work.x - v.pan_x, v.z);
-    const y0 = work.y + scaled(node.y - work.y - v.pan_y, v.z);
-    const y1 = work.y + scaled(node.y + nh - work.y - v.pan_y, v.z);
+    const x0 = work.x + scaled(node.x - origin.x - v.pan_x, v.z);
+    const x1 = work.x + scaled(node.x + nw - origin.x - v.pan_x, v.z);
+    const y0 = work.y + scaled(node.y - origin.y - v.pan_y, v.z);
+    const y1 = work.y + scaled(node.y + nh - origin.y - v.pan_y, v.z);
     const w: u32 = @intCast(@max(0, x1 - x0));
     const h: u32 = @intCast(@max(0, y1 - y0));
 

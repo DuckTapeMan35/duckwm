@@ -2,7 +2,9 @@ const std = @import("std");
 const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("core.zig");
+const groups = @import("groups.zig");
 const focus_mod = @import("focus.zig");
+
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -84,15 +86,9 @@ fn exchange_raw(wm: *WM, a: *Node, b: *Node, id_a: u32, id_b: u32) !void {
     a.info = b.info;
     b.info = info_a;
 
-    // Update workspace parent_node pointers
-    switch (a.content) {
-        .workspace => |sub| sub.parent_node = a,
-        else => {},
-    }
-    switch (b.content) {
-        .workspace => |sub| sub.parent_node = b,
-        else => {},
-    }
+    // Update workspace and group parent_node pointers
+    if (a.inner()) |sub| sub.parent_node = a;
+    if (b.inner()) |sub| sub.parent_node = b;
 
     // Update window_to_node_id for new positions
     switch (a.content) {
@@ -128,7 +124,8 @@ pub fn kill_client(wm: *WM) !void {
             }
             // Detect hidden (no-preview) sibling workspaces that still hold windows.
             var cleanup_graph: ?*Graph = null;
-            if (node.owner_graph) |og| {
+            if (node.owner_graph) |owner| {
+                const og = owner.workspace();
                 const killed_level = node.content.workspace.id.level;
                 for (og.nodes.items) |sibling| {
                     if (sibling == node) continue;
@@ -173,7 +170,7 @@ pub fn kill_graph_windows(wm: *WM, g: *graph_mod.Graph) void {
                     _ = wm.window_to_node_id.remove(win);
                 }
             },
-            .workspace => |sub| kill_graph_windows(wm, sub),
+            .workspace, .group => |sub| kill_graph_windows(wm, sub),
             .empty => {},
         }
     }
@@ -200,7 +197,7 @@ pub fn graph_has_content(wm: *WM, g: *graph_mod.Graph) bool {
     for (g.nodes.items) |node| {
         switch (node.content) {
             .window => return true,
-            .workspace => |sub| if (graph_has_content(wm, sub)) return true,
+            .workspace, .group => |sub| if (graph_has_content(wm, sub)) return true,
             .empty => {},
         }
     }
@@ -248,11 +245,12 @@ pub fn unmanage_as_dock(wm: *WM, win: types.WindowHandle) !void {
     wm.backend.release_window(win);
 
     // Remove from graph and registry
-    if (node.owner_graph) |graph| {
-        graph.remove_node(node);
-    }
     _ = wm.node_registry.remove(node_id);
     _ = wm.window_to_node_id.remove(win);
+    if (node.owner_graph) |graph| {
+        graph.remove_node(node);
+        groups.dissolve_if_empty(wm, graph);
+    }
 
     // Recalculate layout
     try wm.resolve(wm.current_graph);

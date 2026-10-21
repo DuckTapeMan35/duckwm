@@ -116,6 +116,8 @@ pub const Value = union(enum) {
     pub const Field = struct { key: []const u8, value: Value };
 };
 
+// beware the giant fuckyou enum and struct
+
 pub const CommandId = enum(u32) {
     // focus, exchange, window state: 1-99
     focus_left = 1,
@@ -315,6 +317,15 @@ pub const CommandId = enum(u32) {
     focus_output = 1001,
     send_to_output = 1002,
     get_output_states = 1003,
+
+    // groups: 1100-1199
+    create_group = 1100,
+    ungroup = 1101,
+    move_to_group = 1102,
+    get_group = 1103,
+    get_group_members = 1104,
+    set_group_outline = 1105,
+    set_group_outline_of = 1106,
 };
 
 /// One request. The payload's fields are the arguments, in order.
@@ -563,6 +574,15 @@ pub const Command = union(CommandId) {
     focus_output: struct { dir: Dir },
     send_to_output: struct { id: NodeId, dir: Dir },
     get_output_states,
+
+    // groups
+    create_group: struct { ids: ?[]const NodeId },
+    ungroup: One,
+    move_to_group: struct { id: NodeId, group: ?NodeId },
+    get_group: One,
+    get_group_members: One,
+    set_group_outline: struct { width: u32, color: u32 },
+    set_group_outline_of: struct { id: NodeId, width: ?u32, color: ?u32 },
 };
 
 /// A batch of commands, run as one transaction: all of them take effect, or none do.

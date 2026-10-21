@@ -34,6 +34,7 @@ const handlers = .{
     @import("commands/layouts.zig"),
     @import("commands/arrangers.zig"),
     @import("commands/outputs.zig"),
+    @import("commands/groups.zig"),
 };
 comptime {
     for (std.meta.fields(ConstraintKind)) |f| {
@@ -88,7 +89,7 @@ pub fn error_text(err: anyerror) []const u8 {
         error.NotAContainer => "node is not a container",
         error.InvalidButton => "button must be between 1 and 255",
         error.InvalidKeymap => "invalid layout, variant, options or model",
-        error.NotAWorkspace => "node is not a workspace",
+        error.NotAWorkspace => "node is not a workspace or group",
         error.EmptyArgv => "argv must contain at least the program name",
         error.SetenvFailed => "invalid variable name",
         error.UnknownKey => "unknown key name",
@@ -103,6 +104,9 @@ pub fn error_text(err: anyerror) []const u8 {
         error.NoLua => "duckwm has no Lua VM",
         error.EvalFailed => "the REPL's evaluator failed",
         error.InvalidZoom => "zoom must be between 0 (fit) and 1",
+        error.NotAGroup => "node is not a group",
+        error.NotSameGraph => "group members must be in the same workspace or group",
+        error.TooDeep => "groups nest at most 15 deep",
         else => @errorName(err),
     };
 }

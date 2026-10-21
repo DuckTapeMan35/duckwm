@@ -91,6 +91,8 @@ pub const WM = struct {
     scene: std.ArrayListUnmanaged(types.WindowState) = .empty,
     /// Recompute and apply the scene at the next commit.
     scene_dirty: bool = false,
+    /// Group outlines to draw, rebuilt with the scene.
+    outlines: std.ArrayListUnmanaged(types.Outline) = .empty,
     /// Send input focus at the next commit.
     focus_dirty: bool = false,
     /// Round-trip with the display server at the next commit.
@@ -121,6 +123,9 @@ pub const WM = struct {
     preview_defaults: preview.Defaults = .{},
     /// Scratch buffer for laying out previews, reused across repaints.
     preview_items: std.ArrayListUnmanaged(types.PreviewItem) = .empty,
+    /// Outline drawn around every group (width 0: none), unless the group sets its own.
+    group_outline_width: u32 = 0,
+    group_outline_color: u32 = 0x5294e2,
 
     // ---- config state ----
     lua: ?*Lua = null,
@@ -264,6 +269,7 @@ pub const WM = struct {
         self.backend.deinit();
         self.clear_rgb_frame_classes();
         self.rgb_frame_classes.deinit(self.allocator);
+        self.outlines.deinit(self.allocator);
         self.scene.deinit(self.allocator);
     }
 

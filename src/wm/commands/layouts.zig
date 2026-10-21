@@ -185,14 +185,6 @@ fn listed(n: *const Node) bool {
     return !n.floating and !(n.content == .workspace and n.preview_window == null);
 }
 
-fn type_name(n: *const Node) []const u8 {
-    return switch (n.content) {
-        .window => "window",
-        .empty => "empty",
-        .workspace => "workspace",
-    };
-}
-
 fn constraint_value(wm: *WM, a: std.mem.Allocator, con: Constraint) !Value {
     return .{ .map = switch (con) {
         inline .left_of,
@@ -282,7 +274,7 @@ pub fn describe(wm: *WM, a: std.mem.Allocator) !Value {
 
         try nodes.append(a, .{ .map = try a.dupe(Value.Field, &.{
             .{ .key = "id", .value = .{ .integer = id } },
-            .{ .key = "type", .value = .{ .str = type_name(n) } },
+            .{ .key = "type", .value = .{ .str = util.type_name(n) } },
             .{ .key = "x", .value = .{ .integer = n.x } },
             .{ .key = "y", .value = .{ .integer = n.y } },
             .{ .key = "width", .value = .{ .integer = n.width } },
@@ -392,6 +384,7 @@ fn print_graph_to_buf(wm: *WM, buf: *std.ArrayListUnmanaged(u8), allocator: std.
             .window => "window",
             .empty => "empty",
             .workspace => "workspace",
+            .group => "group",
         };
         const id = wm.get_id_for_node(node) orelse 0;
         try buf.print(allocator, "{s}  [{d}] {s} x={} y={} w={} h={} floating={}\n", .{
@@ -474,8 +467,8 @@ fn print_graph_to_buf(wm: *WM, buf: *std.ArrayListUnmanaged(u8), allocator: std.
     try buf.print(allocator, "{s}\n", .{ind.items});
 
     for (g.nodes.items) |node| {
-        if (node.content == .workspace) {
-            try print_graph_to_buf(wm, buf, allocator, node.content.workspace, depth + 1);
+        if (node.inner()) |sub| {
+            try print_graph_to_buf(wm, buf, allocator, sub, depth + 1);
         }
     }
 }

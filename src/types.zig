@@ -299,6 +299,18 @@ pub const PromptKey = struct {
     }
 };
 
+/// A group's outline: a frame `width` thick inside rect, open in the middle.
+pub const Outline = struct {
+    /// Stable for as long as the group lives (to reuse its surfaces).
+    key: u64,
+    /// Screen coordinates; the outline runs along the inside of it.
+    rect: Rect,
+    /// The part of rect that may be drawn (its group's clip): what's outside isn't.
+    clip: Rect,
+    width: u32,
+    color: u32,
+};
+
 pub const WindowKind = enum { normal, floating, dock };
 
 pub const WindowHandle = u64;

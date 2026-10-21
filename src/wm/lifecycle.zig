@@ -1,10 +1,13 @@
 const std = @import("std");
 const types = @import("types");
 const graph_mod = @import("graph");
-const Node = graph_mod.Node;
 const core = @import("core.zig");
-const WM = core.WM;
 const swallow_mod = @import("swallow.zig");
+const groups = @import("groups.zig");
+
+const Graph = graph_mod.Graph;
+const WM = core.WM;
+const Node = graph_mod.Node;
 
 fn apply_initial_hints(node: *Node, h: types.InitialHints) void {
     if (h.fullscreen) node.wants_fullscreen = true;
@@ -18,8 +21,15 @@ fn apply_initial_hints(node: *Node, h: types.InitialHints) void {
     if (h.fixed_aspect) node.floating = true;
 }
 
+/// Drop empty, unreferenced containers from the current workspace and its groups.
 pub fn sweep_dead_containers(wm: *WM) void {
-    const g = wm.current_graph;
+    sweep_graph(wm, wm.current_graph);
+}
+
+fn sweep_graph(wm: *WM, g: *Graph) void {
+    for (g.nodes.items) |n| {
+        if (n.content == .group) sweep_graph(wm, n.content.group);
+    }
     var i: usize = 0;
     while (i < g.nodes.items.len) {
         const node = g.nodes.items[i];
@@ -85,7 +95,9 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
 
     const is_transient = req.traits.kind == .floating;
 
-    const node = try wm.current_graph.add_node(.{ .window = h });
+    // Into the focused window's group, if it's in one here.
+    const g: *Graph = if (is_transient) wm.current_graph else groups.active(wm);
+    const node = try g.add_node(.{ .window = h });
     node.info = wm.backend.window_info(h);
     node.width = req.size.width;
     node.height = req.size.height;
@@ -96,7 +108,7 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
     if (node.floating and !was_floating) wm.center_node(node);
 
     wm.frame(h, node) catch |err| {
-        wm.current_graph.remove_node(node);
+        g.remove_node(node);
         if (err == error.WindowGone) return;
         return err;
     };
@@ -105,11 +117,11 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
     if (wm.focused == null) wm.focused = node;
     const id = try wm.register_node(h, node);
 
-    const prev_id = arranger_anchor(wm, prev_focused, id);
+    const prev_id = arranger_anchor(wm, g, prev_focused, id);
     wm.call_rules("pre_map", id);
-    wm.call_arranger(wm.current_graph, .pre_map, id, prev_id);
+    wm.call_arranger(g, .pre_map, id, prev_id);
     const is_floating = if (wm.node_registry.get(id)) |n| n.floating else false;
-    if (!is_floating) wm.call_arranger(wm.current_graph, .map, id, prev_id);
+    if (!is_floating) wm.call_arranger(g, .map, id, prev_id);
 
     try wm.resolve(wm.current_graph);
     swallow_mod.try_swallow(wm, id);
@@ -117,7 +129,8 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
     if (node.parked_term == null) {
         node.hidden = false;
         try wm.flush(wm.current_graph);
-        for (wm.current_graph.nodes.items) |n| {
+        var it = groups.Nodes.init(wm.current_graph);
+        while (it.next()) |n| {
             if (!n.floating) continue;
             switch (n.content) {
                 .window => |w| wm.backend.raise_window(w),
@@ -150,10 +163,10 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
 }
 
 /// Which existing node the arranger should place a new one relative to.
-fn arranger_anchor(wm: *WM, prev_focused: ?*Node, new_id: u32) ?u32 {
+fn arranger_anchor(wm: *WM, g: *Graph, prev_focused: ?*Node, new_id: u32) ?u32 {
     const f = prev_focused orelse return null;
     var in_current = false;
-    for (wm.current_graph.nodes.items) |n| {
+    for (g.nodes.items) |n| {
         if (n == f) {
             in_current = true;
             break;
@@ -166,7 +179,7 @@ fn arranger_anchor(wm: *WM, prev_focused: ?*Node, new_id: u32) ?u32 {
     if (!pnode.floating) return pid;
 
     // The focused window floats: anchor on the first tiled window instead.
-    for (wm.current_graph.nodes.items) |n| {
+    for (g.nodes.items) |n| {
         if (n.floating) continue;
         if (n.content != .window and n.content != .workspace) continue;
         if (n.content == .workspace and n.preview_window == null) continue;
@@ -189,9 +202,13 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
     const focused_is_dying = wm.focused == dying;
     const next_focus: ?*Node = if (focused_is_dying) pick_next_focus(wm, dying) else null;
 
-    if (!dying.floating and dying.owner_graph == wm.current_graph) {
-        const prev_id: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
-        wm.call_arranger(wm.current_graph, .unmap, dying_id, prev_id);
+    if (!dying.floating) {
+        if (dying.owner_graph) |og| {
+            if (og.within(wm.current_graph)) {
+                const prev_id: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
+                wm.call_arranger(og, .unmap, dying_id, prev_id);
+            }
+        }
     }
     wm.call_rules("unmap", dying_id);
     _ = wm.node_registry.remove(dying_id);
@@ -205,6 +222,8 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
     if (dying.owner_graph) |og| {
         if (og.fullscreen_node == dying) og.fullscreen_node = null;
         og.remove_node(dying);
+        // The last window of a group: the group goes too.
+        groups.dissolve_if_empty(wm, og);
     }
     sweep_dead_containers(wm);
 
@@ -227,7 +246,8 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
 fn pick_next_focus(wm: *WM, dying: *Node) ?*Node {
     // A closing dialog hands focus back to a tiled window first.
     if (dying.floating) {
-        for (wm.current_graph.nodes.items) |n| {
+        var it = groups.Nodes.init(wm.current_graph);
+        while (it.next()) |n| {
             if (n == dying or n.hidden or n.floating) continue;
             if (n.content == .window) return n;
         }
@@ -235,7 +255,18 @@ fn pick_next_focus(wm: *WM, dying: *Node) ?*Node {
     for (wm.current_graph.focus_edges.items) |edge| {
         if (edge.from == dying and edge.to != dying) return edge.to;
     }
-    for (wm.current_graph.nodes.items) |n| {
+    // Its group's windows first, then any.
+    if (dying.owner_graph) |og| {
+        if (og.is_group) {
+            var it = groups.Nodes.init(og);
+            while (it.next()) |n| {
+                if (n == dying or n.hidden) continue;
+                if (n.content == .window) return n;
+            }
+        }
+    }
+    var it = groups.Nodes.init(wm.current_graph);
+    while (it.next()) |n| {
         if (n == dying or n.hidden) continue;
         if (n.content == .window) return n;
     }

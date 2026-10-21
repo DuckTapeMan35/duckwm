@@ -22,6 +22,7 @@ pub const categories = [_][]const u8{
     "Window Management",
     "Focus",
     "Workspaces",
+    "Groups",
     "Layout & Arrangers",
     "Constraints",
     "Geometry",
@@ -594,6 +595,76 @@ pub const entries = [_]ApiEntry{
     },
 
     // =========================================================
+    // Groups
+    // =========================================================
+    .{
+        .category = "Groups",
+        .name = "create_group",
+        .desc =
+        \\Wrap nodes in a new group, which takes the place of the first of them. A group is laid out
+        \\like a window by the arranger of the graph holding it, and lays out its own nodes inside its
+        \\rectangle with an arranger of its own (the default one, until register_arranger gives it
+        \\another). Groups pan and zoom with their workspace. With no ids, the focused window is wrapped.
+        \\New windows open in the focused window's group; a group whose last node leaves goes away.
+        \\The ids must all be in the same workspace or group.
+        ,
+        .params = &.{.{ .name = "ids", .typ = "integer[]?" }},
+        .ret = "integer",
+    },
+    .{
+        .category = "Groups",
+        .name = "ungroup",
+        .desc = "Move everything in a group to the graph holding it, where the group was; the group goes.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Groups",
+        .name = "move_to_group",
+        .desc = "Move a node into a group, where its arranger places it. With no group, move it out of the group it's in, one level up. Focus stays on it.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "group", .typ = "integer?" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Groups",
+        .name = "get_group",
+        .desc = "The group a node is in, or nil if it's directly in a workspace.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "integer?",
+    },
+    .{
+        .category = "Groups",
+        .name = "get_group_members",
+        .desc = "The nodes directly in a group, in the order they joined.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "integer[]",
+    },
+    .{
+        .category = "Groups",
+        .name = "set_group_outline",
+        .desc = "The outline drawn along the inside of every group that doesn't set its own. Width 0 (the default) draws none; the group's nodes are laid out inside the outline.",
+        .params = &.{
+            .{ .name = "width", .typ = "integer" },
+            .{ .name = "color", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Groups",
+        .name = "set_group_outline_of",
+        .desc = "One group's outline. nil for width or color goes back to set_group_outline's.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "width", .typ = "integer?" },
+            .{ .name = "color", .typ = "integer?" },
+        },
+        .ret = "nil",
+    },
+
+    // =========================================================
     // Layout & Arrangers
     // =========================================================
     .{
@@ -633,9 +704,9 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Layout & Arrangers",
         .name = "register_arranger",
-        .desc = "Set the arranger for a specific workspace node by ID. See set_arranger for the full list of events the arranger receives.",
+        .desc = "Set the arranger for a workspace or group node by ID. See set_arranger for the full list of events the arranger receives.",
         .params = &.{
-            .{ .name = "workspace_id", .typ = "integer" },
+            .{ .name = "id", .typ = "integer" },
             .{ .name = "factory", .typ = "function" },
             .{ .name = "name", .typ = "string?" },
         },

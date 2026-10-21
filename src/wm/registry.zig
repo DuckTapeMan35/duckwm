@@ -17,6 +17,14 @@ pub fn on_node_freed(ctx: *anyopaque, node: *Node) void {
         .workspace => if (node.preview_window) |pw| {
             _ = wm.window_to_node_id.remove(pw);
         },
+        // destroy_node has already freed the group's nodes (free_subgraph);
+        // what's left is what only the group's graph held, then the graph itself.
+        .group => |sub| {
+            wm.drop_owned_binds(sub);
+            if (sub.arranger) |cb| wm.release_callback(cb);
+            if (sub.arranger_name.len > 0) wm.allocator.free(sub.arranger_name);
+            wm.allocator.destroy(sub);
+        },
         .empty => {},
     }
     if (get_id_for_node(wm, node)) |id| {

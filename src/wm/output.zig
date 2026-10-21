@@ -6,6 +6,7 @@ const core = @import("core.zig");
 const registry = @import("registry.zig");
 const navigation = @import("navigation.zig");
 const focus_mod = @import("focus.zig");
+const groups = @import("groups.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 
@@ -159,7 +160,7 @@ fn remove(wm: *WM, o: *Output) !void {
 fn set_output(g: *Graph, id: u32) void {
     g.output = id;
     for (g.nodes.items) |n| {
-        if (n.content == .workspace) set_output(n.content.workspace, id);
+        if (n.inner()) |sub| set_output(sub, id);
     }
 }
 
@@ -181,16 +182,18 @@ pub fn visible(wm: *WM, o: *Output) *Graph {
     return if (o == wm.output) wm.visible_graph else o.visible_graph;
 }
 
-/// Is g on screen on some output?
+/// Is g (or the workspace holding it, for a group) on screen on some output?
 pub fn is_visible(wm: *WM, g: *const Graph) bool {
+    const ws = g.workspace();
     for (wm.outputs.items) |o| {
-        if (visible(wm, o) == g) return true;
+        if (visible(wm, o) == ws) return true;
     }
     return false;
 }
 
-/// Where tiling happens on the output g is on.
+/// Where tiling happens on the output g is on (in a group: inside the group).
 pub fn work_area_of(wm: *WM, g: *const Graph) types.Rect {
+    if (g.is_group) return groups.area(wm, g);
     const o = of(wm, g) orelse wm.output;
     return o.usable;
 }
@@ -238,7 +241,7 @@ pub fn focus(wm: *WM, o: *Output) void {
 /// window, and put the pointer on it.
 pub fn focus_something(wm: *WM) void {
     const last = if (wm.output.last_focused) |id| wm.get_node_by_id(id) else null;
-    const target = if (last) |n| (if (n.owner_graph == wm.current_graph) n else null) else null;
+    const target = if (last) |n| (if (n.owner_graph != null and n.owner_graph.?.within(wm.current_graph)) n else null) else null;
     if (target orelse focus_mod.top_left_window(wm)) |n| {
         focus_node(wm, n);
     } else {
@@ -252,9 +255,10 @@ pub fn focus_something(wm: *WM) void {
 /// so focus-follows-mouse doesn't take focus straight back.
 pub fn focus_node(wm: *WM, n: *graph_mod.Node) void {
     wm.set_focus(n);
+    const ws = n.owner_graph.?.workspace();
     wm.backend.warp_pointer(.{
-        .x = n.x - n.owner_graph.?.pan_x + @as(i32, @intCast(n.width / 2)),
-        .y = n.y - n.owner_graph.?.pan_y + @as(i32, @intCast(n.height / 2)),
+        .x = n.x - ws.pan_x + @as(i32, @intCast(n.width / 2)),
+        .y = n.y - ws.pan_y + @as(i32, @intCast(n.height / 2)),
     });
 }
 
@@ -272,13 +276,9 @@ pub fn focus_across(wm: *WM, dir: protocol.Dir) bool {
     var best: ?*graph_mod.Node = null;
     var best_overlap: i32 = std.math.minInt(i32);
     var best_edge: i32 = std.math.maxInt(i32);
-    for (visible(wm, to).nodes.items) |n| {
-        const shown = switch (n.content) {
-            .window => true,
-            .workspace => n.preview_window != null,
-            .empty => false,
-        };
-        if (!shown or n.hidden) continue;
+    var it = groups.Nodes.init(visible(wm, to));
+    while (it.next()) |n| {
+        if (!groups.focusable(n) or n.hidden) continue;
         const nw: i32 = @intCast(n.width);
         const nh: i32 = @intCast(n.height);
         const fw: i32 = @intCast(from.width);

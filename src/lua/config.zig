@@ -99,7 +99,7 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
     for (g.nodes.items) |node| {
         if (node.floating) continue;
         switch (node.content) {
-            .window, .workspace => {
+            .window, .workspace, .group => {
                 if (node.content == .workspace and node.preview_window == null) continue;
                 if (wm.get_id_for_node(node)) |id| ids.append(wm.allocator, id) catch {};
             },
@@ -126,7 +126,7 @@ fn remap_all_graphs(wm: *WM, g: *graph_mod.Graph) void {
     if (g == saved_graph) wm.flush(g) catch {};
 
     for (g.nodes.items) |node| {
-        if (node.content == .workspace) remap_all_graphs(wm, node.content.workspace);
+        if (node.inner()) |sub| remap_all_graphs(wm, sub);
     }
 }
 

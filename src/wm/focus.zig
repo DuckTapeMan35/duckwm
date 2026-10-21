@@ -1,21 +1,25 @@
 const std = @import("std");
 const graph_mod = @import("graph");
 const output = @import("output.zig");
+const groups = @import("groups.zig");
 const WM = @import("core.zig").WM;
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
+/// Focus edges of the current workspace, between every window in it, through
+/// any groups: they share the workspace's canvas, so positions compare directly.
 pub fn rebuild_focus_edges(wm: *WM) !void {
-    wm.current_graph.focus_edges.clearRetainingCapacity();
-    const nodes = wm.current_graph.nodes.items;
+    // (current_graph is a group while its arranger or binds run.)
+    const ws = wm.current_graph.workspace();
+    ws.focus_edges.clearRetainingCapacity();
+    var list: std.ArrayListUnmanaged(*Node) = .empty;
+    defer list.deinit(wm.allocator);
+    var it = groups.Nodes.init(ws);
+    while (it.next()) |n| {
+        if (groups.focusable(n) and !n.hidden) try list.append(wm.allocator, n);
+    }
+    const nodes = list.items;
     for (nodes) |a| {
-        const a_win = switch (a.content) {
-            .window => true,
-            .workspace => a.preview_window != null,
-            .empty => false,
-        };
-        if (!a_win) continue;
-        if (a.hidden) continue;
         const ax = a.x;
         const ay = a.y;
         const aw: i32 = @intCast(a.width);
@@ -24,13 +28,6 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
         const a_cy = ay + @divTrunc(ah, 2);
         for (nodes) |b| {
             if (a == b) continue;
-            const b_win = switch (b.content) {
-                .window => true,
-                .workspace => b.preview_window != null,
-                .empty => false,
-            };
-            if (!b_win) continue;
-            if (b.hidden) continue;
             const bx = b.x;
             const by = b.y;
             const bw: i32 = @intCast(b.width);
@@ -46,9 +43,9 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
 
             // Always add the primary direction
             if (abs_dx >= abs_dy) {
-                if (dx < 0) try wm.current_graph.add_focus_edge(a, b, .Left) else try wm.current_graph.add_focus_edge(a, b, .Right);
+                if (dx < 0) try ws.add_focus_edge(a, b, .Left) else try ws.add_focus_edge(a, b, .Right);
             } else {
-                if (dy < 0) try wm.current_graph.add_focus_edge(a, b, .Up) else try wm.current_graph.add_focus_edge(a, b, .Down);
+                if (dy < 0) try ws.add_focus_edge(a, b, .Up) else try ws.add_focus_edge(a, b, .Down);
             }
 
             // Also add secondary direction whenever both components are non-trivial
@@ -59,9 +56,9 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
                 if (minor * 4 >= major) {
                     // secondary
                     if (abs_dx < abs_dy) {
-                        if (dx < 0) try wm.current_graph.add_focus_edge(a, b, .Left) else try wm.current_graph.add_focus_edge(a, b, .Right);
+                        if (dx < 0) try ws.add_focus_edge(a, b, .Left) else try ws.add_focus_edge(a, b, .Right);
                     } else {
-                        if (dy < 0) try wm.current_graph.add_focus_edge(a, b, .Up) else try wm.current_graph.add_focus_edge(a, b, .Down);
+                        if (dy < 0) try ws.add_focus_edge(a, b, .Up) else try ws.add_focus_edge(a, b, .Down);
                     }
                 }
             }
@@ -80,7 +77,7 @@ pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
     var best_dist: i32 = std.math.maxInt(i32);
     var best_overlap: i32 = std.math.minInt(i32);
 
-    for (wm.current_graph.focus_edges.items) |edge| {
+    for (wm.current_graph.workspace().focus_edges.items) |edge| {
         if (edge.from != focused) continue;
         if (edge.dir != dir) continue;
 
@@ -147,7 +144,7 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     // A window showing on another output: that output takes focus first.
     if (node.owner_graph) |og| {
         if (output.of(wm, og)) |o| {
-            if (o != wm.output and output.visible(wm, o) == og) {
+            if (o != wm.output and output.visible(wm, o) == og.workspace()) {
                 // An arranger or rule is running: switching output now would
                 // swap the workspace it borrowed. Leave focus where it is.
                 if (wm.hold_output > 0) return;
@@ -163,7 +160,8 @@ pub fn set_focus(wm: *WM, node: *Node) void {
     node.urgent = false;
 
     // Pan the window's own workspace just enough to have it on its monitor.
-    const g = node.owner_graph orelse return;
+    const og = node.owner_graph orelse return;
+    const g = og.workspace();
     if (!node.floating and output.is_visible(wm, g)) {
         const work = output.work_area_of(wm, g);
         const right = work.x + @as(i32, @intCast(work.width));
@@ -182,18 +180,21 @@ pub fn set_focus(wm: *WM, node: *Node) void {
 
     // Focus changes border colors (and which window counts as fullscreen-focused).
     wm.flush(g) catch {};
-    if (wm.get_id_for_node(node)) |id| wm.call_arranger(g, .focus, id, null);
+    if (wm.get_id_for_node(node)) |id| wm.call_arranger(og, .focus, id, null);
+    var inner = og;
+    while (inner.is_group) {
+        const gn = inner.parent_node.?;
+        const outer = gn.owner_graph.?;
+        if (wm.get_id_for_node(gn)) |id| wm.call_arranger(outer, .focus, id, null);
+        inner = outer;
+    }
 }
 
 pub fn top_left_window(wm: *WM) ?*Node {
     var best: ?*Node = null;
-    for (wm.current_graph.nodes.items) |node| {
-        const node_win = switch (node.content) {
-            .window => true,
-            .workspace => node.preview_window != null,
-            .empty => false,
-        };
-        if (!node_win) continue;
+    var it = groups.Nodes.init(wm.current_graph);
+    while (it.next()) |node| {
+        if (!groups.focusable(node) or node.hidden) continue;
         const b = best orelse {
             best = node;
             continue;

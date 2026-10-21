@@ -87,6 +87,7 @@ pub fn layout(
         const full: []const u8 = switch (node.content) {
             .window => if (node.info.class_len > 0) node.info.class() else "?",
             .workspace => "ws",
+            .group => "group",
             .empty => unreachable,
         };
 

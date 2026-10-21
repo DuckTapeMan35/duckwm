@@ -5,6 +5,7 @@ const core = @import("core.zig");
 const focus = @import("focus.zig");
 const registry = @import("registry.zig");
 const output = @import("output.zig");
+const groups = @import("groups.zig");
 pub const WorkspaceSwitchMode = @import("protocol").WorkspaceSwitchMode;
 const WM = core.WM;
 const Graph = graph.Graph;
@@ -22,9 +23,9 @@ pub fn free_graph(wm: *WM, g: *Graph) void {
         if (g.fullscreen_node == node) {
             g.fullscreen_node = null;
         }
-        if (node.content == .workspace) {
-            free_graph(wm, node.content.workspace);
-            wm.allocator.destroy(node.content.workspace);
+        if (node.inner()) |sub| {
+            free_graph(wm, sub);
+            wm.allocator.destroy(sub);
         }
         // destroy any preview window
         if (node.preview_window) |pw| wm.backend.destroy_preview_window(pw);
@@ -89,7 +90,7 @@ pub fn leave_workspace(wm: *WM) !void {
 }
 
 pub fn activate_window(wm: *WM, node: *Node) !void {
-    const target = node.owner_graph orelse return;
+    const target = (node.owner_graph orelse return).workspace();
 
     // dont yank the user to the "virtual" workspace scratchpads use
     if (target == wm.scratch_graph) {
@@ -108,7 +109,7 @@ pub fn activate_window(wm: *WM, node: *Node) !void {
             while (true) {
                 try target_anc.put(wm.allocator, g, {});
                 const pn = g.parent_node orelse break;
-                g = pn.owner_graph orelse break;
+                g = (pn.owner_graph orelse break).workspace();
             }
         }
         var guard: usize = 0;
@@ -125,7 +126,7 @@ pub fn activate_window(wm: *WM, node: *Node) !void {
         while (g != wm.current_graph) {
             const pn = g.parent_node orelse break;
             try chain.append(wm.allocator, pn);
-            g = pn.owner_graph orelse break;
+            g = (pn.owner_graph orelse break).workspace();
         }
         var i = chain.items.len;
         while (i > 0) {
@@ -146,7 +147,7 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     // If the leaving window has focus, a neighbour takes it, as when one closes.
     // Picked now, while the focus edges still include it.
     const was_focused = wm.focused == node;
-    const next: ?*Node = if (was_focused) neighbour_in(src_graph, node) else null;
+    const next: ?*Node = if (was_focused) neighbour_in(src_graph.workspace(), node) else null;
 
     src_graph.detach_node(node);
     try src_graph.replace_constraints(node, &.{});
@@ -172,7 +173,7 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     var target_prev_id: ?u32 = null;
     for (target_graph.nodes.items) |n| {
         if (n == node) continue;
-        if (n.content == .window or n.content == .workspace) {
+        if (n.content != .empty) {
             if (wm.get_id_for_node(n)) |id| {
                 target_prev_id = id;
                 break;
@@ -194,27 +195,34 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     }
 
     wm.current_graph = saved_graph;
+    // Edges of the workspace showing (the ones rebuilt above were src's and target's).
+    wm.rebuild_focus_edges() catch {};
     switch (node.content) {
         .window => |win| wm.sync_window_workspace(win),
         else => {},
     }
     sync_workspace_state(wm);
+    const here = src_graph.within(wm.current_graph);
+    // A group it left empty goes too (src_graph may be freed after this).
+    groups.dissolve_if_empty(wm, src_graph);
     // The arranger didn't choose (only some do on unmap): fall back.
-    if (was_focused and (wm.focused == null or wm.focused.?.owner_graph != src_graph) and src_graph == wm.current_graph) {
-        const n = if (next) |x| (if (!x.dead and x.owner_graph == src_graph) x else null) else null;
+    const moved_on = if (wm.focused) |f| f.owner_graph != src_graph else true;
+    if (was_focused and moved_on and here and wm.focused != node) {
+        const n = if (next) |x| (if (!x.dead and x.owner_graph != null and x.owner_graph.?.within(wm.current_graph)) x else null) else null;
         if (n orelse focus.top_left_window(wm)) |t| wm.set_focus(t);
     }
 }
 
 pub fn sync_workspace_state(wm: *WM) void {
     const parent_graph: *graph.Graph = if (wm.current_graph.parent_node) |pn|
-        pn.owner_graph orelse wm.root
+        if (pn.owner_graph) |og| og.workspace() else wm.root
     else
         wm.root;
 
     var count: u32 = 0;
     var current: u32 = 0;
-    for (parent_graph.nodes.items) |node| {
+    var n_it = groups.Nodes.init(parent_graph);
+    while (n_it.next()) |node| {
         if (node.content != .workspace) continue;
         if (node.content.workspace == wm.current_graph) current = count;
         count += 1;
@@ -223,8 +231,8 @@ pub fn sync_workspace_state(wm: *WM) void {
 
     var client_list: std.ArrayListUnmanaged(types.WindowHandle) = .empty;
     defer client_list.deinit(wm.allocator);
-    var it = wm.window_to_node_id.iterator();
-    while (it.next()) |entry| {
+    var e_it = wm.window_to_node_id.iterator();
+    while (e_it.next()) |entry| {
         const node = wm.node_registry.get(entry.value_ptr.*) orelse continue;
         if (node.content != .window) continue;
         client_list.append(wm.allocator, entry.key_ptr.*) catch {};
@@ -235,15 +243,16 @@ pub fn sync_workspace_state(wm: *WM) void {
 pub fn sync_window_workspace(wm: *WM, win: types.WindowHandle) void {
     const node_id = wm.window_to_node_id.get(win) orelse return;
     const node = wm.node_registry.get(node_id) orelse return;
-    const owner = node.owner_graph orelse return;
+    const owner = (node.owner_graph orelse return).workspace();
 
     const parent_graph: *graph.Graph = if (owner.parent_node) |pn|
-        pn.owner_graph orelse wm.root
+        (if (pn.owner_graph) |og| og.workspace() else wm.root)
     else
         wm.root;
 
     var idx: u32 = 0;
-    for (parent_graph.nodes.items) |n| {
+    var it = groups.Nodes.init(parent_graph);
+    while (it.next()) |n| {
         if (n.content != .workspace) continue;
         if (n.content.workspace == owner) break;
         idx += 1;
@@ -395,7 +404,8 @@ fn neighbour_in(g: *Graph, n: *Node) ?*Node {
     for (g.focus_edges.items) |e| {
         if (e.from == n and e.to != n) return e.to;
     }
-    for (g.nodes.items) |x| {
+    var it = groups.Nodes.init(g);
+    while (it.next()) |x| {
         if (x != n and !x.hidden and x.content == .window) return x;
     }
     return null;

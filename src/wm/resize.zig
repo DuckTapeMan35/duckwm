@@ -1,23 +1,45 @@
 const std = @import("std");
-const WM = @import("core.zig").WM;
 const graph_mod = @import("graph");
+const output = @import("output.zig");
+const groups = @import("groups.zig");
+const Graph = graph_mod.Graph;
+const WM = @import("core.zig").WM;
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
 pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32, floating: bool) !bool {
-    if (wm.current_graph.lock_vertical_resize) return false;
-    const in_virtual = wm.current_graph.virtual_width > wm.screen_width;
-    const work = wm.get_work_area();
+    return vertical_in(wm, groups.active(wm), edge_x, delta, floating);
+}
+
+pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32, floating: bool) !bool {
+    return horizontal_in(wm, groups.active(wm), edge_y, delta, floating);
+}
+
+fn vertical_in(wm: *WM, g: *Graph, edge_x: i32, delta: i32, floating: bool) anyerror!bool {
+    if (g.lock_vertical_resize) return false;
+    const work = output.work_area_of(wm, g);
     const work_left: i32 = work.x;
     const work_right: i32 = work.x + @as(i32, @intCast(work.width));
 
-    // block resizing edges that touch the screen boundary
-    if (!in_virtual) {
-        if (edge_x <= work_left) return false;
-        if (edge_x >= work_right) return false;
+    if (g.is_group and !floating) {
+        // On the group's border: it's the group's own edge, moved in its parent.
+        if (edge_x <= work_left or edge_x >= work_right) {
+            const gn = g.parent_node.?;
+            if (gn.floating) return false;
+            const outer = gn.owner_graph.?;
+            const e = if (edge_x <= work_left) gn.x else gn.x + @as(i32, @intCast(gn.width));
+            return vertical_in(wm, outer, e, delta, false);
+        }
+    } else {
+        const in_virtual = g.virtual_width > wm.screen_width;
+        // block resizing edges that touch the screen boundary
+        if (!in_virtual) {
+            if (edge_x <= work_left) return false;
+            if (edge_x >= work_right) return false;
+        }
     }
     const tol: i32 = 1;
-    for (wm.current_graph.nodes.items) |node| {
+    for (g.nodes.items) |node| {
         if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (@abs(right - edge_x) <= tol) {
@@ -27,7 +49,7 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32, floating: bool) !b
         }
     }
     var changed = false;
-    for (wm.current_graph.nodes.items) |node| {
+    for (g.nodes.items) |node| {
         if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const right: i32 = node.x + @as(i32, @intCast(node.width));
         if (@abs(right - edge_x) <= tol) {
@@ -39,23 +61,35 @@ pub fn resize_vertical_edge(wm: *WM, edge_x: i32, delta: i32, floating: bool) !b
             changed = true;
         }
     }
+    if (changed) groups.refit(wm, g);
     return changed;
 }
 
-pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32, floating: bool) !bool {
-    if (wm.current_graph.lock_horizontal_resize) return false;
-    const in_virtual = wm.current_graph.virtual_height > wm.screen_height;
-    const work = wm.get_work_area();
+fn horizontal_in(wm: *WM, g: *Graph, edge_y: i32, delta: i32, floating: bool) anyerror!bool {
+    if (g.lock_horizontal_resize) return false;
+    const work = output.work_area_of(wm, g);
     const work_top: i32 = work.y;
     const work_bottom: i32 = work.y + @as(i32, @intCast(work.height));
 
-    // block resizing edges that touch the screen boundary
-    if (!in_virtual) {
-        if (edge_y <= work_top) return false;
-        if (edge_y >= work_bottom) return false;
+    if (g.is_group and !floating) {
+        // On the group's border: it's the group's own edge, moved in its parent.
+        if (edge_y <= work_top or edge_y >= work_bottom) {
+            const gn = g.parent_node.?;
+            if (gn.floating) return false;
+            const outer = gn.owner_graph.?;
+            const e = if (edge_y <= work_top) gn.y else gn.y + @as(i32, @intCast(gn.height));
+            return horizontal_in(wm, outer, e, delta, false);
+        }
+    } else {
+        const in_virtual = g.virtual_height > wm.screen_height;
+        // block resizing edges that touch the screen boundary
+        if (!in_virtual) {
+            if (edge_y <= work_top) return false;
+            if (edge_y >= work_bottom) return false;
+        }
     }
     const tol: i32 = 1;
-    for (wm.current_graph.nodes.items) |node| {
+    for (g.nodes.items) |node| {
         if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (@abs(bottom - edge_y) <= tol) {
@@ -65,7 +99,7 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32, floating: bool) 
         }
     }
     var changed = false;
-    for (wm.current_graph.nodes.items) |node| {
+    for (g.nodes.items) |node| {
         if ((node.content == .empty and node.key == null) or node.floating != floating) continue;
         const bottom: i32 = node.y + @as(i32, @intCast(node.height));
         if (@abs(bottom - edge_y) <= tol) {
@@ -77,6 +111,7 @@ pub fn resize_horizontal_edge(wm: *WM, edge_y: i32, delta: i32, floating: bool) 
             changed = true;
         }
     }
+    if (changed) groups.refit(wm, g);
     return changed;
 }
 
@@ -96,8 +131,17 @@ pub fn resize_corner(wm: *WM, node: *Node, delta_x: i32, delta_y: i32) !void {
     if (delta_y != 0) _ = try wm.resize_horizontal_edge(node.y + @as(i32, @intCast(node.height)), delta_y, f);
 }
 
+/// After a resize by hand: constraints take on the new geometry, in the
+/// current workspace and every group in it.
 pub fn sync_constraints_from_geometry(wm: *WM) void {
-    const g = wm.current_graph;
+    sync_graph(wm.current_graph);
+    var it = groups.Nodes.all(wm.current_graph);
+    while (it.next()) |n| {
+        if (n.content == .group) sync_graph(n.content.group);
+    }
+}
+
+fn sync_graph(g: *Graph) void {
     for (g.nodes.items) |node| {
         if (node.floating) continue;
         for (node.constraints.items, 0..) |con, i| {
