@@ -213,10 +213,19 @@ const ProtoStep = struct {
 
 const Platform = enum { x11, river };
 
+const AllocatorKind = enum { debug, smp, c };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const platform = b.option(Platform, "platform", "Display server backend (default: x11)") orelse .x11;
+    const allocator = b.option(
+        AllocatorKind,
+        "allocator",
+        "Memory allocator: debug (leak and misuse checks; default in Debug builds), smp (fast; default in release builds) or c (libc malloc)",
+    ) orelse if (optimize == .Debug) AllocatorKind.debug else AllocatorKind.smp;
+    const build_options = b.addOptions();
+    build_options.addOption(AllocatorKind, "allocator", allocator);
 
     // ---- C headers ----
     // Xlib, Xcursor, Xft: only the x11 backend sees these.
@@ -380,6 +389,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.root_module.addOptions("build_options", build_options);
     exe.use_llvm = true;
     exe.use_lld = true;
     b.installArtifact(exe);

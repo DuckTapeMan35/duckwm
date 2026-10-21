@@ -2,6 +2,7 @@ const std = @import("std");
 const duckwm = @import("duckwm");
 const types = @import("types");
 const output = @import("wm").output;
+const build_options = @import("build_options");
 const WM = duckwm.WM;
 const Config = duckwm.Config;
 
@@ -41,10 +42,18 @@ fn mainImpl(init: std.process.Init) !void {
         }
     }
 
-    var da = std.heap.DebugAllocator(.{}){};
-    defer _ = da.deinit();
+    // Debug builds check for leaks and misuse; release builds use a fast allocator.
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer if (build_options.allocator == .debug) {
+        _ = debug_allocator.deinit();
+    };
+    const gpa = switch (build_options.allocator) {
+        .debug => debug_allocator.allocator(),
+        .smp => std.heap.smp_allocator,
+        .c => std.heap.c_allocator,
+    };
 
-    var wm = try WM.create(da.allocator());
+    var wm = try WM.create(gpa);
     defer wm.deinit();
     try output.init_all(&wm);
     wm.commands_path = commands_path;
