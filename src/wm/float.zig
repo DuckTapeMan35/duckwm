@@ -1,8 +1,9 @@
 const std = @import("std");
-const WM = @import("core.zig").WM;
 const types = @import("types");
 const graph_mod = @import("graph");
 const ziglua = @import("ziglua");
+const groups = @import("groups.zig");
+const WM = @import("core.zig").WM;
 const Node = graph_mod.Node;
 
 pub fn center_node(wm: *WM, node: *Node) void {
@@ -15,7 +16,7 @@ pub fn center_node(wm: *WM, node: *Node) void {
 /// Float or tile n, telling its workspace's arranger: an unmap while it's
 /// still tiled, a map once it's back. Journaled: a failed transaction undoes it.
 pub fn set_floating(wm: *WM, n: *Node, val: bool) !void {
-    if (n.content != .window and n.content != .workspace) return;
+    if (n.content == .empty) return;
     if (n.floating == val) return;
     const g = n.owner_graph orelse return error.NotInGraph;
     const id = wm.get_id_for_node(n) orelse return error.NoId;
@@ -43,10 +44,14 @@ pub fn toggle_floating(wm: *WM) !void {
 
 pub fn raise_floating_windows(wm: *WM) void {
     var moving: ?types.WindowHandle = null;
-    for (wm.current_graph.nodes.items) |node| {
+    var it = groups.Nodes.all(wm.current_graph);
+    while (it.next()) |node| {
         if (!node.floating or node.hidden) continue;
+        if (node.content == .group) {
+            raise_group(wm, node.content.group);
+            continue;
+        }
         const h = node.window() orelse continue;
-        // The window being dragged goes last, so it ends up on top.
         if (wm.float_moving and h == wm.float_move_window) {
             moving = h;
             continue;
@@ -56,10 +61,18 @@ pub fn raise_floating_windows(wm: *WM) void {
     if (moving) |h| wm.backend.raise_window(h);
 }
 
+/// Everything shown in a group, in order (so later ones stay on top).
+pub fn raise_group(wm: *WM, sub: *graph_mod.Graph) void {
+    var it = groups.Nodes.init(sub);
+    while (it.next()) |n| {
+        if (n.hidden) continue;
+        if (n.window()) |h| wm.backend.raise_window(h);
+    }
+}
+
 pub fn toggle_fullscreen(wm: *WM) !void {
     const n = wm.focused orelse return;
-    if (n.content != .window) return;
-    const win = n.content.window;
+    if (n.content != .window and n.content != .group) return;
     const g = n.owner_graph orelse wm.current_graph;
     const id = wm.get_id_for_node(n) orelse return;
     if (g.fullscreen_node == n) {
@@ -87,7 +100,7 @@ pub fn toggle_fullscreen(wm: *WM) !void {
         n.width = wm.screen_width;
         n.height = wm.screen_height;
     }
-    wm.backend.publish_window_fullscreen(win, g.fullscreen_node == n);
+    if (n.content == .window) wm.backend.publish_window_fullscreen(n.content.window, g.fullscreen_node == n);
     try wm.resolve(wm.current_graph);
     try wm.rebuild_focus_edges();
     try wm.flush(wm.current_graph);
@@ -96,7 +109,7 @@ pub fn toggle_fullscreen(wm: *WM) !void {
 
 pub fn move_floating(wm: *WM, delta_x: i32, delta_y: i32) !void {
     const focused = wm.focused orelse return;
-    if (!focused.floating or focused.content != .window) return;
+    if (!focused.floating or focused.content == .empty) return;
     focused.x += delta_x;
     focused.y += delta_y;
     try wm.resolve(wm.current_graph);
@@ -105,7 +118,7 @@ pub fn move_floating(wm: *WM, delta_x: i32, delta_y: i32) !void {
 
 pub fn resize_floating(wm: *WM, delta_width: i32, delta_height: i32) !void {
     const focused = wm.focused orelse return;
-    if (!focused.floating or focused.content != .window) return;
+    if (!focused.floating or focused.content == .empty) return;
     focused.width = @intCast(@max(10, @as(i32, @intCast(focused.width)) + delta_width));
     focused.height = @intCast(@max(10, @as(i32, @intCast(focused.height)) + delta_height));
     try wm.resolve(wm.current_graph);

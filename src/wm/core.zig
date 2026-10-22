@@ -125,7 +125,8 @@ pub const WM = struct {
     preview_items: std.ArrayListUnmanaged(types.PreviewItem) = .empty,
     /// Outline drawn around every group (width 0: none), unless the group sets its own.
     group_outline_width: u32 = 0,
-    group_outline_color: u32 = 0x5294e2,
+    /// Group border color when unfocused; 0: not drawn (the room is still kept).
+    group_outline_color: u32 = 0,
 
     // ---- config state ----
     lua: ?*Lua = null,

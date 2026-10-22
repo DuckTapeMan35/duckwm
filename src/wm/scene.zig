@@ -228,13 +228,13 @@ fn fullscreen_in(g: *Graph) ?*Node {
 fn compute_scene(wm: *WM, g: *Graph) !void {
     const out = (output.of(wm, g) orelse wm.output).rect;
     const work = output.work_area_of(wm, g);
-    try compute_nodes(wm, g, work, work, view_of(g, work), out);
+    try compute_nodes(wm, g, work, work, view_of(g, work), out, false);
 }
 
 /// g's windows (g: a workspace, or a group in one). Tiled nodes take their
 /// gaps from work and are drawn with the workspace's view from its corner
 /// (origin); nothing tiled is drawn outside clip.
-fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view: View, clip: types.Rect) anyerror!void {
+fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view: View, clip: types.Rect, in_float: bool) anyerror!void {
     const bw: u32 = @intCast(@max(0, wm.border_width));
     const out = clip;
 
@@ -244,17 +244,18 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                 if (node.hidden) continue;
                 const is_fullscreen = wm.focused == node and g.fullscreen_node == node;
                 const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, origin, view);
-                // Scrolled or panned off its own monitor: not onto the next one.
-                const tiled = !node.floating and !is_fullscreen;
-                if (tiled and !overlaps(r, out)) continue;
+                // Laid out in its graph: cut to its area, and skipped if wholly outside it.
+                const clipped = !node.floating and !is_fullscreen;
+                if (clipped and !overlaps(r, out)) continue;
                 try wm.scene.append(wm.allocator, .{
                     .handle = win,
                     .frame = r,
                     .border_width = if (is_fullscreen) 0 else bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
-                    .tiled = !node.floating,
+                    // Stacking: inside a floating group it floats with the group.
+                    .tiled = !node.floating and !in_float,
                     .interactive = node.floating and wm.float_moving and wm.float_move_window == win,
-                    .clip = if (tiled) out else null,
+                    .clip = if (clipped) out else null,
                 });
             },
             .workspace => {
@@ -267,7 +268,7 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                     .frame = r,
                     .border_width = bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
-                    .tiled = tiled,
+                    .tiled = !node.floating and !in_float,
                     .interactive = node.floating and wm.float_moving and wm.float_move_window == node.preview_window.?,
                     .clip = if (tiled) out else null,
                 });
@@ -277,11 +278,8 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                 const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, origin, view);
                 const inner_clip = intersect(r, out) orelse continue;
                 var ol = groups.outline_of(wm, sub);
-                if (wm.focused == node) {
-                    ol.width = @max(ol.width, bw);
-                    ol.color = node.border_color_focused orelse wm.default_border_color_focused;
-                }
-                if (ol.width > 0) try wm.outlines.append(wm.allocator, .{
+                if (wm.focused == node) ol.color = node.border_color_focused orelse wm.default_border_color_focused;
+                if (ol.width > 0 and ol.color != 0) try wm.outlines.append(wm.allocator, .{
                     .key = @intFromPtr(sub),
                     .rect = r,
                     .clip = inner_clip,
@@ -292,9 +290,25 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                 const area = groups.area(wm, sub);
                 if (node.floating) {
                     // A floating group isn't panned or zoomed: drawn as laid out.
-                    try compute_nodes(wm, sub, area, area, .{ .z = 1.0, .pan_x = 0, .pan_y = 0 }, inner_clip);
+                    try compute_nodes(
+                        wm,
+                        sub,
+                        area,
+                        area,
+                        .{ .z = 1.0, .pan_x = 0, .pan_y = 0 },
+                        inner_clip,
+                        in_float or node.floating,
+                    );
                 } else {
-                    try compute_nodes(wm, sub, area, origin, view, inner_clip);
+                    try compute_nodes(
+                        wm,
+                        sub,
+                        area,
+                        origin,
+                        view,
+                        inner_clip,
+                        in_float or node.floating,
+                    );
                 }
             },
             .empty,

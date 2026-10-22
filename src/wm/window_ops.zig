@@ -13,8 +13,20 @@ pub fn exchange(wm: *WM, a: *Node, b: *Node) !void {
     const id_a = wm.get_id_for_node(a) orelse return error.InvalidNode;
     const id_b = wm.get_id_for_node(b) orelse return error.InvalidNode;
     if (a.content == .empty and b.content == .empty) return;
+    // A workspace stays among workspaces, out of groups.
+    const a_in_group = if (a.owner_graph) |g| g.is_group else false;
+    const b_in_group = if (b.owner_graph) |g| g.is_group else false;
+    if ((a.content == .workspace and b_in_group) or (b.content == .workspace and a_in_group)) return;
+    // Never a group into itself.
+    if (a.content == .group and b.owner_graph != null and b.owner_graph.?.within(a.content.group)) return;
+    if (b.content == .group and a.owner_graph != null and a.owner_graph.?.within(b.content.group)) return;
     try exchange_raw(wm, a, b, id_a, id_b);
     wm.journal.external(undo_exchange, wm, (@as(u64, id_a) << 32) | id_b);
+    // A group that changed places lays its nodes out in its new rectangle.
+    if (a.content == .group or b.content == .group) {
+        try wm.resolve(wm.current_graph);
+        try wm.rebuild_focus_edges();
+    }
     try wm.flush(wm.current_graph);
 }
 
@@ -155,6 +167,13 @@ pub fn kill_client(wm: *WM) !void {
                 }
             }
         },
+        .group => |sub| {
+            var it = groups.Nodes.init(sub);
+            while (it.next()) |n| switch (n.content) {
+                .window => |win| wm.effect(.{ .close_window = win }),
+                else => {},
+            };
+        },
         else => {},
     }
 }
@@ -206,7 +225,7 @@ pub fn graph_has_content(wm: *WM, g: *graph_mod.Graph) bool {
 
 pub fn show_scratchpad(wm: *WM, node_id: u32) !void {
     const node = wm.node_registry.get(node_id) orelse return;
-    if (node.window() == null) return;
+    if (node.content == .empty) return;
 
     wm.journal.set(node, "floating", true);
 
@@ -220,7 +239,7 @@ pub fn show_scratchpad(wm: *WM, node_id: u32) !void {
 
 pub fn hide_scratchpad(wm: *WM, node_id: u32) !void {
     const node = wm.node_registry.get(node_id) orelse return;
-    if (node.window() == null) return;
+    if (node.content == .empty) return;
 
     try wm.send_to_workspace(node_id, wm.scratch_graph);
     wm.journal.set(node, "floating", true);
@@ -230,7 +249,7 @@ pub fn hide_scratchpad(wm: *WM, node_id: u32) !void {
 
 pub fn toggle_scratchpad(wm: *WM, node_id: u32) !void {
     const node = wm.node_registry.get(node_id) orelse return;
-    if (node.window() == null) return;
+    if (node.content == .empty) return;
 
     if (node.owner_graph == wm.scratch_graph)
         try show_scratchpad(wm, node_id)

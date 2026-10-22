@@ -292,9 +292,11 @@ pub fn group_of(node: *const Node) ?*Node {
     return if (og.is_group) og.parent_node else null;
 }
 
+/// A group's border: as wide as a window's unless an outline width is set.
 pub fn outline_of(wm: *const WM, g: *const Graph) OutlineStyle {
+    const w = g.outline_width orelse wm.group_outline_width;
     return .{
-        .width = g.outline_width orelse wm.group_outline_width,
+        .width = if (w > 0) w else @intCast(@max(0, wm.border_width)),
         .color = g.outline_color orelse wm.group_outline_color,
     };
 }
