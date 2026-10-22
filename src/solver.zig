@@ -5,40 +5,48 @@ const Graph = graph_mod.Graph;
 
 // Variables: each node has 4 vars: x=0, y=1, w=2, h=3
 // var_id = node_idx * 4 + field
-pub inline fn var_x(i: usize) usize { return i * 4 + 0; }
-pub inline fn var_y(i: usize) usize { return i * 4 + 1; }
-pub inline fn var_w(i: usize) usize { return i * 4 + 2; }
-pub inline fn var_h(i: usize) usize { return i * 4 + 3; }
+pub inline fn var_x(i: usize) usize {
+    return i * 4 + 0;
+}
+pub inline fn var_y(i: usize) usize {
+    return i * 4 + 1;
+}
+pub inline fn var_w(i: usize) usize {
+    return i * 4 + 2;
+}
+pub inline fn var_h(i: usize) usize {
+    return i * 4 + 3;
+}
 
 // An equation: sum(coeffs[i] * vars[i]) = rhs
 pub const Equation = struct {
-    vars:   [8]u32,
+    vars: [8]u32,
     coeffs: [8]f64,
-    n:      u8,
-    rhs:    f64,
+    n: u8,
+    rhs: f64,
     weight: f64, // 0 = required (hard), >0 = soft
 };
 
 pub const REQUIRED: f64 = 0.0;
-pub const STRONG:   f64 = 1e4;
-pub const MEDIUM:   f64 = 1e2;
-pub const WEAK:     f64 = 1.0;
+pub const STRONG: f64 = 1e4;
+pub const MEDIUM: f64 = 1e2;
+pub const WEAK: f64 = 1.0;
 
 pub const Solver = struct {
     allocator: std.mem.Allocator,
-    n_vars:    usize,
+    n_vars: usize,
     equations: std.ArrayListUnmanaged(Equation),
     // current values — used as initial guess and for underdetermined systems
-    vals:      []f64,
+    vals: []f64,
 
     pub fn init(allocator: std.mem.Allocator, n_vars: usize) !Solver {
         const vals = try allocator.alloc(f64, n_vars);
         @memset(vals, 0);
         return .{
             .allocator = allocator,
-            .n_vars    = n_vars,
+            .n_vars = n_vars,
             .equations = .{ .items = &.{}, .capacity = 0 },
-            .vals      = vals,
+            .vals = vals,
         };
     }
 
@@ -57,17 +65,21 @@ pub const Solver = struct {
 
     pub fn add_fixed(self: *Solver, v: usize, val: f64, weight: f64) !void {
         try self.add(.{
-            .vars   = [8]u32{ @intCast(v), 0,0,0,0,0,0,0 },
-            .coeffs = [8]f64{ 1.0,         0,0,0,0,0,0,0 },
-            .n = 1, .rhs = val, .weight = weight,
+            .vars = [8]u32{ @intCast(v), 0, 0, 0, 0, 0, 0, 0 },
+            .coeffs = [8]f64{ 1.0, 0, 0, 0, 0, 0, 0, 0 },
+            .n = 1,
+            .rhs = val,
+            .weight = weight,
         });
     }
 
     pub fn add_diff(self: *Solver, va: usize, vb: usize, rhs: f64, weight: f64) !void {
         try self.add(.{
-            .vars   = [8]u32{ @intCast(va), @intCast(vb), 0,0,0,0,0,0 },
-            .coeffs = [8]f64{ 1.0,          -1.0,         0,0,0,0,0,0 },
-            .n = 2, .rhs = rhs, .weight = weight,
+            .vars = [8]u32{ @intCast(va), @intCast(vb), 0, 0, 0, 0, 0, 0 },
+            .coeffs = [8]f64{ 1.0, -1.0, 0, 0, 0, 0, 0, 0 },
+            .n = 2,
+            .rhs = rhs,
+            .weight = weight,
         });
     }
 
@@ -97,13 +109,13 @@ fn build_adjacency(
 // Edge v->u exists if they share an equation (mutual dependency)
 // ----------------------------------------------------------------
 const TarjanState = struct {
-    index:    []i32,   // -1 = unvisited
-    lowlink:  []i32,
+    index: []i32, // -1 = unvisited
+    lowlink: []i32,
     on_stack: []bool,
-    stack:    std.ArrayListUnmanaged(u32),
-    scc_id:   []i32,   // which SCC each var belongs to
-    n_sccs:   u32,
-    counter:  i32,
+    stack: std.ArrayListUnmanaged(u32),
+    scc_id: []i32, // which SCC each var belongs to
+    n_sccs: u32,
+    counter: i32,
 };
 
 fn tarjan_visit(
@@ -113,9 +125,9 @@ fn tarjan_visit(
     eqs: []Equation,
     allocator: std.mem.Allocator,
 ) !void {
-    ts.index[v]   = ts.counter;
+    ts.index[v] = ts.counter;
     ts.lowlink[v] = ts.counter;
-    ts.counter   += 1;
+    ts.counter += 1;
     try ts.stack.append(allocator, v);
     ts.on_stack[v] = true;
 
@@ -139,7 +151,7 @@ fn tarjan_visit(
         while (true) {
             const u = ts.stack.pop().?;
             ts.on_stack[u] = false;
-            ts.scc_id[u]   = @intCast(ts.n_sccs);
+            ts.scc_id[u] = @intCast(ts.n_sccs);
             if (u == v) break;
         }
         ts.n_sccs += 1;
@@ -152,9 +164,9 @@ fn tarjan_visit(
 // (keep current value).
 // ----------------------------------------------------------------
 fn solve_scc_system(
-    vars: []u32,        // variable indices in this SCC
-    eqs:  []Equation,   // equations involving only these vars (collected by caller)
-    vals: []f64,        // in/out: current values, updated in place
+    vars: []u32, // variable indices in this SCC
+    eqs: []Equation, // equations involving only these vars (collected by caller)
+    vals: []f64, // in/out: current values, updated in place
     allocator: std.mem.Allocator,
 ) !void {
     const n = vars.len;
@@ -166,7 +178,7 @@ fn solve_scc_system(
     for (vars, 0..) |v, i| try local_idx.put(allocator, v, i);
 
     // Augmented matrix [A | b], rows = equations + regularization
-    const n_eqs  = eqs.len + n; // +n for regularization rows
+    const n_eqs = eqs.len + n; // +n for regularization rows
     const matrix = try allocator.alloc(f64, n_eqs * (n + 1));
     defer allocator.free(matrix);
     @memset(matrix, 0);
@@ -184,8 +196,8 @@ fn solve_scc_system(
     // Regularization rows: prefer current value (very weak)
     for (0..n) |i| {
         const row = eqs.len + i;
-        matrix[row * (n + 1) + i]     = 1e-6;
-        matrix[row * (n + 1) + n]     = vals[vars[i]] * 1e-6;
+        matrix[row * (n + 1) + i] = 1e-6;
+        matrix[row * (n + 1) + n] = vals[vars[i]] * 1e-6;
     }
 
     // Normal equations: AtA x = Atb  (since system is overdetermined)
@@ -221,7 +233,10 @@ fn solve_scc_system(
         var max_row: usize = col;
         for (col + 1..n) |row| {
             const v = @abs(aug[row * (n + 1) + col]);
-            if (v > max_val) { max_val = v; max_row = row; }
+            if (v > max_val) {
+                max_val = v;
+                max_row = row;
+            }
         }
         if (max_val < 1e-12) continue; // singular, skip
 
@@ -229,7 +244,7 @@ fn solve_scc_system(
         if (max_row != col) {
             for (0..n + 1) |j| {
                 const tmp = aug[col * (n + 1) + j];
-                aug[col    * (n + 1) + j] = aug[max_row * (n + 1) + j];
+                aug[col * (n + 1) + j] = aug[max_row * (n + 1) + j];
                 aug[max_row * (n + 1) + j] = tmp;
             }
         }
@@ -268,12 +283,12 @@ fn solve_scc_system(
 // Step 4: topological propagation for DAG nodes (trivial SCCs)
 // ----------------------------------------------------------------
 fn propagate_dag(
-    scc_order: []u32,      // SCCs in reverse topological order
-    scc_vars:  [][]u32,    // vars in each SCC
+    scc_order: []u32, // SCCs in reverse topological order
+    scc_vars: [][]u32, // vars in each SCC
     var_to_eqs: []std.ArrayListUnmanaged(u32),
-    eqs:       []Equation,
-    scc_id:    []i32,
-    vals:      []f64,
+    eqs: []Equation,
+    scc_id: []i32,
+    vals: []f64,
 ) void {
     for (scc_order) |scc| {
         const vars = scc_vars[scc];
@@ -328,13 +343,13 @@ fn solve_scc(s: *Solver) !void {
 
     // Tarjan's SCC
     var ts = TarjanState{
-        .index    = try s.allocator.alloc(i32, n),
-        .lowlink  = try s.allocator.alloc(i32, n),
+        .index = try s.allocator.alloc(i32, n),
+        .lowlink = try s.allocator.alloc(i32, n),
         .on_stack = try s.allocator.alloc(bool, n),
-        .stack    = .{ .items = &.{}, .capacity = 0 },
-        .scc_id   = try s.allocator.alloc(i32, n),
-        .n_sccs   = 0,
-        .counter  = 0,
+        .stack = .{ .items = &.{}, .capacity = 0 },
+        .scc_id = try s.allocator.alloc(i32, n),
+        .n_sccs = 0,
+        .counter = 0,
     };
     defer {
         s.allocator.free(ts.index);
@@ -343,16 +358,14 @@ fn solve_scc(s: *Solver) !void {
         ts.stack.deinit(s.allocator);
         s.allocator.free(ts.scc_id);
     }
-    @memset(ts.index,    -1);
-    @memset(ts.lowlink,   0);
+    @memset(ts.index, -1);
+    @memset(ts.lowlink, 0);
     @memset(ts.on_stack, false);
-    @memset(ts.scc_id,   -1);
+    @memset(ts.scc_id, -1);
 
     for (0..n) |v| {
         if (ts.index[v] == -1) {
-            try tarjan_visit(
-                @intCast(v), &ts, var_to_eqs,
-                s.equations.items, s.allocator);
+            try tarjan_visit(@intCast(v), &ts, var_to_eqs, s.equations.items, s.allocator);
         }
     }
 
@@ -411,7 +424,10 @@ fn solve_scc(s: *Solver) !void {
                 // Find the self coefficient
                 var has_self = false;
                 for (0..eq.n) |k| {
-                    if (eq.vars[k] == v) { has_self = true; break; }
+                    if (eq.vars[k] == v) {
+                        has_self = true;
+                        break;
+                    }
                 }
                 if (!has_self) continue;
                 const ew = if (eq.weight == REQUIRED) 1e8 else eq.weight;
@@ -425,7 +441,10 @@ fn solve_scc(s: *Solver) !void {
                 var self_coeff: f64 = 0;
                 for (0..eq.n) |k| {
                     const u = eq.vars[k];
-                    if (u == v) { self_coeff = eq.coeffs[k]; continue; }
+                    if (u == v) {
+                        self_coeff = eq.coeffs[k];
+                        continue;
+                    }
                     sum -= eq.coeffs[k] * s.vals[u];
                 }
                 if (@abs(self_coeff) > 1e-12) s.vals[v] = sum / self_coeff;
@@ -436,8 +455,7 @@ fn solve_scc(s: *Solver) !void {
             defer scc_set.deinit(s.allocator);
             for (vars) |v| try scc_set.put(s.allocator, v, {});
 
-            var scc_eqs = std.ArrayListUnmanaged(Equation){
-                .items = &.{}, .capacity = 0 };
+            var scc_eqs = std.ArrayListUnmanaged(Equation){ .items = &.{}, .capacity = 0 };
             defer scc_eqs.deinit(s.allocator);
 
             var seen_eqs = std.AutoHashMapUnmanaged(u32, void){};
@@ -455,7 +473,7 @@ fn solve_scc(s: *Solver) !void {
                     for (0..eq.n) |k| {
                         const u = eq.vars[k];
                         if (scc_set.contains(u)) {
-                            local_eq.vars[new_n]   = u;
+                            local_eq.vars[new_n] = u;
                             local_eq.coeffs[new_n] = eq.coeffs[k];
                             new_n += 1;
                         } else {
@@ -463,7 +481,7 @@ fn solve_scc(s: *Solver) !void {
                             new_rhs -= eq.coeffs[k] * s.vals[u];
                         }
                     }
-                    local_eq.n   = new_n;
+                    local_eq.n = new_n;
                     local_eq.rhs = new_rhs;
                     if (new_n > 0) try scc_eqs.append(s.allocator, local_eq);
                 }

@@ -1,32 +1,30 @@
 const std = @import("std");
 const surface = @import("surface.zig");
+const util = @import("util.zig");
+const output = @import("outputs.zig");
+const windows = @import("windows.zig");
+const bars = @import("bars.zig");
+const previews = @import("previews.zig");
+const outlines = @import("outlines.zig");
+const input = @import("input.zig");
 const types = @import("types");
 const wayland = @import("wayland");
 const xkb = @import("xkbcommon");
 const c = @import("rc");
 const wl = wayland.client.wl;
 const river = wayland.client.river;
+const Window = windows.Window;
+const now_ms = util.now_ms;
+const size_eql = util.size_eql;
+const opt_eql = util.opt_eql;
+const nonneg = util.nonneg;
 
 const wm_version = 4;
 const xkb_bindings_version = 1;
 const layer_shell_version = 1;
 
 /// river_seat_v1.modifiers has no Lock (2) or Mod2/NumLock (16) bit.
-const valid_mods: u32 = 1 | 4 | 8 | 32 | 64 | 128;
-const all_edges: u32 = 1 | 2 | 4 | 8; // top | bottom | left | right
 const cap_fullscreen: u32 = 4;
-
-/// Size reported for a new window that gave no size hints. Tiled windows are
-/// resized by the solver anyway; this is what an unhinted dialog starts at.
-const default_size: types.Size = .{ .width = 800, .height = 600 };
-
-const error_bg: u32 = 0x8b1a1a;
-const error_fg: u32 = 0xffffff;
-const error_pad: i32 = 4;
-const prompt_font = "monospace:size=11";
-const prompt_bg: u32 = 0x1e1e2e;
-const prompt_fg: u32 = 0xcdd6f4;
-const prompt_pad: i32 = 4;
 
 const frame_interval_ms: i64 = 16;
 
@@ -52,190 +50,11 @@ fn out_clip_box(r: anytype, bw: u32, out: ?types.Rect) ?types.Rect {
     };
 }
 
-/// A side drawn in a color of its own, over river's one-color border.
-const Odd = struct { side: types.Side, color: u32 };
-
-const Preview = struct {
-    surf: surface.ShellSurface,
-    handle: types.WindowHandle,
-    /// Owns the copied style and items; reset on every content change.
-    arena: std.heap.ArenaAllocator,
-    style: ?types.PreviewStyle = null,
-    items: []types.PreviewItem = &.{},
-    content_dirty: bool = true,
-
-    in_scene: bool = false,
-    want_pos: types.Point = .{ .x = 0, .y = 0 },
-    want_size: types.Size = .{ .width = 0, .height = 0 },
-    want_tiled: bool = true,
-    want_border_width: u32 = 0,
-    want_border_color: ?u32 = null,
-    raise_serial: u64 = 0,
-
-    // What was last drawn and placed.
-    size: types.Size = .{ .width = 0, .height = 0 },
-    border_width: u32 = 0,
-    border_color: ?u32 = null,
-    pos: ?types.Point = null,
-};
-
-const ErrorBar = struct {
-    surf: surface.ShellSurface,
-    msg: []u8,
-    height: u32,
-    width: u32 = 0,
-    dirty: bool = true,
-};
-
-/// The input bar (prompts and messages), below the error bar if there is one.
-const PromptBar = struct {
-    surf: surface.ShellSurface,
-    height: u32,
-    width: u32 = 0,
-    dirty: bool = true,
-    /// The label then the text, as drawn.
-    content: std.ArrayListUnmanaged(u8) = .empty,
-    label_len: usize = 0,
-    cursor: ?usize = null,
-    block: bool = false,
-    /// Taking the keyboard: a prompt rather than a message.
-    grabbed: bool = false,
-    /// river has been told to focus it (only once it has a buffer).
-    focused: bool = false,
-    /// A message hides itself once now_ms() passes this.
-    deadline: ?i64 = null,
-
-    fn set(b: *PromptBar, a: std.mem.Allocator, label: []const u8, text: []const u8, cursor: ?usize, block: bool) !void {
-        b.content.clearRetainingCapacity();
-        try b.content.appendSlice(a, label);
-        try b.content.appendSlice(a, text);
-        b.label_len = label.len;
-        b.cursor = cursor;
-        b.block = block;
-        b.dirty = true;
-    }
-};
-
 const Stacked = struct { node: *river.NodeV1, serial: u64 };
-
-/// A group's outline: one surface covering the visible part of its frame,
-/// transparent in the middle and taking no input.
-const OutlineSurf = struct {
-    surf: surface.ShellSurface,
-    in_scene: bool = false,
-    want: types.Outline,
-    /// What its buffer was last painted for (null: never).
-    drawn: ?OutlinePaint = null,
-    pos: ?types.Point = null,
-};
-
-/// What an outline's buffer depends on: everything but where it is.
-const OutlinePaint = struct {
-    /// The buffer: the visible part of the frame.
-    w: u32,
-    h: u32,
-    /// The whole frame, relative to the buffer (it may stick out of it).
-    x: i32,
-    y: i32,
-    fw: i32,
-    fh: i32,
-    t: i32,
-    color: u32,
-};
-
-const Shown = struct { pos: types.Point, size: types.Size };
-
-const Window = struct {
-    state: *State,
-    obj: *river.WindowV1,
-    node: *river.NodeV1,
-    handle: types.WindowHandle,
-
-    info: types.WindowInfo = .{},
-    parent: ?types.WindowHandle = null,
-    min: types.Size = .{ .width = 0, .height = 0 },
-    max: types.Size = .{ .width = 0, .height = 0 },
-    wants_fullscreen: bool = false,
-    /// map_request has been sent to core.
-    announced: bool = false,
-    closed: bool = false,
-
-    // What core wants (apply_windows, draw_borders, hide_window, raise_window).
-    in_scene: bool = false,
-    want_pos: types.Point = .{ .x = 0, .y = 0 },
-    want_size: types.Size = .{ .width = 0, .height = 0 },
-    want_tiled: bool = false,
-    want_border_width: u32 = 0,
-    want_border_color: ?u32 = null,
-    raise_serial: u64 = 0,
-
-    // What river has been told.
-    configured: bool = false,
-    proposed: types.Size = .{ .width = 0, .height = 0 },
-    tiled: ?bool = null,
-    fullscreen: bool = false,
-    shown: bool = true, // the protocol's initial state
-    pos: ?types.Point = null,
-    border_width: u32 = 0,
-    border_color: ?u32 = null,
-    /// Propose again at the next manage, even though the size hasn't changed.
-    repropose: bool = false,
-    /// Times re-proposed since the target last changed: a few, so stale commits
-    /// don't use it up, but clients that round can't loop.
-    insists: u8 = 0,
-
-    // animation fields
-    anim_active: bool = false,
-    /// 0 = start at the next render, once river has the new sizes on screen.
-    anim_start_ms: i64 = 0,
-    anim_from_pos: types.Point = .{ .x = 0, .y = 0 },
-    anim_from_size: types.Size = .{ .width = 0, .height = 0 },
-    /// Content clip box last sent.
-    clip: ?types.Size = null,
-    /// The output core keeps it on (tiled only), and the clip box last sent for it.
-    want_out: ?types.Rect = null,
-    out_clip: ?types.Rect = null,
-    /// The odd side core wants, and the surface drawing it.
-    want_odd: ?Odd = null,
-    ind: ?surface.ShellSurface = null,
-    ind_size: types.Size = .{ .width = 0, .height = 0 },
-    ind_color: u32 = 0,
-};
-
-const Output = struct {
-    id: u32,
-    state: *State,
-    obj: *river.OutputV1,
-    layer: ?*river.LayerShellOutputV1 = null,
-    x: i32 = 0,
-    y: i32 = 0,
-    width: i32 = 0,
-    height: i32 = 0,
-    /// Area left after layer-shell exclusive zones, in global coordinates.
-    usable: ?types.Rect = null,
-    default_pending: bool = false,
-};
-
-const KeyBinding = struct {
-    state: *State,
-    combo: types.KeyCombo,
-    obj: ?*river.XkbBindingV1 = null,
-    enabled: bool = false,
-};
-
-const ButtonBinding = struct {
-    state: *State,
-    /// X-style button number, which is what core speaks.
-    button: types.Button,
-    evdev: u32,
-    mods: types.Mods,
-    obj: ?*river.PointerBindingV1 = null,
-    enabled: bool = false,
-};
 
 // State is heap-allocated, because libwayland keeps pointers to it in listeners
 // and the Backend value itself gets copied into WM.
-const State = struct {
+pub const State = struct {
     allocator: std.mem.Allocator,
     display: *wl.Display,
     next_output_id: u32 = 1,
@@ -247,11 +66,11 @@ const State = struct {
     layer_shell: ?*river.LayerShellV1 = null,
     seat: ?*river.SeatV1 = null,
     layer_seat: ?*river.LayerShellSeatV1 = null,
-    outputs: std.ArrayListUnmanaged(*Output) = .empty,
+    outputs: std.ArrayListUnmanaged(*output.Output) = .empty,
     /// The output the pointer was last on, to report crossings.
     pointer_output: u32 = 0,
     /// Until multimonitor: the first output is "the screen".
-    primary: ?*Output = null,
+    primary: ?*output.Output = null,
 
     unavailable: bool = false,
     finished: bool = false,
@@ -286,16 +105,16 @@ const State = struct {
     compositor: ?*wl.Compositor = null,
     shm: ?*wl.Shm = null,
     fonts: surface.Fonts = .{},
-    previews: std.AutoHashMapUnmanaged(types.WindowHandle, *Preview) = .empty,
+    previews: std.AutoHashMapUnmanaged(types.WindowHandle, *previews.Preview) = .empty,
     /// Group outlines, by core's key.
-    outlines: std.AutoHashMapUnmanaged(u64, *OutlineSurf) = .empty,
-    error_bar: ?*ErrorBar = null,
-    prompt_bar: ?*PromptBar = null,
+    outlines: std.AutoHashMapUnmanaged(u64, *outlines.Outline) = .empty,
+    error_bar: ?*bars.ErrorBar = null,
+    prompt_bar: ?*bars.PromptBar = null,
     scratch: std.ArrayListUnmanaged(Stacked) = .empty,
 
     // Input.
-    keys: std.ArrayListUnmanaged(*KeyBinding) = .empty,
-    buttons: std.ArrayListUnmanaged(*ButtonBinding) = .empty,
+    keys: std.ArrayListUnmanaged(*input.KeyBinding) = .empty,
+    buttons: std.ArrayListUnmanaged(*input.ButtonBinding) = .empty,
     click_to_focus: bool = false,
     hovered: ?types.WindowHandle = null,
     pointer_pos: types.Point = .{ .x = 0, .y = 0 },
@@ -339,7 +158,7 @@ const State = struct {
     pending_enter: ?types.WindowHandle = null,
     pos_at_last_manage: types.Point = .{ .x = 0, .y = 0 },
 
-    fn push(s: *State, ev: types.Event) void {
+    pub fn push(s: *State, ev: types.Event) void {
         // Coalesce: only the latest pointer position and one relayout matter.
         if (s.events.items.len > s.event_head) {
             const last = &s.events.items[s.events.items.len - 1];
@@ -353,11 +172,11 @@ const State = struct {
     }
 
     /// Core changed something that river must hear about.
-    fn mark(s: *State) void {
+    pub fn mark(s: *State) void {
         if (!s.in_manage) s.want_manage = true;
     }
 
-    fn live(s: *State, h: types.WindowHandle) ?*Window {
+    pub fn live(s: *State, h: types.WindowHandle) ?*Window {
         const w = s.windows.get(h) orelse return null;
         return if (w.closed) null else w;
     }
@@ -376,110 +195,6 @@ const State = struct {
         for (s.keyboards.items) |kb| s.configure_keyboard(kb);
     }
 
-    // ---- windows ----
-
-    fn add_window(s: *State, obj: *river.WindowV1) void {
-        const w = s.allocator.create(Window) catch return obj.destroy();
-        const node = obj.getNode() catch {
-            s.allocator.destroy(w);
-            return obj.destroy();
-        };
-        w.* = .{ .state = s, .obj = obj, .node = node, .handle = s.next_handle };
-        s.next_handle += 1;
-        s.windows.put(s.allocator, w.handle, w) catch {};
-        s.by_obj.put(s.allocator, obj, w) catch {};
-        s.fresh.append(s.allocator, w) catch {};
-        obj.setListener(*Window, window_listener, w);
-    }
-
-    fn window_closed(s: *State, w: *Window) void {
-        w.closed = true;
-        if (w.announced) {
-            s.push(.{ .window_gone = w.handle });
-        } else {
-            for (s.fresh.items, 0..) |f, i| {
-                if (f == w) {
-                    _ = s.fresh.swapRemove(i);
-                    break;
-                }
-            }
-        }
-        if (s.hovered == w.handle) s.hovered = null;
-        s.dead.append(s.allocator, w) catch {};
-    }
-
-    fn destroy_dead(s: *State) void {
-        for (s.dead.items) |w| {
-            _ = s.windows.remove(w.handle);
-            _ = s.by_obj.remove(w.obj);
-            if (w.ind) |*ind| ind.destroy();
-            w.node.destroy();
-            w.obj.destroy();
-            s.allocator.destroy(w);
-        }
-        s.dead.clearRetainingCapacity();
-    }
-
-    fn handle_of(s: *State, obj: ?*river.WindowV1) ?types.WindowHandle {
-        const o = obj orelse return null;
-        const w = s.by_obj.get(o) orelse return null;
-        return if (w.announced and !w.closed) w.handle else null;
-    }
-
-    // ---- outputs ----
-
-    fn add_output(s: *State, obj: *river.OutputV1) void {
-        const o = s.allocator.create(Output) catch return obj.destroy();
-        o.* = .{ .state = s, .obj = obj, .id = s.next_output_id };
-        s.next_output_id += 1;
-        obj.setListener(*Output, output_listener, o);
-        if (s.layer_shell) |ls| {
-            if (ls.getOutput(obj)) |lo| {
-                o.layer = lo;
-                lo.setListener(*Output, layer_output_listener, o);
-            } else |_| {}
-        }
-        s.outputs.append(s.allocator, o) catch {};
-        if (s.primary == null) s.set_primary(o) else s.push(.reserved_area_changed);
-    }
-
-    fn set_primary(s: *State, o: ?*Output) void {
-        s.primary = o;
-        if (o) |p| p.default_pending = true;
-        s.push(.reserved_area_changed);
-        s.mark();
-    }
-
-    fn remove_output(s: *State, o: *Output) void {
-        for (s.outputs.items, 0..) |x, i| {
-            if (x == o) {
-                _ = s.outputs.orderedRemove(i);
-                break;
-            }
-        }
-        if (o.layer) |l| l.destroy();
-        o.obj.destroy();
-        if (s.primary == o) s.set_primary(if (s.outputs.items.len > 0) s.outputs.items[0] else null);
-        s.push(.reserved_area_changed);
-        s.allocator.destroy(o);
-    }
-
-    // ---- seats ----
-
-    fn add_seat(s: *State, obj: *river.SeatV1) void {
-        if (s.seat != null) return obj.destroy(); // one seat until there's a reason for more
-        s.seat = obj;
-        obj.setListener(*State, seat_listener, s);
-        if (s.layer_shell) |ls| {
-            if (ls.getSeat(obj)) |lseat| {
-                s.layer_seat = lseat;
-                lseat.setListener(*State, layer_seat_listener, s);
-            } else |_| {}
-        }
-        if (s.cursor_theme) |t| obj.setXcursorTheme(t.ptr, s.cursor_size);
-        s.mark(); // bindings waiting for a seat
-    }
-
     // ---- sequences ----
 
     fn start_manage(s: *State) void {
@@ -496,8 +211,8 @@ const State = struct {
             w.announced = true;
             s.push(.{ .map_request = .{
                 .window = w.handle,
-                .size = initial_size(w),
-                .traits = traits_of(w),
+                .size = windows.initial_size(w),
+                .traits = windows.traits_of(w),
             } });
         }
         s.fresh.clearRetainingCapacity();
@@ -515,36 +230,7 @@ const State = struct {
             }
         }
 
-        if (s.seat) |seat| {
-            if (s.xkb_bindings) |kb| {
-                const tp = s.typing();
-                for (s.keys.items) |k| {
-                    if (k.obj == null) {
-                        const obj = kb.getXkbBinding(seat, @intCast(k.combo.keysym), river_mods(k.combo.mods)) catch continue;
-                        obj.setListener(*KeyBinding, key_listener, k);
-                        k.obj = obj;
-                    }
-                    if (tp and k.enabled) {
-                        k.obj.?.disable();
-                        k.enabled = false;
-                    } else if (!tp and !k.enabled) {
-                        k.obj.?.enable();
-                        k.enabled = true;
-                    }
-                }
-            }
-            for (s.buttons.items) |b| {
-                if (b.obj == null) {
-                    const obj = seat.getPointerBinding(b.evdev, river_mods(b.mods)) catch continue;
-                    obj.setListener(*ButtonBinding, button_listener, b);
-                    b.obj = obj;
-                }
-                if (!b.enabled) {
-                    b.obj.?.enable();
-                    b.enabled = true;
-                }
-            }
-        }
+        input.manage_bindings(s);
 
         for (s.closes.items) |h| {
             if (s.live(h)) |w| w.obj.close();
@@ -575,7 +261,7 @@ const State = struct {
             }
 
             if (s.fullscreen == w.handle and !w.fullscreen) {
-                if (s.output_at(w.want_pos)) |o| {
+                if (output.at(s, w.want_pos)) |o| {
                     w.obj.fullscreen(o.obj);
                     w.obj.informFullscreen();
                     w.fullscreen = true;
@@ -585,7 +271,7 @@ const State = struct {
             // Tiled state first: a client that just lost (or regained) it may
             // pick its own size, so the change always gets a fresh proposal.
             if (w.tiled == null or w.tiled.? != w.want_tiled) {
-                w.obj.setTiled(@bitCast(if (w.want_tiled) all_edges else 0));
+                w.obj.setTiled(@bitCast(if (w.want_tiled) windows.all_edges else 0));
                 w.tiled = w.want_tiled;
                 w.proposed = .{ .width = 0, .height = 0 }; // force a proposal
             }
@@ -602,46 +288,7 @@ const State = struct {
             w.repropose = false;
         }
 
-        if (s.focus_dirty) {
-            s.focus_dirty = false;
-            if (s.seat) |seat| {
-                if (s.prompt_bar) |bar| if (bar.grabbed) {
-                    if (bar.surf.mapped) {
-                        seat.focusShellSurface(bar.surf.shell);
-                        bar.focused = true;
-                    } else {
-                        s.focus_dirty = true; // try again after it's rendered
-                    }
-                };
-                // While a layer surface holds exclusive focus, river ignores these anyway.
-                if (!s.typing() and !s.layer_focus_exclusive) {
-                    if (s.focus) |h| {
-                        if (s.live(h)) |w| {
-                            seat.focusWindow(w.obj);
-                        } else if (s.previews.get(h)) |p| {
-                            seat.focusShellSurface(p.surf.shell);
-                        }
-                    } else {
-                        seat.clearFocus();
-                    }
-                }
-            }
-        }
-
-        if (s.seat) |seat| {
-            if (s.op_start_pending) {
-                seat.opStartPointer();
-                s.op_start_pending = false;
-            }
-            if (s.op_end_pending) {
-                seat.opEnd();
-                s.op_end_pending = false;
-            }
-            if (s.warp) |p| {
-                seat.pointerWarp(p.x, p.y);
-                s.warp = null;
-            }
-        }
+        input.manage_seat(s);
     }
 
     fn send_render(s: *State) void {
@@ -668,7 +315,7 @@ const State = struct {
         for (s.order.items) |h| {
             if (s.previews.get(h)) |p| {
                 if (!p.in_scene) continue;
-                s.render_preview(p);
+                previews.render(s, p);
                 if (p.want_tiled) {
                     p.surf.node.placeTop();
                 } else {
@@ -684,7 +331,7 @@ const State = struct {
                 w.shown = true;
             }
             if (w.anim_active and w.anim_start_ms == 0) w.anim_start_ms = now;
-            var r = displayed(s, w, now);
+            var r = windows.displayed(s, w, now);
             if (w.anim_active) {
                 if (now - w.anim_start_ms >= s.anim.duration_ms) {
                     w.anim_active = false;
@@ -712,7 +359,7 @@ const State = struct {
                 }
             }
             if (w.border_width != w.want_border_width or !opt_eql(w.border_color, w.want_border_color)) {
-                send_borders(w);
+                windows.send_borders(w);
             }
 
             const ind_node = s.render_indicator(w, r);
@@ -729,7 +376,7 @@ const State = struct {
         }
 
         // Above the tiled windows, below floating ones.
-        s.render_outlines();
+        outlines.render(s);
 
         std.mem.sort(Stacked, s.scratch.items, {}, struct {
             fn lt(_: void, a: Stacked, b: Stacked) bool {
@@ -738,8 +385,8 @@ const State = struct {
         }.lt);
         for (s.scratch.items) |e| e.node.placeTop();
         if (fullscreen_node) |n| n.placeTop();
-        s.render_error_bar();
-        s.render_prompt_bar();
+        bars.render_error(s);
+        bars.render_prompt(s);
 
         if (s.animating) s.last_frame_ms = now;
         wm.renderFinish();
@@ -765,7 +412,7 @@ const State = struct {
             d.cancelRead();
         }
         if (d.dispatchPending() != .SUCCESS) return s.lost_connection();
-        s.destroy_dead();
+        windows.destroy_dead(s);
     }
 
     fn lost_connection(s: *State) void {
@@ -775,91 +422,9 @@ const State = struct {
         std.process.exit(0);
     }
 
-    fn render_preview(s: *State, p: *Preview) void {
-        const shm = s.shm orelse return;
-        const style = p.style orelse return; // core hasn't drawn it yet
-        const changed = p.content_dirty or !p.surf.mapped or
-            !size_eql(p.size, p.want_size) or
-            p.border_width != p.want_border_width or
-            !opt_eql(p.border_color, p.want_border_color);
-        if (changed) {
-            const content: surface.PreviewContent = .{
-                .style = style,
-                .items = p.items,
-                .border_width = p.want_border_width,
-                .border_color = p.want_border_color,
-                .font = s.fonts.get(s.allocator, style.font),
-            };
-            p.surf.draw(shm, p.want_size.width, p.want_size.height, &content, surface.paint_preview) catch return;
-            p.content_dirty = false;
-            p.size = p.want_size;
-            p.border_width = p.want_border_width;
-            p.border_color = p.want_border_color;
-        }
-        if (p.pos == null or p.pos.?.x != p.want_pos.x or p.pos.?.y != p.want_pos.y) {
-            p.surf.node.setPosition(p.want_pos.x, p.want_pos.y);
-            p.pos = p.want_pos;
-        }
-    }
-
-    /// Drop the outlines that left the scene; paint, place and raise the rest.
-    fn render_outlines(s: *State) void {
-        var gone: std.ArrayListUnmanaged(u64) = .empty;
-        defer gone.deinit(s.allocator);
-        var it = s.outlines.iterator();
-        while (it.next()) |e| {
-            if (!e.value_ptr.*.in_scene) gone.append(s.allocator, e.key_ptr.*) catch {};
-        }
-        for (gone.items) |k| {
-            const os = s.outlines.fetchRemove(k).?.value;
-            os.surf.destroy();
-            s.allocator.destroy(os);
-        }
-
-        const shm = s.shm orelse return;
-        var vit = s.outlines.valueIterator();
-        while (vit.next()) |op| {
-            const os = op.*;
-            const o = os.want;
-            const want: OutlinePaint = .{
-                .w = o.clip.width,
-                .h = o.clip.height,
-                .x = o.rect.x - o.clip.x,
-                .y = o.rect.y - o.clip.y,
-                .fw = @intCast(o.rect.width),
-                .fh = @intCast(o.rect.height),
-                .t = @intCast(o.width),
-                .color = o.color,
-            };
-            if (!os.surf.mapped or os.drawn == null or !std.meta.eql(os.drawn.?, want)) {
-                os.surf.draw(shm, want.w, want.h, &want, paint_outline) catch continue;
-                os.drawn = want;
-            }
-            const pos: types.Point = .{ .x = o.clip.x, .y = o.clip.y };
-            if (os.pos == null or os.pos.?.x != pos.x or os.pos.?.y != pos.y) {
-                os.surf.node.setPosition(pos.x, pos.y);
-                os.pos = pos;
-            }
-            os.surf.node.placeTop();
-        }
-    }
-
-    /// A surface for an outline: it mustn't take clicks meant for what's under it.
-    fn create_outline_surface(s: *State) !surface.ShellSurface {
-        const wm = s.wm orelse return error.NoWindowManager;
-        const comp = s.compositor orelse return error.NoCompositor;
-        var surf = try surface.ShellSurface.create(wm, comp);
-        errdefer surf.destroy();
-        // An empty input region (applied with its first buffer).
-        const region = try comp.createRegion();
-        defer region.destroy();
-        surf.surface.setInputRegion(region);
-        return surf;
-    }
-
     /// The odd side's strip, just outside the content at r. Its node, to stack
     /// right above the window, or null when there's nothing to show.
-    fn render_indicator(s: *State, w: *Window, r: Shown) ?*river.NodeV1 {
+    fn render_indicator(s: *State, w: *Window, r: windows.Shown) ?*river.NodeV1 {
         const want = w.want_odd orelse {
             if (w.ind) |*ind| ind.unmap();
             return null;
@@ -895,118 +460,6 @@ const State = struct {
         return ind.node;
     }
 
-    /// Across the top of the usable area; reserved_insets makes room for it.
-    fn render_error_bar(s: *State) void {
-        const bar = s.error_bar orelse return;
-        const shm = s.shm orelse return;
-        const o = s.primary orelse return;
-        const area: types.Rect = o.usable orelse
-            .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
-        if (bar.dirty or !bar.surf.mapped or bar.width != area.width) {
-            const content: surface.ErrorContent = .{
-                .msg = bar.msg,
-                .font = s.fonts.get(s.allocator, ""),
-                .bg = error_bg,
-                .fg = error_fg,
-                .pad = error_pad,
-            };
-            bar.surf.draw(shm, area.width, bar.height, &content, surface.paint_error) catch return;
-            bar.dirty = false;
-            bar.width = area.width;
-        }
-        bar.surf.node.setPosition(area.x, area.y);
-        bar.surf.node.placeTop();
-    }
-
-    fn destroy_error_bar(s: *State) bool {
-        const bar = s.error_bar orelse return false;
-        s.error_bar = null;
-        bar.surf.destroy();
-        s.allocator.free(bar.msg);
-        s.allocator.destroy(bar);
-        s.mark();
-        return true;
-    }
-
-    fn shell_clicked(s: *State, shell: ?*river.ShellSurfaceV1) void {
-        const sh = shell orelse return;
-        if (s.error_bar) |bar| {
-            if (bar.surf.shell == sh) {
-                if (s.destroy_error_bar()) s.push(.reserved_area_changed);
-                return;
-            }
-        }
-        if (!s.click_to_focus) return;
-        var it = s.previews.valueIterator();
-        while (it.next()) |pp| {
-            if (pp.*.surf.shell != sh) continue;
-            s.push(.{ .button_press = .{ .window = pp.*.handle, .button = 1, .mods = 0, .pos = s.pointer_pos } });
-            return;
-        }
-    }
-
-    // ---- input bar ----
-    fn open_prompt_bar(s: *State) !*PromptBar {
-        if (s.prompt_bar) |b| return b;
-        const wm = s.wm orelse return error.NoWindowManager;
-        const comp = s.compositor orelse return error.NoCompositor;
-        const b = try s.allocator.create(PromptBar);
-        errdefer s.allocator.destroy(b);
-        const font_h: i32 = if (s.fonts.get(s.allocator, prompt_font)) |f| f.height else 16;
-        b.* = .{
-            .surf = try surface.ShellSurface.create(wm, comp),
-            .height = @intCast(font_h + 2 * prompt_pad),
-        };
-        s.prompt_bar = b;
-        return b;
-    }
-
-    fn destroy_prompt_bar(s: *State) bool {
-        const b = s.prompt_bar orelse return false;
-        s.prompt_bar = null;
-        if (b.grabbed) s.focus_dirty = true; // back to the WM's choice
-        s.repeat_key = null;
-        b.surf.destroy();
-        b.content.deinit(s.allocator);
-        s.allocator.destroy(b);
-        s.mark();
-        return true;
-    }
-
-    fn typing(s: *const State) bool {
-        const b = s.prompt_bar orelse return false;
-        return b.grabbed;
-    }
-
-    /// Top of the usable area, under the error bar.
-    fn render_prompt_bar(s: *State) void {
-        const bar = s.prompt_bar orelse return;
-        const shm = s.shm orelse return;
-        const o = s.primary orelse return;
-        const area: types.Rect = o.usable orelse
-            .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
-        const y = area.y + if (s.error_bar) |e| @as(i32, @intCast(e.height)) else 0;
-        if (bar.dirty or !bar.surf.mapped or bar.width != area.width) {
-            const content: surface.PromptContent = .{
-                .text = bar.content.items,
-                .label_len = bar.label_len,
-                .cursor = bar.cursor,
-                .block = bar.block,
-                .font = s.fonts.get(s.allocator, prompt_font),
-                .bg = prompt_bg,
-                .fg = prompt_fg,
-                .pad = prompt_pad,
-            };
-            bar.surf.draw(shm, area.width, bar.height, &content, surface.paint_prompt) catch return;
-            bar.dirty = false;
-            bar.width = area.width;
-        }
-        bar.surf.node.setPosition(area.x, y);
-        bar.surf.node.placeTop();
-        // It has a buffer now: the next manage can give it the keyboard.
-        if (bar.grabbed and !bar.focused) s.mark();
-    }
-
     /// One key into the bar, as keysym, X-style modifiers and UTF-8 text.
     fn push_prompt_key(s: *State, keycode: u32) void {
         const st = s.xkb_state orelse return;
@@ -1040,7 +493,7 @@ const State = struct {
             if (s.repeat_key == keycode) s.repeat_key = null;
             return;
         }
-        if (!s.typing()) return;
+        if (!bars.typing(s)) return;
         s.push_prompt_key(keycode);
         const km = s.xkb_keymap orelse return;
         if (s.repeat_rate > 0 and km.keyRepeats(keycode) != 0) {
@@ -1057,148 +510,10 @@ const State = struct {
         s.push_prompt_key(kc);
         s.repeat_next_ms = now + @divTrunc(1000, @max(1, s.repeat_rate));
     }
-
-    /// The output a point is on (the primary if none).
-    fn output_at(s: *State, p: types.Point) ?*Output {
-        for (s.outputs.items) |o| {
-            if (p.x >= o.x and p.x < o.x + o.width and p.y >= o.y and p.y < o.y + o.height) return o;
-        }
-        return s.primary;
-    }
 };
-
-// --- Helpers ---
-fn lerp_u(a: u32, b: u32, e: f32) u32 {
-    return @intCast(@max(1, lerp(@intCast(a), @intCast(b), e)));
-}
-
-/// The rectangle a window occupies on screen right now.
-fn displayed(s: *const State, w: *const Window, now: i64) Shown {
-    if (!w.anim_active or s.anim.duration_ms == 0) return .{ .pos = w.want_pos, .size = w.want_size };
-    const t: f32 = if (w.anim_start_ms == 0) 0 else @min(1.0, @as(f32, @floatFromInt(now - w.anim_start_ms)) /
-        @as(f32, @floatFromInt(s.anim.duration_ms)));
-    const e = ease(&s.anim.curve, t);
-    return .{
-        .pos = .{ .x = lerp(w.anim_from_pos.x, w.want_pos.x, e), .y = lerp(w.anim_from_pos.y, w.want_pos.y, e) },
-        .size = .{
-            .width = lerp_u(w.anim_from_size.width, w.want_size.width, e),
-            .height = lerp_u(w.anim_from_size.height, w.want_size.height, e),
-        },
-    };
-}
-
-fn now_ms() i64 {
-    var ts: std.os.linux.timespec = undefined;
-    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
-    return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
-}
-
-fn ease(curve: *const types.CurveTable, t: f32) f32 {
-    const pos = std.math.clamp(t, 0, 1) * types.curve_samples;
-    const i: usize = @intFromFloat(@floor(pos));
-    if (i >= types.curve_samples) return curve[types.curve_samples];
-    const f = pos - @floor(pos);
-    return curve[i] + (curve[i + 1] - curve[i]) * f;
-}
-
-fn lerp(a: i32, b: i32, e: f32) i32 {
-    return a + @as(i32, @intFromFloat(@round(@as(f32, @floatFromInt(b - a)) * e)));
-}
-
-fn river_mods(m: types.Mods) river.SeatV1.Modifiers {
-    return @bitCast(@as(u32, @intCast(m)) & valid_mods);
-}
-
-fn evdev_button(b: types.Button) ?u32 {
-    return switch (b) {
-        1 => 0x110, // BTN_LEFT
-        2 => 0x112, // BTN_MIDDLE
-        3 => 0x111, // BTN_RIGHT
-        8 => 0x113, // BTN_SIDE
-        9 => 0x114, // BTN_EXTRA
-        else => null, // 4-7 are scroll axes, not buttons, on Wayland
-    };
-}
-
-fn same_content(a: types.PreviewStyle, a_items: []const types.PreviewItem, b: types.PreviewStyle, b_items: []const types.PreviewItem) bool {
-    if (a.bg != b.bg or a.win_bg != b.win_bg or a.border != b.border or a.text != b.text) return false;
-    if (!std.mem.eql(u8, a.font, b.font) or a_items.len != b_items.len) return false;
-    for (a_items, b_items) |x, y| {
-        if (x.rect.x != y.rect.x or x.rect.y != y.rect.y or
-            x.rect.width != y.rect.width or x.rect.height != y.rect.height) return false;
-        if (x.icon_size != y.icon_size or !std.mem.eql(u8, x.label, y.label)) return false;
-    }
-    return true;
-}
-
-fn size_eql(a: types.Size, b: types.Size) bool {
-    return a.width == b.width and a.height == b.height;
-}
-
-fn opt_eql(a: ?u32, b: ?u32) bool {
-    if (a == null or b == null) return a == null and b == null;
-    return a.? == b.?;
-}
-
-/// The color most sides share: river's border color.
-fn base_color(b: types.BorderColors) u32 {
-    return if (b.top == b.bottom or b.top == b.left or b.top == b.right) b.top else b.bottom;
-}
-
-/// The first side that isn't the base color (the indicator), if any.
-fn odd_side(b: types.BorderColors) ?Odd {
-    const base = base_color(b);
-    if (b.top != base) return .{ .side = .top, .color = b.top };
-    if (b.bottom != base) return .{ .side = .bottom, .color = b.bottom };
-    if (b.left != base) return .{ .side = .left, .color = b.left };
-    if (b.right != base) return .{ .side = .right, .color = b.right };
-    return null;
-}
 
 fn paint_solid(cv: surface.Canvas, color: *const u32) void {
     cv.fill(0, 0, cv.width, cv.height, color.*);
-}
-
-/// The frame's outline; the rest stays as the new buffer starts: transparent.
-fn paint_outline(cv: surface.Canvas, p: *const OutlinePaint) void {
-    cv.outline(p.x, p.y, p.fw, p.fh, p.t, p.color);
-}
-
-/// 0xRRGGBB to the protocol's four 32-bit (pre-multiplied, here opaque) components.
-fn send_borders(w: *Window) void {
-    const edges: river.WindowV1.Edges = @bitCast(if (w.want_border_color != null and w.want_border_width > 0) all_edges else 0);
-    const bc = w.want_border_color orelse 0;
-    const r: u32 = (bc >> 16) & 0xff;
-    const g: u32 = (bc >> 8) & 0xff;
-    const b: u32 = bc & 0xff;
-    w.obj.setBorders(edges, @intCast(w.want_border_width), r * 0x01010101, g * 0x01010101, b * 0x01010101, 0xffffffff);
-    w.border_width = w.want_border_width;
-    w.border_color = w.want_border_color;
-}
-
-fn fixed_size(w: *const Window) ?types.Size {
-    if (w.min.width == 0 or w.min.height == 0) return null;
-    if (w.min.width != w.max.width or w.min.height != w.max.height) return null;
-    return w.min;
-}
-
-fn initial_size(w: *const Window) types.Size {
-    if (fixed_size(w)) |s| return s;
-    return .{
-        .width = @max(w.min.width, default_size.width),
-        .height = @max(w.min.height, default_size.height),
-    };
-}
-
-fn traits_of(w: *const Window) types.WindowTraits {
-    return .{
-        .kind = if (w.parent != null) .floating else .normal,
-        .transient_for = w.parent,
-    };
-}
-
-fn nonneg(v: i32) u32 {
-    return @intCast(@max(0, v));
 }
 
 // --- Listeners ---
@@ -1236,90 +551,10 @@ fn wm_listener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, s:
         .finished => s.finished = true,
         .manage_start => s.start_manage(),
         .render_start => s.render_pending = true,
-        .window => |e| s.add_window(e.id),
-        .output => |e| s.add_output(e.id),
-        .seat => |e| s.add_seat(e.id),
+        .window => |e| windows.add(s, e.id),
+        .output => |e| output.add(s, e.id),
+        .seat => |e| input.add_seat(s, e.id),
         else => {},
-    }
-}
-
-fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) void {
-    const s = w.state;
-    switch (event) {
-        .closed => s.window_closed(w),
-        .app_id => |e| {
-            const id: []const u8 = if (e.app_id) |p| std.mem.span(p) else "";
-            // Wayland has one id where X had class and instance: fill both,
-            // so rules and swallow pairs written against either still match.
-            w.info.set_class(id);
-            w.info.set_instance(id);
-            if (w.announced) s.push(.{ .info_changed = w.handle });
-        },
-        .title => |e| {
-            w.info.set_title(if (e.title) |p| std.mem.span(p) else "");
-            if (w.announced) s.push(.{ .info_changed = w.handle });
-        },
-        .unreliable_pid => |e| {
-            w.info.pid = if (e.unreliable_pid > 0) @intCast(e.unreliable_pid) else null;
-        },
-        .parent => |e| {
-            const p: ?*river.WindowV1 = e.parent;
-            w.parent = if (p) |po| (if (s.by_obj.get(po)) |pw| pw.handle else null) else null;
-        },
-        .dimensions_hint => |e| {
-            w.min = .{ .width = nonneg(e.min_width), .height = nonneg(e.min_height) };
-            w.max = .{ .width = nonneg(e.max_width), .height = nonneg(e.max_height) };
-        },
-        .fullscreen_requested => {
-            if (w.announced) {
-                s.push(.{ .state_request = .{ .window = w.handle, .action = .add, .fullscreen = true, .attention = false } });
-            } else {
-                w.wants_fullscreen = true;
-            }
-        },
-        .exit_fullscreen_requested => {
-            if (w.announced) {
-                s.push(.{ .state_request = .{ .window = w.handle, .action = .remove, .fullscreen = true, .attention = false } });
-            } else {
-                w.wants_fullscreen = false;
-            }
-        },
-        .dimensions => |e| {
-            const got: types.Size = .{ .width = nonneg(e.width), .height = nonneg(e.height) };
-            if (w.announced and w.tiled == false and w.insists < 3 and !size_eql(got, w.proposed) and !s.op_active) {
-                w.insists += 1;
-                w.repropose = true;
-                s.mark();
-            }
-        },
-        else => {},
-    }
-}
-
-fn output_listener(_: *river.OutputV1, event: river.OutputV1.Event, o: *Output) void {
-    const s = o.state;
-    switch (event) {
-        .position => |e| {
-            o.x = e.x;
-            o.y = e.y;
-            s.push(.reserved_area_changed);
-        },
-        .dimensions => |e| {
-            o.width = e.width;
-            o.height = e.height;
-            s.push(.reserved_area_changed);
-        },
-        .removed => s.remove_output(o),
-        else => {},
-    }
-}
-
-fn layer_output_listener(_: *river.LayerShellOutputV1, event: river.LayerShellOutputV1.Event, o: *Output) void {
-    switch (event) {
-        .non_exclusive_area => |e| {
-            o.usable = .{ .x = e.x, .y = e.y, .width = nonneg(e.width), .height = nonneg(e.height) };
-            o.state.push(.reserved_area_changed);
-        },
     }
 }
 
@@ -1410,13 +645,13 @@ fn seat_listener(_: *river.SeatV1, event: river.SeatV1.Event, s: *State) void {
     switch (event) {
         .pointer_position => |e| {
             s.pointer_pos = .{ .x = e.x, .y = e.y };
-            if (s.output_at(s.pointer_pos)) |o| if (o.id != s.pointer_output) {
+            if (output.at(s, s.pointer_pos)) |o| if (o.id != s.pointer_output) {
                 s.pointer_output = o.id;
                 s.push(.{ .pointer_output = o.id });
             };
         },
         .pointer_enter => |e| {
-            const h = s.handle_of(e.window);
+            const h = windows.handle_of(s, e.window);
             s.hovered = h;
             s.pending_enter = h;
         },
@@ -1424,7 +659,7 @@ fn seat_listener(_: *river.SeatV1, event: river.SeatV1.Event, s: *State) void {
         .window_interaction => |e| {
             // Click-to-focus: core treats an unmodified press as "focus this".
             if (!s.click_to_focus) return;
-            const h = s.handle_of(e.window) orelse return;
+            const h = windows.handle_of(s, e.window) orelse return;
             s.push(.{ .button_press = .{ .window = h, .button = 1, .mods = 0, .pos = s.pointer_pos } });
         },
         .op_delta => |e| {
@@ -1450,30 +685,6 @@ fn layer_seat_listener(_: *river.LayerShellSeatV1, event: river.LayerShellSeatV1
             // A launcher or similar let go: give focus back to the WM's choice.
             s.layer_focus_exclusive = false;
             s.push(.refocus);
-        },
-    }
-}
-
-fn key_listener(_: *river.XkbBindingV1, event: river.XkbBindingV1.Event, k: *KeyBinding) void {
-    switch (event) {
-        .pressed => k.state.push(.{ .key = k.combo }),
-        else => {},
-    }
-}
-
-fn button_listener(_: *river.PointerBindingV1, event: river.PointerBindingV1.Event, b: *ButtonBinding) void {
-    const s = b.state;
-    switch (event) {
-        .pressed => {
-            s.op_button = b.button;
-            s.push(.{ .button_press = .{ .window = s.hovered, .button = b.button, .mods = b.mods, .pos = s.pointer_pos } });
-        },
-        .released => {
-            if (s.suppress_release) {
-                s.suppress_release = false;
-                return;
-            }
-            s.push(.{ .button_release = .{ .window = s.hovered, .button = b.button, .mods = b.mods, .pos = s.pointer_pos } });
         },
     }
 }
@@ -1529,21 +740,11 @@ pub const Backend = struct {
         s.keys.deinit(s.allocator);
         s.buttons.deinit(s.allocator);
         if (s.cursor_theme) |t| s.allocator.free(t);
-        var pit = s.previews.valueIterator();
-        while (pit.next()) |pp| {
-            pp.*.surf.destroy();
-            pp.*.arena.deinit();
-            s.allocator.destroy(pp.*);
-        }
+        previews.destroy_all(s);
         s.previews.deinit(s.allocator);
-        var oit = s.outlines.valueIterator();
-        while (oit.next()) |op| {
-            op.*.surf.destroy();
-            s.allocator.destroy(op.*);
-        }
-        s.outlines.deinit(s.allocator);
-        _ = s.destroy_error_bar();
-        _ = s.destroy_prompt_bar();
+        outlines.destroy_all(s);
+        _ = bars.hide_error(s);
+        _ = bars.hide_prompt(s);
         if (s.keyboard) |kb| kb.release();
         if (s.wl_seat) |ws| ws.release();
         if (s.xkb_state) |x| x.unref();
@@ -1570,7 +771,7 @@ pub const Backend = struct {
             s.pumped = true;
         }
         if (s.prompt_bar) |b| if (b.deadline) |d| if (now_ms() >= d) {
-            _ = s.destroy_prompt_bar();
+            _ = bars.hide_prompt(s);
         };
         s.repeat_due();
         if (s.render_pending) {
@@ -1684,14 +885,14 @@ pub const Backend = struct {
 
     pub fn window_traits(self: *const Backend, h: types.WindowHandle) types.WindowTraits {
         const w = self.state.windows.get(h) orelse return .{};
-        return traits_of(w);
+        return windows.traits_of(w);
     }
 
     pub fn window_hints(self: *const Backend, h: types.WindowHandle) types.InitialHints {
         const w = self.state.windows.get(h) orelse return .{};
         return .{
             .fullscreen = w.wants_fullscreen,
-            .fixed_size = fixed_size(w),
+            .fixed_size = windows.fixed_size(w),
         };
     }
 
@@ -1734,14 +935,7 @@ pub const Backend = struct {
 
         for (states) |st| {
             if (s.previews.get(st.handle)) |p| {
-                // A preview is its own buffer: it covers the whole rect and paints
-                // its border inside it.
-                p.in_scene = true;
-                p.want_pos = .{ .x = st.frame.x, .y = st.frame.y };
-                p.want_size = .{ .width = @max(1, st.frame.width), .height = @max(1, st.frame.height) };
-                p.want_tiled = st.tiled;
-                p.want_border_width = st.border_width;
-                p.want_border_color = if (st.borders) |b| base_color(b) else null;
+                previews.apply(p, st);
                 s.order.append(s.allocator, st.handle) catch {};
                 continue;
             }
@@ -1762,7 +956,7 @@ pub const Backend = struct {
             if (changed and s.anim.duration_ms > 0 and w.pos != null and w.shown and
                 !w.fullscreen and !st.interactive and !s.op_active)
             {
-                const cur = displayed(s, w, now_ms()); // mid-flight retargets start from where it is
+                const cur = windows.displayed(s, w, now_ms()); // mid-flight retargets start from where it is
                 w.anim_from_pos = cur.pos;
                 w.anim_from_size = cur.size;
                 w.anim_start_ms = 0;
@@ -1770,8 +964,8 @@ pub const Backend = struct {
             } else if (changed) {
                 w.anim_active = false;
             }
-            w.want_border_color = if (st.borders) |b| base_color(b) else null;
-            w.want_odd = if (st.borders) |b| odd_side(b) else null;
+            w.want_border_color = if (st.borders) |b| windows.base_color(b) else null;
+            w.want_odd = if (st.borders) |b| windows.odd_side(b) else null;
             w.want_pos = new_pos;
             w.want_size = new_size;
             w.want_tiled = st.tiled;
@@ -1785,28 +979,7 @@ pub const Backend = struct {
 
     /// The group outlines to show; any other goes at the next render.
     pub fn apply_outlines(self: *Backend, list: []const types.Outline) void {
-        const s = self.state;
-        var it = s.outlines.valueIterator();
-        while (it.next()) |op| op.*.in_scene = false;
-        for (list) |o| {
-            const os = s.outlines.get(o.key) orelse blk: {
-                const new = s.allocator.create(OutlineSurf) catch continue;
-                const surf = s.create_outline_surface() catch {
-                    s.allocator.destroy(new);
-                    continue;
-                };
-                new.* = .{ .surf = surf, .want = o };
-                s.outlines.put(s.allocator, o.key, new) catch {
-                    new.surf.destroy();
-                    s.allocator.destroy(new);
-                    continue;
-                };
-                break :blk new;
-            };
-            os.want = o;
-            os.in_scene = true;
-        }
-        s.mark();
+        outlines.apply(self.state, list);
     }
 
     pub fn hide_window(self: *Backend, h: types.WindowHandle) void {
@@ -1840,14 +1013,14 @@ pub const Backend = struct {
         _ = size;
         const s = self.state;
         if (s.previews.get(h)) |p| {
-            p.want_border_color = base_color(colors);
+            p.want_border_color = windows.base_color(colors);
             p.want_border_width = width;
             s.mark();
             return;
         }
         const w = s.live(h) orelse return;
-        w.want_border_color = base_color(colors);
-        w.want_odd = odd_side(colors);
+        w.want_border_color = windows.base_color(colors);
+        w.want_odd = windows.odd_side(colors);
         w.want_border_width = width;
         s.mark();
     }
@@ -1865,107 +1038,39 @@ pub const Backend = struct {
     // ---- WM-owned surfaces (previews, error bar): shell surfaces, later ----
     pub fn create_preview_window(self: *Backend, opts: types.FrameOptions) !types.WindowHandle {
         _ = opts;
-        const s = self.state;
-        const wm = s.wm orelse return error.NoWindowManager;
-        const comp = s.compositor orelse return error.NoCompositor;
-        const p = try s.allocator.create(Preview);
-        errdefer s.allocator.destroy(p);
-        p.* = .{
-            .surf = try surface.ShellSurface.create(wm, comp),
-            .handle = s.next_handle,
-            .arena = std.heap.ArenaAllocator.init(s.allocator),
-        };
-        s.next_handle += 1;
-        try s.previews.put(s.allocator, p.handle, p);
-        return p.handle;
+        return previews.create(self.state);
     }
 
     pub fn destroy_preview_window(self: *Backend, h: types.WindowHandle) void {
-        const s = self.state;
-        const p = (s.previews.fetchRemove(h) orelse return).value;
-        p.surf.destroy();
-        p.arena.deinit();
-        s.allocator.destroy(p);
+        previews.destroy(self.state, h);
     }
 
     /// Copies the content; the buffer itself follows the scene rect at render time.
     pub fn draw_preview(self: *Backend, h: types.WindowHandle, size: types.Size, style: types.PreviewStyle, items: []const types.PreviewItem) void {
         _ = size;
-        const s = self.state;
-        const p = s.previews.get(h) orelse return;
-        // Core repaints every visible preview on every commit; skip identical content.
-        if (p.style) |old| if (same_content(old, p.items, style, items)) return;
-
-        _ = p.arena.reset(.retain_capacity);
-        const a = p.arena.allocator();
-        var st = style;
-        st.font = a.dupe(u8, style.font) catch return;
-        const copy = a.alloc(types.PreviewItem, items.len) catch return;
-        for (items, copy) |src, *dst| {
-            dst.* = src;
-            dst.label = a.dupe(u8, src.label) catch "";
-        }
-        p.style = st;
-        p.items = copy;
-        p.content_dirty = true;
-        s.mark();
+        previews.set_content(self.state, h, style, items);
     }
 
     pub fn show_error(self: *Backend, msg: []const u8) !void {
-        const s = self.state;
-        std.debug.print("duckwm error: {s}\n", .{msg});
-        const wm = s.wm orelse return;
-        const comp = s.compositor orelse return;
-        const bar = s.error_bar orelse blk: {
-            const b = try s.allocator.create(ErrorBar);
-            errdefer s.allocator.destroy(b);
-            b.* = .{ .surf = try surface.ShellSurface.create(wm, comp), .msg = &.{}, .height = 0 };
-            s.error_bar = b;
-            break :blk b;
-        };
-        const owned = try s.allocator.dupe(u8, msg);
-        s.allocator.free(bar.msg);
-        bar.msg = owned;
-        const font_h: i32 = if (s.fonts.get(s.allocator, "")) |f| f.height else 16;
-        bar.height = @intCast(font_h + 2 * error_pad);
-        bar.dirty = true;
-        s.mark();
+        try bars.show_error(self.state, msg);
     }
 
     pub fn hide_error(self: *Backend) bool {
-        return self.state.destroy_error_bar();
+        return bars.hide_error(self.state);
     }
 
     /// The input bar, taking the keyboard: keys come back as prompt_key events.
     pub fn show_prompt(self: *Backend, label: []const u8, text: []const u8, cursor: usize, block: bool) !void {
-        const s = self.state;
-        const bar = try s.open_prompt_bar();
-        if (!bar.grabbed) {
-            bar.grabbed = true;
-            bar.focused = false;
-            s.focus_dirty = true;
-        }
-        bar.deadline = null;
-        try bar.set(s.allocator, label, text, cursor, block);
-        s.mark();
+        try bars.show_prompt(self.state, label, text, cursor, block);
     }
 
     /// Text in the input bar without taking the keyboard; gone after timeout_ms.
     pub fn show_message(self: *Backend, text: []const u8, timeout_ms: u32) !void {
-        const s = self.state;
-        const bar = try s.open_prompt_bar();
-        if (bar.grabbed) {
-            bar.grabbed = false;
-            s.focus_dirty = true;
-            s.repeat_key = null;
-        }
-        bar.deadline = now_ms() + timeout_ms;
-        try bar.set(s.allocator, "", text, null, false);
-        s.mark();
+        try bars.show_message(self.state, text, timeout_ms);
     }
 
     pub fn hide_prompt(self: *Backend) void {
-        _ = self.state.destroy_prompt_bar();
+        _ = bars.hide_prompt(self.state);
     }
 
     // ---- input ----
@@ -1983,47 +1088,17 @@ pub const Backend = struct {
 
     /// Bindings are created and enabled in the next manage sequence.
     pub fn grab_key(self: *const Backend, k: types.KeyCombo) void {
-        const s = self.state;
-        const kb = s.allocator.create(KeyBinding) catch return;
-        kb.* = .{ .state = s, .combo = k };
-        s.keys.append(s.allocator, kb) catch return s.allocator.destroy(kb);
-        s.mark();
+        input.grab_key(self.state, k);
     }
 
     pub fn ungrab_all_keys(self: *const Backend) void {
-        const s = self.state;
-        for (s.keys.items) |k| {
-            if (k.obj) |o| o.destroy();
-            s.allocator.destroy(k);
-        }
-        s.keys.clearRetainingCapacity();
+        input.ungrab_all_keys(self.state);
     }
 
     /// A grab with no button covers left, middle and right, like X's AnyButton
     /// for the buttons that matter here.
     pub fn set_pointer_grabs(self: *Backend, grabs: []const types.PointerGrab) void {
-        const s = self.state;
-        for (s.buttons.items) |b| {
-            if (b.obj) |o| o.destroy();
-            s.allocator.destroy(b);
-        }
-        s.buttons.clearRetainingCapacity();
-
-        for (grabs) |g| {
-            const any = [_]types.Button{ 1, 2, 3 };
-            const one = [_]types.Button{g.button orelse 1};
-            const list: []const types.Button = if (g.button != null) &one else &any;
-            for (list) |btn| {
-                const ev = evdev_button(btn) orelse continue;
-                const b = s.allocator.create(ButtonBinding) catch continue;
-                b.* = .{ .state = s, .button = btn, .evdev = ev, .mods = g.mods };
-                s.buttons.append(s.allocator, b) catch {
-                    s.allocator.destroy(b);
-                    continue;
-                };
-            }
-        }
-        s.mark();
+        input.set_pointer_grabs(self.state, grabs);
     }
 
     /// river reports clicks on windows as window_interaction; whether they
@@ -2034,25 +1109,11 @@ pub const Backend = struct {
 
     /// Start an interactive pointer op: motion arrives as op_delta.
     pub fn capture_pointer(self: *const Backend) void {
-        const s = self.state;
-        if (s.op_active) return;
-        s.op_active = true;
-        s.op_start_pending = true;
-        s.op_end_pending = false;
-        s.op_origin = s.pointer_pos;
-        s.mark();
+        input.capture_pointer(self.state);
     }
 
     pub fn release_pointer(self: *const Backend) void {
-        const s = self.state;
-        if (!s.op_active) return;
-        s.op_active = false;
-        if (s.op_start_pending) {
-            s.op_start_pending = false; // never sent; nothing to end
-        } else {
-            s.op_end_pending = true;
-            s.mark();
-        }
+        input.release_pointer(self.state);
     }
 
     pub fn pointer_position(self: *const Backend) types.Point {
@@ -2149,28 +1210,6 @@ pub const Backend = struct {
     }
 
     pub fn outputs(self: *Backend, buf: []types.OutputInfo) []types.OutputInfo {
-        const s = self.state;
-        var count: usize = 0;
-        if (s.primary) |p| {
-            buf[0] = output_info(s, p);
-            count = 1;
-        }
-        for (s.outputs.items) |o| {
-            if (o == s.primary or count == buf.len) continue;
-            if (o.width <= 0 or o.height <= 0) continue; // not configured yet
-            buf[count] = output_info(s, o);
-            count += 1;
-        }
-        return buf[0..count];
+        return output.list(self.state, buf);
     }
 };
-
-fn output_info(s: *const State, o: *const Output) types.OutputInfo {
-    const rect: types.Rect = .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
-    var usable = o.usable orelse rect;
-    if (o == s.primary) if (s.error_bar) |bar| {
-        usable.y += @intCast(bar.height);
-        usable.height -|= bar.height;
-    };
-    return .{ .id = o.id, .rect = rect, .usable = usable };
-}
