@@ -101,3 +101,22 @@ pub fn set_group_outline_of(wm: *WM, args: Args(.set_group_outline_of), _: Alloc
     try relayout_visible(wm);
     return .nil;
 }
+
+/// From the focused node to the group holding it. Returns the group, or nil.
+pub fn focus_parent(wm: *WM, _: void, _: Allocator) !Value {
+    const f = wm.focused orelse return .nil;
+    const gn = groups.group_of(f) orelse return .nil;
+    wm.set_focus(gn);
+    try wm.rebuild_focus_edges();
+    return util.id_value(wm, gn);
+}
+
+/// From a focused group one level in, toward what had focus last. Returns it, or nil.
+pub fn focus_child(wm: *WM, _: void, _: Allocator) !Value {
+    const f = wm.focused orelse return .nil;
+    if (f.content != .group) return .nil;
+    const n = groups.child_toward_last(f) orelse return .nil;
+    wm.set_focus(n);
+    try wm.rebuild_focus_edges();
+    return util.id_value(wm, n);
+}

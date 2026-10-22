@@ -6,10 +6,7 @@ const WM = @import("core.zig").WM;
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
-/// Focus edges of the current workspace, between every window in it, through
-/// any groups: they share the workspace's canvas, so positions compare directly.
 pub fn rebuild_focus_edges(wm: *WM) !void {
-    // (current_graph is a group while its arranger or binds run.)
     const ws = wm.current_graph.workspace();
     ws.focus_edges.clearRetainingCapacity();
     var list: std.ArrayListUnmanaged(*Node) = .empty;
@@ -18,49 +15,46 @@ pub fn rebuild_focus_edges(wm: *WM) !void {
     while (it.next()) |n| {
         if (groups.focusable(n) and !n.hidden) try list.append(wm.allocator, n);
     }
-    const nodes = list.items;
-    for (nodes) |a| {
-        const ax = a.x;
-        const ay = a.y;
-        const aw: i32 = @intCast(a.width);
-        const ah: i32 = @intCast(a.height);
-        const a_cx = ax + @divTrunc(aw, 2);
-        const a_cy = ay + @divTrunc(ah, 2);
-        for (nodes) |b| {
-            if (a == b) continue;
-            const bx = b.x;
-            const by = b.y;
-            const bw: i32 = @intCast(b.width);
-            const bh: i32 = @intCast(b.height);
-            const b_cx = bx + @divTrunc(bw, 2);
-            const b_cy = by + @divTrunc(bh, 2);
-            const dx = b_cx - a_cx;
-            const dy = b_cy - a_cy;
-            if (dx == 0 and dy == 0) continue;
-
-            const abs_dx = @abs(dx);
-            const abs_dy = @abs(dy);
-
-            // Always add the primary direction
-            if (abs_dx >= abs_dy) {
-                if (dx < 0) try ws.add_focus_edge(a, b, .Left) else try ws.add_focus_edge(a, b, .Right);
-            } else {
-                if (dy < 0) try ws.add_focus_edge(a, b, .Up) else try ws.add_focus_edge(a, b, .Down);
+    for (list.items) |a| {
+        for (list.items) |b| try link(ws, a, b);
+    }
+    // A focused group moves focus like a window: from it to what's outside it.
+    if (wm.focused) |f| {
+        if (f.content == .group and f.owner_graph != null and f.owner_graph.?.within(ws)) {
+            for (list.items) |b| {
+                if (!b.owner_graph.?.within(f.content.group)) try link(ws, f, b);
             }
+        }
+    }
+}
 
-            // Also add secondary direction whenever both components are non-trivial
-            // (secondary component is at least 25% of primary)
-            if (abs_dx > 0 and abs_dy > 0) {
-                const minor = @min(abs_dx, abs_dy);
-                const major = @max(abs_dx, abs_dy);
-                if (minor * 4 >= major) {
-                    // secondary
-                    if (abs_dx < abs_dy) {
-                        if (dx < 0) try ws.add_focus_edge(a, b, .Left) else try ws.add_focus_edge(a, b, .Right);
-                    } else {
-                        if (dy < 0) try ws.add_focus_edge(a, b, .Up) else try ws.add_focus_edge(a, b, .Down);
-                    }
-                }
+/// The edges from a to b: its main direction, and the other one too when
+/// that's at least a quarter of it.
+fn link(ws: *graph_mod.Graph, a: *Node, b: *Node) !void {
+    if (a == b) return;
+    const a_cx = a.x + @divTrunc(@as(i32, @intCast(a.width)), 2);
+    const a_cy = a.y + @divTrunc(@as(i32, @intCast(a.height)), 2);
+    const b_cx = b.x + @divTrunc(@as(i32, @intCast(b.width)), 2);
+    const b_cy = b.y + @divTrunc(@as(i32, @intCast(b.height)), 2);
+    const dx = b_cx - a_cx;
+    const dy = b_cy - a_cy;
+    if (dx == 0 and dy == 0) return;
+
+    const abs_dx = @abs(dx);
+    const abs_dy = @abs(dy);
+    if (abs_dx >= abs_dy) {
+        try ws.add_focus_edge(a, b, if (dx < 0) .Left else .Right);
+    } else {
+        try ws.add_focus_edge(a, b, if (dy < 0) .Up else .Down);
+    }
+    if (abs_dx > 0 and abs_dy > 0) {
+        const minor = @min(abs_dx, abs_dy);
+        const major = @max(abs_dx, abs_dy);
+        if (minor * 4 >= major) {
+            if (abs_dx < abs_dy) {
+                try ws.add_focus_edge(a, b, if (dx < 0) .Left else .Right);
+            } else {
+                try ws.add_focus_edge(a, b, if (dy < 0) .Up else .Down);
             }
         }
     }

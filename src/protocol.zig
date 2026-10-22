@@ -326,6 +326,8 @@ pub const CommandId = enum(u32) {
     get_group_members = 1104,
     set_group_outline = 1105,
     set_group_outline_of = 1106,
+    focus_parent = 1107,
+    focus_child = 1108,
 };
 
 /// One request. The payload's fields are the arguments, in order.
@@ -583,6 +585,8 @@ pub const Command = union(CommandId) {
     get_group_members: One,
     set_group_outline: struct { width: u32, color: u32 },
     set_group_outline_of: struct { id: NodeId, width: ?u32, color: ?u32 },
+    focus_parent,
+    focus_child,
 };
 
 /// A batch of commands, run as one transaction: all of them take effect, or none do.

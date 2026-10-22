@@ -32,9 +32,12 @@ pub fn commit(wm: *WM) void {
     // After the scene, so a window focused this iteration is already mapped.
     if (wm.focus_dirty) {
         wm.focus_dirty = false;
-        if (wm.focused) |n| {
-            if (wm.is_shown(n)) {
-                if (n.window()) |h| _ = wm.backend.set_input_focus(h, n.content == .window);
+        if (wm.focused) |f| {
+            const n = if (f.content == .group) groups.last_focused_in(f.content.group) else f;
+            if (n) |t| {
+                if (wm.is_shown(t)) {
+                    if (t.window()) |h| _ = wm.backend.set_input_focus(h, t.content == .window);
+                }
             }
         } else {
             _ = wm.backend.set_input_focus(null, false);
@@ -161,9 +164,9 @@ pub fn is_shown(wm: *WM, node: *Node) bool {
     const og = node.owner_graph orelse return false;
     if (!output.is_visible(wm, og)) return false;
     return switch (node.content) {
-        .window => !node.hidden,
+        .window, .group => !node.hidden,
         .workspace => preview_visible(wm, node),
-        .group, .empty => false,
+        .empty => false,
     };
 }
 
@@ -273,7 +276,11 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                 if (node.hidden) continue;
                 const r = if (node.floating) floating_rect(node) else tiled_rect(g, node, work, origin, view);
                 const inner_clip = intersect(r, out) orelse continue;
-                const ol = groups.outline_of(wm, sub);
+                var ol = groups.outline_of(wm, sub);
+                if (wm.focused == node) {
+                    ol.width = @max(ol.width, bw);
+                    ol.color = node.border_color_focused orelse wm.default_border_color_focused;
+                }
                 if (ol.width > 0) try wm.outlines.append(wm.allocator, .{
                     .key = @intFromPtr(sub),
                     .rect = r,

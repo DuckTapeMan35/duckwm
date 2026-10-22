@@ -312,3 +312,33 @@ pub fn area(wm: *WM, g: *const Graph) types.Rect {
     const ow = outline_of(wm, g).width;
     return frame_of(wm, g).inset(.{ .left = ow, .right = ow, .top = ow, .bottom = ow });
 }
+
+/// The window or preview in g (at any depth) that had focus last, or g's
+/// top-left one if none has had focus yet.
+pub fn last_focused_in(g: *Graph) ?*Node {
+    var best: ?*Node = null;
+    var it = Nodes.init(g);
+    while (it.next()) |n| {
+        if (!focusable(n) or n.hidden) continue;
+        const b = best orelse {
+            best = n;
+            continue;
+        };
+        if (n.focus_serial > b.focus_serial or
+            (n.focus_serial == b.focus_serial and (n.y < b.y or (n.y == b.y and n.x < b.x))))
+            best = n;
+    }
+    return best;
+}
+
+/// One level down from group: the node directly in it on the way to what
+/// had focus last (a window, or a group to go further into).
+pub fn child_toward_last(group: *Node) ?*Node {
+    const sub = group.content.group;
+    const leaf = last_focused_in(sub) orelse return null;
+    var n = leaf;
+    while (n.owner_graph != sub) {
+        n = n.owner_graph.?.parent_node.?;
+    }
+    return n;
+}

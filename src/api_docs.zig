@@ -663,6 +663,20 @@ pub const entries = [_]ApiEntry{
         },
         .ret = "nil",
     },
+    .{
+        .category = "Groups",
+        .name = "focus_parent",
+        .desc = "Focus the group holding the focused node; commands that act on the focused window then act on the group. Directional focus moves on from it as from a window. Returns the group, or nil.",
+        .params = &.{},
+        .ret = "integer?",
+    },
+    .{
+        .category = "Groups",
+        .name = "focus_child",
+        .desc = "From a focused group, focus the node in it on the way to what had focus last. Returns it, or nil.",
+        .params = &.{},
+        .ret = "integer?",
+    },
 
     // =========================================================
     // Layout & Arrangers
