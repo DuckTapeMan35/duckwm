@@ -663,6 +663,17 @@ message MoveToGroup {
   optional uint32 group = 2;
 }
 
+message SetGroupOutline {
+  uint32 width = 1;
+  uint32 color = 2;
+}
+
+message SetGroupOutlineOf {
+  uint32 id = 1;
+  optional uint32 width = 2;
+  optional uint32 color = 3;
+}
+
 message Request {
   repeated Command commands = 1;
 }
@@ -924,5 +935,9 @@ message Command {
     MoveToGroup move_to_group = 1102;
     One get_group = 1103;
     One get_group_members = 1104;
+    SetGroupOutline set_group_outline = 1105;
+    SetGroupOutlineOf set_group_outline_of = 1106;
+    Empty focus_parent = 1107;
+    Empty focus_child = 1108;
   }
 }
