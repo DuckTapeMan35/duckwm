@@ -215,7 +215,9 @@ fn find_bind(wm: *WM, combo: types.KeyCombo) ?Found {
     var owners: [groups.max_depth + 2]?*Graph = undefined;
     var n: usize = 0;
     if (wm.focused) |f| {
-        if (f.owner_graph) |og| {
+        // A focused group's own binds count too, not only those of the groups around it.
+        const start: ?*Graph = if (f.content == .group) f.content.group else f.owner_graph;
+        if (start) |og| {
             if (og.within(wm.current_graph)) {
                 var g = og;
                 while (g.is_group) : (n += 1) {
