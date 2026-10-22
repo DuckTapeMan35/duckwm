@@ -375,7 +375,12 @@ fn print_graph_to_buf(wm: *WM, buf: *std.ArrayListUnmanaged(u8), allocator: std.
     defer ind.deinit(allocator);
     for (0..depth) |_| ind.appendSlice(allocator, "  ") catch {};
 
-    try buf.print(allocator, "{s}Graph [level={}, number={}]\n\n", .{
+    if (g.is_group) {
+        const gid = if (g.parent_node) |pn| wm.get_id_for_node(pn) orelse 0 else 0;
+        try buf.print(allocator, "{s}Group [{d}] arranger={s}\n\n", .{
+            ind.items, gid, if (g.arranger_name.len > 0) g.arranger_name else "-",
+        });
+    } else try buf.print(allocator, "{s}Graph [level={}, number={}]\n\n", .{
         ind.items, g.id.level, g.id.number,
     });
 

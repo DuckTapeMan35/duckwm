@@ -311,6 +311,7 @@ pub const CommandId = enum(u32) {
     get_arranger_name = 906,
     get_arranger_index = 907,
     set_arranger_index = 908,
+    print_graph_pretty = 909,
 
     // outputs: 1000-1099
     get_outputs = 1000,
@@ -570,6 +571,7 @@ pub const Command = union(CommandId) {
     get_arranger_name,
     get_arranger_index,
     set_arranger_index: struct { index: i32 },
+    print_graph_pretty: struct { cols: ?u32, rows: ?u32 },
 
     // outputs
     get_outputs,

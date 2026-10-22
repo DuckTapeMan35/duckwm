@@ -35,6 +35,7 @@ const handlers = .{
     @import("commands/arrangers.zig"),
     @import("commands/outputs.zig"),
     @import("commands/groups.zig"),
+    @import("commands/diagram.zig"),
 };
 comptime {
     for (std.meta.fields(ConstraintKind)) |f| {

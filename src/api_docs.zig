@@ -1641,4 +1641,14 @@ pub const entries = [_]ApiEntry{
         .params = &.{},
         .ret = "string",
     },
+    .{
+        .category = "Debug",
+        .name = "print_graph_pretty",
+        .desc = "The current workspace drawn to scale as boxes: windows, floating windows, groups (with what's in them) and workspace previews, each labelled with its id, and the focused one marked *. The whole canvas is drawn, off-screen parts of a scrolling layout included.",
+        .params = &.{
+            .{ .name = "cols", .typ = "integer?" },
+            .{ .name = "rows", .typ = "integer?" },
+        },
+        .ret = "string",
+    },
 };
