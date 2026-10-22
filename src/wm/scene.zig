@@ -348,10 +348,10 @@ fn tiled_rect(g: *const Graph, node: *const Node, work: types.Rect, origin: type
     const gap_bottom: u32 = if (at_bottom) g.gap_outer_v else half_v;
 
     // Both edges scaled, so neighbours still meet exactly; gaps stay their size.
-    const x0 = work.x + scaled(node.x - origin.x - v.pan_x, v.z);
-    const x1 = work.x + scaled(node.x + nw - origin.x - v.pan_x, v.z);
-    const y0 = work.y + scaled(node.y - origin.y - v.pan_y, v.z);
-    const y1 = work.y + scaled(node.y + nh - origin.y - v.pan_y, v.z);
+    const x0 = origin.x + scaled(node.x - origin.x - v.pan_x, v.z);
+    const x1 = origin.x + scaled(node.x + nw - origin.x - v.pan_x, v.z);
+    const y0 = origin.y + scaled(node.y - origin.y - v.pan_y, v.z);
+    const y1 = origin.y + scaled(node.y + nh - origin.y - v.pan_y, v.z);
     const w: u32 = @intCast(@max(0, x1 - x0));
     const h: u32 = @intCast(@max(0, y1 - y0));
 

@@ -104,7 +104,7 @@ pub fn register_arranger(wm: *WM, args: Args(.register_arranger), _: Allocator) 
     const factory = try util.callback(wm, args.factory);
     try apply(wm, g, factory);
     wm.release_callback(factory);
-    if (args.name) |n| try set_name(wm, node.content.workspace, n);
+    if (args.name) |n| try set_name(wm, g, n);
     return .nil;
 }
 

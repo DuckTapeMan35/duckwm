@@ -240,6 +240,7 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
         if (focused_is_dying) wm.focused = null;
         wm.focus_dirty = true;
         wm.current_graph.focus_edges.clearRetainingCapacity();
+        wm.flush(wm.current_graph) catch {};
     }
 }
 
