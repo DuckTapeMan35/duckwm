@@ -205,9 +205,11 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     const here = src_graph.within(wm.current_graph);
     // A group it left empty goes too (src_graph may be freed after this).
     groups.dissolve_if_empty(wm, src_graph);
-    // The arranger didn't choose (only some do on unmap): fall back.
+    // The arranger didn't choose (only some do on unmap): fall back. Unless the
+    // node itself has focus and is still on screen (moved into a group here).
     const moved_on = if (wm.focused) |f| f.owner_graph != src_graph else true;
-    if (was_focused and moved_on and here and wm.focused != node) {
+    const kept = wm.focused == node and wm.is_shown(node);
+    if (was_focused and moved_on and here and !kept) {
         const n = if (next) |x| (if (!x.dead and x.owner_graph != null and x.owner_graph.?.within(wm.current_graph)) x else null) else null;
         if (n orelse focus.top_left_window(wm)) |t| wm.set_focus(t);
     }

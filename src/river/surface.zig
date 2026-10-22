@@ -63,14 +63,20 @@ pub const Canvas = struct {
     width: i32,
     height: i32,
 
+    /// Fill a rectangle, clipped to the canvas: pixman's fast path for SRC
+    /// doesn't clip, and writes outside the buffer otherwise.
     pub fn fill(self: Canvas, x: i32, y: i32, w: i32, h: i32, rgb: u32) void {
-        if (w <= 0 or h <= 0) return;
+        const x0 = @max(x, 0);
+        const y0 = @max(y, 0);
+        const x1 = @min(x +| w, self.width);
+        const y1 = @min(y +| h, self.height);
+        if (x1 <= x0 or y1 <= y0) return;
         var col = pixman_color(rgb);
         var r = c.pixman_rectangle16_t{
-            .x = @intCast(std.math.clamp(x, std.math.minInt(i16), std.math.maxInt(i16))),
-            .y = @intCast(std.math.clamp(y, std.math.minInt(i16), std.math.maxInt(i16))),
-            .width = @intCast(@min(w, std.math.maxInt(u16))),
-            .height = @intCast(@min(h, std.math.maxInt(u16))),
+            .x = @intCast(@min(x0, std.math.maxInt(i16))),
+            .y = @intCast(@min(y0, std.math.maxInt(i16))),
+            .width = @intCast(@min(x1 - x0, std.math.maxInt(u16))),
+            .height = @intCast(@min(y1 - y0, std.math.maxInt(u16))),
         };
         _ = c.pixman_image_fill_rectangles(c.PIXMAN_OP_SRC, self.image, &col, 1, &r);
     }
