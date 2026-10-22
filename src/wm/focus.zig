@@ -6,25 +6,18 @@ const WM = @import("core.zig").WM;
 const Node = graph_mod.Node;
 const Direction = graph_mod.Direction;
 
+/// Focus edges of the current workspace, between what focus moves between
+/// from the focused node (groups.units). They share the workspace's canvas,
+/// so positions compare directly.
 pub fn rebuild_focus_edges(wm: *WM) !void {
+    // (current_graph is a group while its arranger or binds run.)
     const ws = wm.current_graph.workspace();
     ws.focus_edges.clearRetainingCapacity();
     var list: std.ArrayListUnmanaged(*Node) = .empty;
     defer list.deinit(wm.allocator);
-    var it = groups.Nodes.init(ws);
-    while (it.next()) |n| {
-        if (groups.focusable(n) and !n.hidden) try list.append(wm.allocator, n);
-    }
+    try groups.units(wm.allocator, ws, wm.focused, &list);
     for (list.items) |a| {
         for (list.items) |b| try link(ws, a, b);
-    }
-    // A focused group moves focus like a window: from it to what's outside it.
-    if (wm.focused) |f| {
-        if (f.content == .group and f.owner_graph != null and f.owner_graph.?.within(ws)) {
-            for (list.items) |b| {
-                if (!b.owner_graph.?.within(f.content.group)) try link(ws, f, b);
-            }
-        }
     }
 }
 
@@ -62,6 +55,8 @@ fn link(ws: *graph_mod.Graph, a: *Node, b: *Node) !void {
 
 pub fn find_focus_target(wm: *WM, comptime dir: Direction) ?*Node {
     const focused = wm.focused orelse return null;
+    // Units depend on what's focused: edges from where focus is now.
+    wm.rebuild_focus_edges() catch {};
     const fx = focused.x;
     const fy = focused.y;
     const fw: i32 = @intCast(focused.width);
@@ -185,10 +180,11 @@ pub fn set_focus(wm: *WM, node: *Node) void {
 }
 
 pub fn top_left_window(wm: *WM) ?*Node {
+    var list: std.ArrayListUnmanaged(*Node) = .empty;
+    defer list.deinit(wm.allocator);
+    groups.units(wm.allocator, wm.current_graph, null, &list) catch return null;
     var best: ?*Node = null;
-    var it = groups.Nodes.init(wm.current_graph);
-    while (it.next()) |node| {
-        if (!groups.focusable(node) or node.hidden) continue;
+    for (list.items) |node| {
         const b = best orelse {
             best = node;
             continue;

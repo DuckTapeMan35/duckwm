@@ -34,8 +34,10 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
 
     if (!has_float_mod and !has_resize_mod and wm.click_to_focus) {
         if (node_of(wm, ev.window)) |node| {
-            if (wm.focused != node) {
-                wm.set_focus(node);
+            // The group around it, unless focus is in (or on) that group already.
+            const target = groups.unit_for(node, wm.focused, true);
+            if (wm.focused != target) {
+                wm.set_focus(target);
                 wm.flush(wm.current_graph) catch {};
             }
         }
@@ -314,15 +316,17 @@ fn finish_resize(wm: *WM) void {
 
 pub fn enter(wm: *WM, h: types.WindowHandle) void {
     if (!wm.focus_follows_mouse) return;
-    const node = node_of(wm, h) orelse return;
-    if (wm.focused == node) return;
-    const og = node.owner_graph orelse return;
+    const win = node_of(wm, h) orelse return;
+    const og = win.owner_graph orelse return;
     if (!og.within(wm.current_graph)) {
         // On another monitor: follow it there, if it's the workspace showing.
         const o = output.of(wm, og) orelse return;
         if (output.visible(wm, o) != og.workspace()) return;
         output.focus(wm, o);
     }
+    // The group around it, unless focus is inside that group already.
+    const node = groups.unit_for(win, wm.focused, false);
+    if (wm.focused == node) return;
     wm.set_focus(node);
     wm.flush(wm.current_graph) catch {};
 }

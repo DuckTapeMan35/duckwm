@@ -276,9 +276,10 @@ pub fn focus_across(wm: *WM, dir: protocol.Dir) bool {
     var best: ?*graph_mod.Node = null;
     var best_overlap: i32 = std.math.minInt(i32);
     var best_edge: i32 = std.math.maxInt(i32);
-    var it = groups.Nodes.init(visible(wm, to));
-    while (it.next()) |n| {
-        if (!groups.focusable(n) or n.hidden) continue;
+    var list: std.ArrayListUnmanaged(*graph_mod.Node) = .empty;
+    defer list.deinit(wm.allocator);
+    groups.units(wm.allocator, visible(wm, to), null, &list) catch {};
+    for (list.items) |n| {
         const nw: i32 = @intCast(n.width);
         const nh: i32 = @intCast(n.height);
         const fw: i32 = @intCast(from.width);

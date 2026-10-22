@@ -113,6 +113,8 @@ pub fn active(wm: *WM) *Graph {
         break :blk wm.focused;
     };
     if (n) |f| {
+        // A focused group: into it.
+        if (f.content == .group and f.owner_graph != null and f.owner_graph.?.within(wm.current_graph)) return f.content.group;
         if (f.owner_graph) |og| {
             if (og.within(wm.current_graph)) return og;
         }
@@ -343,4 +345,40 @@ pub fn child_toward_last(group: *Node) ?*Node {
         n = n.owner_graph.?.parent_node.?;
     }
     return n;
+}
+
+/// Is from inside group node gn (in it or deeper; gn itself doesn't count)?
+pub fn holds(gn: *const Node, from: ?*const Node) bool {
+    const f = from orelse return false;
+    if (f == gn) return false;
+    const og = f.owner_graph orelse return false;
+    return og.within(gn.content.group);
+}
+
+/// What focus moves between in g, seen from `from`: windows and workspace
+/// previews, with each group that doesn't hold `from` as one.
+pub fn units(a: std.mem.Allocator, g: *Graph, from: ?*Node, out: *std.ArrayListUnmanaged(*Node)) anyerror!void {
+    for (g.nodes.items) |n| {
+        if (n.hidden) continue;
+        switch (n.content) {
+            .group => |sub| if (holds(n, from)) try units(a, sub, from, out) else try out.append(a, n),
+            .window, .workspace => if (focusable(n)) try out.append(a, n),
+            .empty => {},
+        }
+    }
+}
+
+/// The unit holding n, seen from `from`: n, or the outermost group around it
+/// that doesn't hold `from`. With into_focused, a focused group counts as
+/// holding what's in it (a click goes in; hovering doesn't).
+pub fn unit_for(n: *Node, from: ?*Node, into_focused: bool) *Node {
+    var unit = n;
+    var g = n.owner_graph orelse return n;
+    while (g.is_group) {
+        const gn = g.parent_node.?;
+        if (holds(gn, from) or (into_focused and from == gn)) break;
+        unit = gn;
+        g = gn.owner_graph.?;
+    }
+    return unit;
 }

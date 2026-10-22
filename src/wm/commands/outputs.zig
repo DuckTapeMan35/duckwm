@@ -5,6 +5,7 @@ const output = @import("../output.zig");
 const util = @import("util.zig");
 const graph = @import("graph");
 const workspaces = @import("workspaces.zig");
+const groups = @import("../groups.zig");
 const WM = core.WM;
 const Value = command.Value;
 const Args = util.Args;
@@ -68,15 +69,18 @@ fn state_of(wm: *WM, o: *output.Output, is_focused: bool, arena: Allocator) !Val
     const current = try workspaces.current_position(wm);
 
     var count: usize = 0;
-    for (g.nodes.items) |n| {
-        if (n.content != .empty and wm.get_id_for_node(n) != null) count += 1;
+    var it = groups.Nodes.init(g);
+    while (it.next()) |n| {
+        if (n.content != .empty and n.content != .group and wm.get_id_for_node(n) != null) count += 1;
     }
 
     // Its focused window: the real one on the focused monitor, the last one elsewhere.
     const f: ?*graph.Node = if (is_focused)
         wm.focused
     else if (o.last_focused) |id| wm.get_node_by_id(id) else null;
-    const win = if (f) |n| (if (n.owner_graph == g) n else null) else null;
+    // A focused group shows the window in it that had focus last.
+    const shown = if (f) |n| (if (n.content == .group) groups.last_focused_in(n.content.group) else n) else null;
+    const win = if (shown) |n| (if (n.owner_graph != null and n.owner_graph.?.within(g)) n else null) else null;
 
     return .{ .map = try arena.dupe(Value.Field, &.{
         .{ .key = "id", .value = .{ .integer = o.id } },
