@@ -194,6 +194,9 @@ pub const WM = struct {
     float_move_start_y: i32 = 0,
     float_win_start_x: i32 = 0,
     float_win_start_y: i32 = 0,
+    /// The node a mod+drag moves or resizes (a floating window, or a floating
+    /// group around the window clicked), by id.
+    float_target: ?u32 = null,
 
     // ---- pointer drags: panning ----
     pan_modifier: ?types.Mods = null,

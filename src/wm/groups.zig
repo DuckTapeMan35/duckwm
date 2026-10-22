@@ -5,6 +5,7 @@ const types = @import("types");
 const core = @import("core.zig");
 const output = @import("output.zig");
 const scene = @import("scene.zig");
+const focus_mod = @import("focus.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -147,14 +148,30 @@ pub fn dissolve_if_empty(wm: *WM, g: *Graph) void {
         const node = cur.parent_node.?;
         if (node.dead) return;
         const parent = node.owner_graph orelse return;
+        // Focused: what's next to it takes over, picked while its edges exist.
+        const was_focused = wm.focused == node;
+        const next: ?*Node = if (was_focused) neighbour_of(wm, node) else null;
         if (wm.get_id_for_node(node)) |id| {
-            const prev: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
+            const prev: ?u32 = if (next) |n| wm.get_id_for_node(n) else null;
             if (!node.floating) wm.call_arranger(parent, .unmap, id, prev);
             _ = wm.node_registry.remove(id);
         }
         parent.remove_node(node);
+        if (was_focused) {
+            if (wm.focused == node) wm.clear_focus();
+            if (next orelse focus_mod.top_left_window(wm)) |n| wm.set_focus(n);
+        }
         cur = parent;
     }
+}
+
+/// The unit focus would move to from n (focused): along its edges, else none.
+fn neighbour_of(wm: *WM, n: *Node) ?*Node {
+    wm.rebuild_focus_edges() catch return null;
+    for (wm.current_graph.workspace().focus_edges.items) |e| {
+        if (e.from == n and e.to != n and !e.to.dead) return e.to;
+    }
+    return null;
 }
 
 // ---- creating, moving, ungrouping ----
@@ -381,4 +398,17 @@ pub fn unit_for(n: *Node, from: ?*Node, into_focused: bool) *Node {
         g = gn.owner_graph.?;
     }
     return unit;
+}
+
+/// What a mod+drag on n moves: n if it floats, else the innermost floating
+/// group around it.
+pub fn floating_around(n: *Node) ?*Node {
+    if (n.floating) return n;
+    var g = n.owner_graph orelse return null;
+    while (g.is_group) {
+        const gn = g.parent_node.?;
+        if (gn.floating) return gn;
+        g = gn.owner_graph.?;
+    }
+    return null;
 }

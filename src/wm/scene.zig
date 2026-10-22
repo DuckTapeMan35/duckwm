@@ -228,13 +228,22 @@ fn fullscreen_in(g: *Graph) ?*Node {
 fn compute_scene(wm: *WM, g: *Graph) !void {
     const out = (output.of(wm, g) orelse wm.output).rect;
     const work = output.work_area_of(wm, g);
-    try compute_nodes(wm, g, work, work, view_of(g, work), out, false);
+    try compute_nodes(wm, g, work, work, view_of(g, work), out, false, false);
 }
 
 /// g's windows (g: a workspace, or a group in one). Tiled nodes take their
 /// gaps from work and are drawn with the workspace's view from its corner
 /// (origin); nothing tiled is drawn outside clip.
-fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view: View, clip: types.Rect, in_float: bool) anyerror!void {
+fn compute_nodes(
+    wm: *WM,
+    g: *Graph,
+    work: types.Rect,
+    origin: types.Rect,
+    view: View,
+    clip: types.Rect,
+    in_float: bool,
+    in_drag: bool,
+) anyerror!void {
     const bw: u32 = @intCast(@max(0, wm.border_width));
     const out = clip;
 
@@ -254,7 +263,7 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     // Stacking: inside a floating group it floats with the group.
                     .tiled = !node.floating and !in_float,
-                    .interactive = node.floating and wm.float_moving and wm.float_move_window == win,
+                    .interactive = in_drag or (node.floating and wm.float_moving and wm.float_move_window == win),
                     .clip = if (clipped) out else null,
                 });
             },
@@ -269,7 +278,7 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                     .border_width = bw,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     .tiled = !node.floating and !in_float,
-                    .interactive = node.floating and wm.float_moving and wm.float_move_window == node.preview_window.?,
+                    .interactive = in_drag or (node.floating and wm.float_moving and wm.float_move_window == node.preview_window.?),
                     .clip = if (tiled) out else null,
                 });
             },
@@ -286,6 +295,9 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                     .width = ol.width,
                     .color = ol.color,
                 });
+                // Being dragged: everything in it moves with the pointer, unanimated.
+                const dragged = in_drag or (node.floating and wm.float_moving and
+                    wm.float_target != null and wm.get_id_for_node(node) == wm.float_target);
                 // Its nodes are drawn no further out than its frame.
                 const area = groups.area(wm, sub);
                 if (node.floating) {
@@ -298,6 +310,7 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                         .{ .z = 1.0, .pan_x = 0, .pan_y = 0 },
                         inner_clip,
                         in_float or node.floating,
+                        dragged,
                     );
                 } else {
                     try compute_nodes(
@@ -308,6 +321,7 @@ fn compute_nodes(wm: *WM, g: *Graph, work: types.Rect, origin: types.Rect, view:
                         view,
                         inner_clip,
                         in_float or node.floating,
+                        dragged,
                     );
                 }
             },

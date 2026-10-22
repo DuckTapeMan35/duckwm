@@ -13,6 +13,19 @@ fn node_of(wm: *WM, h: ?types.WindowHandle) ?*Node {
     return wm.node_registry.get(id);
 }
 
+/// The node being moved or resized with the mouse, if it was picked by node.
+fn float_node(wm: *WM) ?*Node {
+    return wm.get_node_by_id(wm.float_target orelse return null);
+}
+
+/// Bring n above the rest: a window, or everything in a group.
+fn raise(wm: *WM, n: *Node) void {
+    switch (n.content) {
+        .group => |sub| float_mod.raise_group(wm, sub),
+        else => if (n.window()) |h| wm.backend.raise_window(h),
+    }
+}
+
 pub fn button_press(wm: *WM, ev: types.PointerButton) void {
     // Pan drag takes priority over everything else.
     if (wm.pan_modifier) |m| {
@@ -48,7 +61,9 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
     if (wm.current_graph.zoom != 1.0) return;
 
     const h = ev.window orelse return;
-    const node = node_of(wm, h) orelse return;
+    const win_node = node_of(wm, h) orelse return;
+    // A mod+drag moves or resizes the window if it floats, else the floating group around it.
+    const node = groups.floating_around(win_node) orelse win_node;
 
     if (has_float_mod and node.floating) {
         const is_move = ev.button == wm.float_move_button;
@@ -57,6 +72,7 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
 
         suspend_ffm(wm);
         wm.journal.set(wm, "focused", node);
+        wm.float_target = wm.get_id_for_node(node);
 
         if (is_move) {
             wm.float_moving = true;
@@ -65,7 +81,7 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
             wm.float_move_start_y = ev.pos.y;
             wm.float_win_start_x = node.x;
             wm.float_win_start_y = node.y;
-            wm.backend.raise_window(h);
+            raise(wm, node);
         } else {
             const e = nearest_edges(node, ev.pos);
             wm.resize_window = h;
@@ -81,9 +97,10 @@ pub fn button_press(wm: *WM, ev: types.PointerButton) void {
         return;
     }
 
-    // Tiled resize.
-    if (!has_resize_mod or node.floating) return;
-    const e = nearest_edges(node, ev.pos);
+    // Tiled resize: the window clicked, wherever it is.
+    if (!has_resize_mod or win_node.floating) return;
+    const e = nearest_edges(win_node, ev.pos);
+    wm.float_target = null;
     wm.corner_resizing = true;
     suspend_ffm(wm);
     wm.resize_window = h;
@@ -128,7 +145,7 @@ pub fn motion(wm: *WM, pos: types.Point) void {
         const dx = pos.x - wm.float_move_start_x;
         const dy = pos.y - wm.float_move_start_y;
         if (dx == 0 and dy == 0) return;
-        const node = node_of(wm, wm.float_move_window) orelse return;
+        const node = float_node(wm) orelse return;
         if (!node.floating) return;
         node.x = wm.float_win_start_x + dx;
         node.y = wm.float_win_start_y + dy;
@@ -140,7 +157,7 @@ pub fn motion(wm: *WM, pos: types.Point) void {
     }
 
     if (!wm.edge_resizing and !wm.corner_resizing) return;
-    const target = node_of(wm, wm.resize_window) orelse return;
+    const target = float_node(wm) orelse node_of(wm, wm.resize_window) orelse return;
     if (target.floating) resize_floating(wm, target, pos) else resize_tiled(wm, pos);
 }
 
@@ -273,7 +290,7 @@ pub fn button_release(wm: *WM) void {
         wm.float_moving = false;
         wm.backend.release_pointer();
         wm.resolve(wm.current_graph) catch {};
-        wm.backend.raise_window(wm.float_move_window);
+        if (float_node(wm)) |n| raise(wm, n);
     }
     if (wm.corner_resizing) {
         wm.corner_resizing = false;
@@ -289,10 +306,11 @@ pub fn button_release(wm: *WM) void {
     wm.last_flushed_edge_y = -1;
     wm.flush(wm.current_graph) catch {};
     resume_ffm(wm);
+    wm.float_target = null;
 }
 
 fn finish_resize(wm: *WM) void {
-    const node = node_of(wm, wm.resize_window) orelse return;
+    const node = float_node(wm) orelse node_of(wm, wm.resize_window) orelse return;
     if (node.floating) {
         float_mod.raise_floating_windows(wm);
         return;
