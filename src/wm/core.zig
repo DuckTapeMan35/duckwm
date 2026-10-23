@@ -248,6 +248,7 @@ pub const WM = struct {
         var kb_it = self.keybinds.valueIterator();
         while (kb_it.next()) |kb| self.free_keybind(kb.*);
         self.keybinds.deinit(self.allocator);
+        self.keybinds = .empty;
         if (self.lua) |lua| lua.deinit();
         self.lua = null;
         if (self.default_arranger_name.len > 0) {
@@ -595,6 +596,11 @@ pub const WM = struct {
     // startup.zig
     pub fn run_commands_file(self: *WM) void {
         startup.run_commands_file(self);
+    }
+
+    /// Set up without entering the event loop (backend already started).
+    pub fn start(self: *WM) !void {
+        return loop.start(self);
     }
 
     // swallow.zig

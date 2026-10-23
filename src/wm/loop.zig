@@ -6,11 +6,9 @@ const ipc = @import("ipc.zig");
 const output = @import("output.zig");
 const WM = core.WM;
 
-pub fn run(wm: *WM) !void {
-    wm.backend.start() catch |err| {
-        std.debug.print("duckwm: backend failed to start: {}\n", .{err});
-        return;
-    };
+/// Everything between the backend starting and the first event: workspaces,
+/// the first commit, the commands file. Tests call this instead of run.
+pub fn start(wm: *WM) !void {
     try output.populate(wm);
     wm.scratch_graph = try wm.create_workspace_graph(1);
     wm.visible_graph = wm.current_graph;
@@ -26,6 +24,14 @@ pub fn run(wm: *WM) !void {
     wm.run_commands_file();
     wm.initial_load = false;
     wm.commit();
+}
+
+pub fn run(wm: *WM) !void {
+    wm.backend.start() catch |err| {
+        std.debug.print("duckwm: backend failed to start: {}\n", .{err});
+        return;
+    };
+    try start(wm);
 
     try wm.init_ipc();
     const event_fd = wm.backend.event_fd();
