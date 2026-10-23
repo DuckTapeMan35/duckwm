@@ -310,51 +310,42 @@ pub const Backend = struct {
 
     pub fn hide_window(self: *Backend, h: types.WindowHandle) void {
         const s = self.state;
-        if (s.previews.get(h)) |p| {
-            p.in_scene = false;
-            s.mark();
-            return;
+        switch (s.placed(h) orelse return) {
+            inline else => |x| x.in_scene = false,
         }
-        const w = s.live(h) orelse return;
-        w.in_scene = false;
         s.mark();
     }
 
     pub fn raise_window(self: *Backend, h: types.WindowHandle) void {
         const s = self.state;
-        if (s.previews.get(h)) |p| {
-            s.raise_clock += 1;
-            p.raise_serial = s.raise_clock;
-            s.mark();
-            return;
-        }
-        const w = s.live(h) orelse return;
+        const p = s.placed(h) orelse return;
         s.raise_clock += 1;
-        w.raise_serial = s.raise_clock;
+        switch (p) {
+            inline else => |x| x.raise_serial = s.raise_clock,
+        }
         s.mark();
     }
 
-    /// One color for all edges: river's borders don't do per-side colors.
+    /// One color for all edges: river's borders don't do per-side colors. A
+    /// window's odd side is drawn by its indicator; a preview paints none.
     pub fn draw_borders(self: *Backend, h: types.WindowHandle, colors: types.BorderColors, width: u32, size: ?types.Size) void {
         _ = size;
         const s = self.state;
-        if (s.previews.get(h)) |p| {
-            p.want_border_color = windows.base_color(colors);
-            p.want_border_width = width;
-            s.mark();
-            return;
+        const p = s.placed(h) orelse return;
+        switch (p) {
+            inline else => |x| {
+                x.want_border_color = windows.base_color(colors);
+                x.want_border_width = width;
+            },
         }
-        const w = s.live(h) orelse return;
-        w.want_border_color = windows.base_color(colors);
-        w.want_odd = windows.odd_side(colors);
-        w.want_border_width = width;
+        if (p == .window) p.window.want_odd = windows.odd_side(colors);
         s.mark();
     }
 
     pub fn set_input_focus(self: *Backend, h: ?types.WindowHandle, publish: bool) bool {
         _ = publish; // river publishes the activated toplevel itself
         const s = self.state;
-        if (h) |win| if (s.live(win) == null and !s.previews.contains(win)) return false;
+        if (h) |win| if (s.placed(win) == null) return false;
         s.focus = h;
         s.focus_dirty = true;
         s.mark();

@@ -131,9 +131,7 @@ pub fn font_height(font: *Font) i32 {
     return font.height;
 }
 
-// ---------------------------------------------------------------------------
-// Content
-
+// ---- Content ----
 pub const PreviewContent = struct {
     style: types.PreviewStyle,
     items: []const types.PreviewItem,
@@ -213,13 +211,13 @@ pub fn paint_prompt(cv: Canvas, p: *const PromptContent) void {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shell surfaces
+// ---- Shell surfaces ----
 pub const ShellSurface = struct {
     surface: *wl.Surface,
     shell: *river.ShellSurfaceV1,
     node: *river.NodeV1,
     mapped: bool = false,
+    pos: ?types.Point = null,
 
     pub fn create(wm: *river.WindowManagerV1, compositor: *wl.Compositor) !ShellSurface {
         const surface = try compositor.createSurface();
@@ -234,6 +232,13 @@ pub const ShellSurface = struct {
         self.node.destroy();
         self.shell.destroy();
         self.surface.destroy();
+    }
+
+    /// Put its node at p, telling river only when that's a change.
+    pub fn place(self: *ShellSurface, p: types.Point) void {
+        if (self.pos) |cur| if (cur.x == p.x and cur.y == p.y) return;
+        self.node.setPosition(p.x, p.y);
+        self.pos = p;
     }
 
     pub fn unmap(self: *ShellSurface) void {

@@ -17,6 +17,16 @@ pub const Output = struct {
     /// Area left after layer-shell exclusive zones, in global coordinates.
     usable: ?types.Rect = null,
     default_pending: bool = false,
+
+    /// The whole output, in global coordinates.
+    pub fn rect(o: *const Output) types.Rect {
+        return .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
+    }
+
+    /// What layer-shell bars leave free (the whole output if they reserve nothing).
+    pub fn area(o: *const Output) types.Rect {
+        return o.usable orelse o.rect();
+    }
 };
 
 /// river announced an output.
@@ -81,13 +91,12 @@ pub fn list(s: *const State, buf: []types.OutputInfo) []types.OutputInfo {
 }
 
 fn info(s: *const State, o: *const Output) types.OutputInfo {
-    const rect: types.Rect = .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
-    var usable = o.usable orelse rect;
+    var usable = o.area();
     if (o == s.primary) if (s.error_bar) |bar| {
         usable.y += @intCast(bar.height);
         usable.height -|= bar.height;
     };
-    return .{ .id = o.id, .rect = rect, .usable = usable };
+    return .{ .id = o.id, .rect = o.rect(), .usable = usable };
 }
 
 fn output_listener(_: *river.OutputV1, event: river.OutputV1.Event, o: *Output) void {

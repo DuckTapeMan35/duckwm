@@ -11,7 +11,6 @@ pub const Outline = struct {
     want: types.Outline,
     /// What its buffer was last painted for (null: never).
     drawn: ?Paint = null,
-    pos: ?types.Point = null,
 };
 
 /// What an outline's buffer depends on: everything but where it is.
@@ -35,7 +34,7 @@ pub fn apply(s: *State, list: []const types.Outline) void {
     for (list) |o| {
         const os = s.outlines.get(o.key) orelse blk: {
             const new = s.allocator.create(Outline) catch continue;
-            const surf = create_surface(s) catch {
+            const surf = s.new_surface(false) catch {
                 s.allocator.destroy(new);
                 continue;
             };
@@ -50,19 +49,6 @@ pub fn apply(s: *State, list: []const types.Outline) void {
         os.in_scene = true;
     }
     s.mark();
-}
-
-/// A surface for an outline: it mustn't take clicks meant for what's under it.
-fn create_surface(s: *State) !surface.ShellSurface {
-    const wm = s.wm orelse return error.NoWindowManager;
-    const comp = s.compositor orelse return error.NoCompositor;
-    var surf = try surface.ShellSurface.create(wm, comp);
-    errdefer surf.destroy();
-    // An empty input region (applied with its first buffer).
-    const region = try comp.createRegion();
-    defer region.destroy();
-    surf.surface.setInputRegion(region);
-    return surf;
 }
 
 /// Every outline, at shutdown.
@@ -108,11 +94,7 @@ pub fn render(s: *State) void {
             os.surf.draw(shm, want.w, want.h, &want, paint) catch continue;
             os.drawn = want;
         }
-        const pos: types.Point = .{ .x = o.clip.x, .y = o.clip.y };
-        if (os.pos == null or os.pos.?.x != pos.x or os.pos.?.y != pos.y) {
-            os.surf.node.setPosition(pos.x, pos.y);
-            os.pos = pos;
-        }
+        os.surf.place(.{ .x = o.clip.x, .y = o.clip.y });
         os.surf.node.placeTop();
     }
 }

@@ -196,11 +196,10 @@ pub fn manage_seat(s: *State) void {
             // While a layer surface holds exclusive focus, river ignores these anyway.
             if (!bars.typing(s) and !s.layer_focus_exclusive) {
                 if (s.focus) |h| {
-                    if (s.live(h)) |w| {
-                        seat.focusWindow(w.obj);
-                    } else if (s.previews.get(h)) |p| {
-                        seat.focusShellSurface(p.surf.shell);
-                    }
+                    if (s.placed(h)) |p| switch (p) {
+                        .window => |w| seat.focusWindow(w.obj),
+                        .preview => |pv| seat.focusShellSurface(pv.surf.shell),
+                    };
                 } else {
                     seat.clearFocus();
                 }

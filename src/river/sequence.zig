@@ -252,11 +252,7 @@ fn render_indicator(s: *State, w: *Window, r: windows.Shown) ?*river.NodeV1 {
         return null;
     }
     const shm = s.shm orelse return null;
-    if (w.ind == null) {
-        const wm = s.wm orelse return null;
-        const comp = s.compositor orelse return null;
-        w.ind = surface.ShellSurface.create(wm, comp) catch return null;
-    }
+    if (w.ind == null) w.ind = s.new_surface(false) catch return null;
     const ind = &w.ind.?;
     const rw: i32 = @intCast(r.size.width);
     const rh: i32 = @intCast(r.size.height);
@@ -273,7 +269,7 @@ fn render_indicator(s: *State, w: *Window, r: windows.Shown) ?*river.NodeV1 {
         w.ind_size = size;
         w.ind_color = color;
     }
-    ind.node.setPosition(rect.x, rect.y);
+    ind.place(.{ .x = rect.x, .y = rect.y });
     return ind.node;
 }
 

@@ -14,6 +14,14 @@ const outlines = @import("outlines.zig");
 const input = @import("input.zig");
 const sequence = @import("sequence.zig");
 
+/// Something core places under a window handle. Both kinds share the fields
+/// core sets (in_scene, raise_serial, want_border_*), so `inline else` can
+/// set them without caring which it is.
+pub const Placed = union(enum) {
+    window: *Window,
+    preview: *previews.Preview,
+};
+
 // State is heap-allocated, because libwayland keeps pointers to it in listeners
 // and the Backend value itself gets copied into WM.
 pub const State = struct {
@@ -143,6 +151,29 @@ pub const State = struct {
     pub fn live(s: *State, h: types.WindowHandle) ?*Window {
         const w = s.windows.get(h) orelse return null;
         return if (w.closed) null else w;
+    }
+
+    /// What a handle core placed stands for: a live window or a preview.
+    pub fn placed(s: *State, h: types.WindowHandle) ?Placed {
+        if (s.previews.get(h)) |p| return .{ .preview = p };
+        if (s.live(h)) |w| return .{ .window = w };
+        return null;
+    }
+
+    /// A new duckwm-drawn surface. One that takes no input lets clicks through
+    /// to whatever is under it.
+    pub fn new_surface(s: *State, takes_input: bool) !surface.ShellSurface {
+        const wm = s.wm orelse return error.NoWindowManager;
+        const comp = s.compositor orelse return error.NoCompositor;
+        var surf = try surface.ShellSurface.create(wm, comp);
+        if (!takes_input) {
+            errdefer surf.destroy();
+            // An empty input region (applied with its first buffer).
+            const region = try comp.createRegion();
+            defer region.destroy();
+            surf.surface.setInputRegion(region);
+        }
+        return surf;
     }
 
     // ---- reading the socket ----

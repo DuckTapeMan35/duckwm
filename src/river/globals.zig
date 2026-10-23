@@ -18,29 +18,32 @@ const layer_shell_version = 1;
 pub fn registry_listener(registry: *wl.Registry, event: wl.Registry.Event, s: *State) void {
     switch (event) {
         .global => |g| {
-            if (std.mem.orderZ(u8, g.interface, river.WindowManagerV1.interface.name) == .eq) {
-                s.wm = registry.bind(g.name, river.WindowManagerV1, @min(g.version, wm_version)) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, river.XkbBindingsV1.interface.name) == .eq) {
-                s.xkb_bindings = registry.bind(g.name, river.XkbBindingsV1, @min(g.version, xkb_bindings_version)) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, river.LayerShellV1.interface.name) == .eq) {
-                // Binding this is what tells river duckwm supports layer shell (bars).
-                s.layer_shell = registry.bind(g.name, river.LayerShellV1, @min(g.version, layer_shell_version)) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
-                s.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 4)) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
-                s.shm = registry.bind(g.name, wl.Shm, 1) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq) {
-                // One seat until there's a reason for more, as with river_seat_v1.
-                if (s.wl_seat != null) return;
-                s.wl_seat = registry.bind(g.name, wl.Seat, @min(g.version, 5)) catch return;
-                s.wl_seat.?.setListener(*State, keyboard.wl_seat_listener, s);
-            } else if (std.mem.orderZ(u8, g.interface, river.XkbConfigV1.interface.name) == .eq) {
-                s.xkb_config = registry.bind(g.name, river.XkbConfigV1, 1) catch return;
-                s.xkb_config.?.setListener(*State, keyboard.xkb_config_listener, s);
+            // Each global is one interface, so at most one of these binds it.
+            if (bind(registry, g, river.WindowManagerV1, wm_version)) |o| s.wm = o;
+            if (bind(registry, g, river.XkbBindingsV1, xkb_bindings_version)) |o| s.xkb_bindings = o;
+            // Binding this is what tells river duckwm supports layer shell (bars).
+            if (bind(registry, g, river.LayerShellV1, layer_shell_version)) |o| s.layer_shell = o;
+            if (bind(registry, g, wl.Compositor, 4)) |o| s.compositor = o;
+            if (bind(registry, g, wl.Shm, 1)) |o| s.shm = o;
+            // One seat until there's a reason for more, as with river_seat_v1.
+            if (s.wl_seat == null) if (bind(registry, g, wl.Seat, 5)) |o| {
+                s.wl_seat = o;
+                o.setListener(*State, keyboard.wl_seat_listener, s);
+            };
+            if (bind(registry, g, river.XkbConfigV1, 1)) |o| {
+                s.xkb_config = o;
+                o.setListener(*State, keyboard.xkb_config_listener, s);
             }
         },
         .global_remove => {},
     }
+}
+
+/// The global g bound as a T, at version max or the compositor's if lower;
+/// null if g is another interface (or binding fails).
+fn bind(registry: *wl.Registry, g: anytype, comptime T: type, max: u32) ?*T {
+    if (std.mem.orderZ(u8, g.interface, T.interface.name) != .eq) return null;
+    return registry.bind(g.name, T, @min(g.version, max)) catch null;
 }
 
 /// river_window_manager_v1: sequences starting, and new windows, outputs and seats.

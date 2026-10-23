@@ -28,18 +28,15 @@ pub const Preview = struct {
     size: types.Size = .{ .width = 0, .height = 0 },
     border_width: u32 = 0,
     border_color: ?u32 = null,
-    pos: ?types.Point = null,
 };
 
 // ---- lifetime ----
 /// A new preview, under a handle from the same counter as windows.
 pub fn create(s: *State) !types.WindowHandle {
-    const wm = s.wm orelse return error.NoWindowManager;
-    const comp = s.compositor orelse return error.NoCompositor;
     const p = try s.allocator.create(Preview);
     errdefer s.allocator.destroy(p);
     p.* = .{
-        .surf = try surface.ShellSurface.create(wm, comp),
+        .surf = try s.new_surface(true),
         .handle = s.next_handle,
         .arena = std.heap.ArenaAllocator.init(s.allocator),
     };
@@ -133,8 +130,5 @@ pub fn render(s: *State, p: *Preview) void {
         p.border_width = p.want_border_width;
         p.border_color = p.want_border_color;
     }
-    if (p.pos == null or p.pos.?.x != p.want_pos.x or p.pos.?.y != p.want_pos.y) {
-        p.surf.node.setPosition(p.want_pos.x, p.want_pos.y);
-        p.pos = p.want_pos;
-    }
+    p.surf.place(p.want_pos);
 }

@@ -1,10 +1,8 @@
 const std = @import("std");
-const types = @import("types");
 const surface = @import("surface.zig");
 const State = @import("state.zig").State;
 const util = @import("util.zig");
 const now_ms = util.now_ms;
-const nonneg = util.nonneg;
 
 const error_bg: u32 = 0x8b1a1a;
 const error_fg: u32 = 0xffffff;
@@ -54,12 +52,11 @@ pub const PromptBar = struct {
 // ---- error bar ----
 pub fn show_error(s: *State, msg: []const u8) !void {
     std.debug.print("duckwm error: {s}\n", .{msg});
-    const wm = s.wm orelse return;
-    const comp = s.compositor orelse return;
+    if (s.wm == null or s.compositor == null) return; // river isn't up: stderr only
     const bar = s.error_bar orelse blk: {
         const b = try s.allocator.create(ErrorBar);
         errdefer s.allocator.destroy(b);
-        b.* = .{ .surf = try surface.ShellSurface.create(wm, comp), .msg = &.{}, .height = 0 };
+        b.* = .{ .surf = try s.new_surface(true), .msg = &.{}, .height = 0 };
         s.error_bar = b;
         break :blk b;
     };
@@ -88,8 +85,7 @@ pub fn render_error(s: *State) void {
     const bar = s.error_bar orelse return;
     const shm = s.shm orelse return;
     const o = s.primary orelse return;
-    const area: types.Rect = o.usable orelse
-        .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
+    const area = o.area();
     if (bar.dirty or !bar.surf.mapped or bar.width != area.width) {
         const content: surface.ErrorContent = .{
             .msg = bar.msg,
@@ -102,7 +98,7 @@ pub fn render_error(s: *State) void {
         bar.dirty = false;
         bar.width = area.width;
     }
-    bar.surf.node.setPosition(area.x, area.y);
+    bar.surf.place(.{ .x = area.x, .y = area.y });
     bar.surf.node.placeTop();
 }
 
@@ -136,13 +132,11 @@ pub fn show_message(s: *State, text: []const u8, timeout_ms: u32) !void {
 /// The input bar, created if there isn't one.
 fn open_prompt(s: *State) !*PromptBar {
     if (s.prompt_bar) |b| return b;
-    const wm = s.wm orelse return error.NoWindowManager;
-    const comp = s.compositor orelse return error.NoCompositor;
     const b = try s.allocator.create(PromptBar);
     errdefer s.allocator.destroy(b);
     const font_h: i32 = if (s.fonts.get(s.allocator, prompt_font)) |f| f.height else 16;
     b.* = .{
-        .surf = try surface.ShellSurface.create(wm, comp),
+        .surf = try s.new_surface(true),
         .height = @intCast(font_h + 2 * prompt_pad),
     };
     s.prompt_bar = b;
@@ -173,8 +167,7 @@ pub fn render_prompt(s: *State) void {
     const bar = s.prompt_bar orelse return;
     const shm = s.shm orelse return;
     const o = s.primary orelse return;
-    const area: types.Rect = o.usable orelse
-        .{ .x = o.x, .y = o.y, .width = nonneg(o.width), .height = nonneg(o.height) };
+    const area = o.area();
     const y = area.y + if (s.error_bar) |e| @as(i32, @intCast(e.height)) else 0;
     if (bar.dirty or !bar.surf.mapped or bar.width != area.width) {
         const content: surface.PromptContent = .{
@@ -191,7 +184,7 @@ pub fn render_prompt(s: *State) void {
         bar.dirty = false;
         bar.width = area.width;
     }
-    bar.surf.node.setPosition(area.x, y);
+    bar.surf.place(.{ .x = area.x, .y = y });
     bar.surf.node.placeTop();
     // It has a buffer now: the next manage can give it the keyboard.
     if (bar.grabbed and !bar.focused) s.mark();
