@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("xlib");
 const types = @import("types");
+const Backend = @import("backend.zig").Backend;
 
 pub const Strut = struct { left: u32 = 0, right: u32 = 0, top: u32 = 0, bottom: u32 = 0 };
 
@@ -103,3 +104,93 @@ pub const Docks = struct {
         return r_;
     }
 };
+
+// ---- the X side: what the docks' windows are told ----
+
+/// Start tracking a dock. Reads its geometry once.
+pub fn add(self: *Backend, win: c.Window, strut: Strut) !void {
+    var attrs: c.XWindowAttributes = undefined;
+    const rect: types.Rect = if (c.XGetWindowAttributes(self.display, win, &attrs) != 0) .{
+        .x = attrs.x,
+        .y = attrs.y,
+        .width = @intCast(attrs.width),
+        .height = @intCast(attrs.height),
+    } else .{ .x = 0, .y = 0, .width = 0, .height = 0 };
+    try self.docks.put(self.allocator, win, strut, rect);
+}
+
+/// Returns true if win is a dock. A null strut stops tracking it.
+pub fn update_strut(self: *Backend, win: c.Window, strut: ?Strut) bool {
+    if (!self.docks.contains(win)) return false;
+    if (strut) |s| {
+        _ = self.docks.set_strut(win, s);
+    } else {
+        _ = self.docks.remove(win);
+    }
+    return true;
+}
+
+/// Line the docks up along their monitors' edges, stacking ones that share an edge.
+pub fn restack(self: *Backend) void {
+    var rects: [16]types.Rect = undefined;
+    var ids: [16]u32 = undefined;
+    const n = self.monitor_rects(&rects, &ids);
+    // Per monitor, how far its top, bottom, left and right are taken so far.
+    var used = std.mem.zeroes([16][4]i32);
+    var it = self.docks.map.iterator();
+    while (it.next()) |e| {
+        const win = e.key_ptr.*;
+        const d = e.value_ptr;
+        const mi = for (rects[0..n], 0..) |m, i| {
+            if (on(m, d.rect)) break i;
+        } else 0;
+        const m = rects[mi];
+        const mw: i32 = @intCast(m.width);
+        const mh: i32 = @intCast(m.height);
+        const w: i32 = @intCast(d.rect.width);
+        const h: i32 = @intCast(d.rect.height);
+        const s = d.strut;
+        if (s.top > 0) {
+            d.rect.x = m.x;
+            d.rect.y = m.y + used[mi][0];
+            used[mi][0] += h;
+        } else if (s.bottom > 0) {
+            used[mi][1] += h;
+            d.rect.x = m.x;
+            d.rect.y = m.y + mh - used[mi][1];
+        } else if (s.left > 0) {
+            d.rect.x = m.x + used[mi][2];
+            d.rect.y = m.y;
+            used[mi][2] += w;
+        } else if (s.right > 0) {
+            used[mi][3] += w;
+            d.rect.x = m.x + mw - used[mi][3];
+            d.rect.y = m.y;
+        } else continue;
+        _ = c.XMoveWindow(self.display, win, d.rect.x, d.rect.y);
+    }
+    _ = c.XFlush(self.display);
+}
+
+pub fn raise_all(self: *const Backend) void {
+    var it = self.docks.map.keyIterator();
+    while (it.next()) |win| _ = c.XRaiseWindow(self.display, win.*);
+}
+
+/// Put frame just under the docks (on top of everything else).
+pub fn stack_below(self: *const Backend, frame: c.Window) void {
+    var lowest: ?c.Window = null;
+    var it = self.docks.map.keyIterator();
+    while (it.next()) |win| {
+        _ = c.XRaiseWindow(self.display, win.*);
+        if (lowest == null) lowest = win.*;
+    }
+    if (lowest) |d| {
+        var changes: c.XWindowChanges = std.mem.zeroes(c.XWindowChanges);
+        changes.sibling = d;
+        changes.stack_mode = c.Below;
+        _ = c.XConfigureWindow(self.display, frame, c.CWSibling | c.CWStackMode, &changes);
+    } else {
+        _ = c.XRaiseWindow(self.display, frame);
+    }
+}
