@@ -3,10 +3,8 @@ const types = @import("types");
 const wayland = @import("wayland");
 const river = wayland.client.river;
 const surface = @import("surface.zig");
-const State = @import("backend.zig").State;
+const State = @import("state.zig").State;
 const util = @import("util.zig");
-const size_eql = util.size_eql;
-const nonneg = util.nonneg;
 
 pub const all_edges: u32 = 1 | 2 | 4 | 8; // top | bottom | left | right
 
@@ -153,8 +151,8 @@ fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) 
             w.parent = if (p) |po| (if (s.by_obj.get(po)) |pw| pw.handle else null) else null;
         },
         .dimensions_hint => |e| {
-            w.min = .{ .width = nonneg(e.min_width), .height = nonneg(e.min_height) };
-            w.max = .{ .width = nonneg(e.max_width), .height = nonneg(e.max_height) };
+            w.min = .{ .width = util.nonneg(e.min_width), .height = util.nonneg(e.min_height) };
+            w.max = .{ .width = util.nonneg(e.max_width), .height = util.nonneg(e.max_height) };
         },
         .fullscreen_requested => {
             if (w.announced) {
@@ -171,8 +169,8 @@ fn window_listener(_: *river.WindowV1, event: river.WindowV1.Event, w: *Window) 
             }
         },
         .dimensions => |e| {
-            const got: types.Size = .{ .width = nonneg(e.width), .height = nonneg(e.height) };
-            if (w.announced and w.tiled == false and w.insists < 3 and !size_eql(got, w.proposed) and !s.op_active) {
+            const got: types.Size = .{ .width = util.nonneg(e.width), .height = util.nonneg(e.height) };
+            if (w.announced and w.tiled == false and w.insists < 3 and !util.size_eql(got, w.proposed) and !s.op_active) {
                 w.insists += 1;
                 w.repropose = true;
                 s.mark();

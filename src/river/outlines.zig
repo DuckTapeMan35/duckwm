@@ -1,7 +1,7 @@
 const std = @import("std");
 const types = @import("types");
 const surface = @import("surface.zig");
-const State = @import("backend.zig").State;
+const State = @import("state.zig").State;
 
 /// A group's outline: one surface covering the visible part of its frame,
 /// transparent in the middle and taking no input.

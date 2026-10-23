@@ -2,7 +2,7 @@ const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
 const river = wayland.client.river;
-const State = @import("backend.zig").State;
+const State = @import("state.zig").State;
 const nonneg = @import("util.zig").nonneg;
 
 pub const Output = struct {
