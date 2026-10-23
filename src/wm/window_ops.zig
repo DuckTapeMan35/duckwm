@@ -4,6 +4,7 @@ const types = @import("types");
 const core = @import("core.zig");
 const groups = @import("groups.zig");
 const focus_mod = @import("focus.zig");
+const lifecycle = @import("lifecycle.zig");
 
 const WM = core.WM;
 const Graph = graph_mod.Graph;
@@ -154,6 +155,7 @@ pub fn kill_client(wm: *WM) !void {
             // Kill the targeted workspace itwm.
             kill_graph_windows(wm, node.content.workspace);
             if (node.preview_window) |pw| {
+                try lifecycle.window_gone(wm, pw);
                 wm.backend.destroy_preview_window(pw);
             }
 

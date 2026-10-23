@@ -4,6 +4,7 @@ const types = @import("types");
 const core = @import("core.zig");
 const window_ops = @import("window_ops.zig");
 const WM = core.WM;
+const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
 
 pub fn on_node_freed(ctx: *anyopaque, node: *Node) void {
@@ -14,17 +15,11 @@ pub fn on_node_freed(ctx: *anyopaque, node: *Node) void {
     }
     switch (node.content) {
         .window => |win| _ = wm.window_to_node_id.remove(win),
-        .workspace => if (node.preview_window) |pw| {
-            _ = wm.window_to_node_id.remove(pw);
+        .workspace => |sub| {
+            if (node.preview_window) |pw| _ = wm.window_to_node_id.remove(pw);
+            free_inner_graph(wm, sub);
         },
-        // destroy_node has already freed the group's nodes (free_subgraph);
-        // what's left is what only the group's graph held, then the graph itself.
-        .group => |sub| {
-            wm.drop_owned_binds(sub);
-            if (sub.arranger) |cb| wm.release_callback(cb);
-            if (sub.arranger_name.len > 0) wm.allocator.free(sub.arranger_name);
-            wm.allocator.destroy(sub);
-        },
+        .group => |sub| free_inner_graph(wm, sub),
         .empty => {},
     }
     if (get_id_for_node(wm, node)) |id| {
@@ -34,6 +29,15 @@ pub fn on_node_freed(ctx: *anyopaque, node: *Node) void {
     if (node.owner_graph) |og| {
         if (og.fullscreen_node == node) og.fullscreen_node = null;
     }
+}
+
+/// destroy_node has already freed a workspace's or group's nodes
+/// (free_subgraph); this frees what only its graph held, then the graph.
+fn free_inner_graph(wm: *WM, sub: *Graph) void {
+    wm.drop_owned_binds(sub);
+    if (sub.arranger) |cb| wm.release_callback(cb);
+    if (sub.arranger_name.len > 0) wm.allocator.free(sub.arranger_name);
+    wm.allocator.destroy(sub);
 }
 
 pub fn register_node(wm: *WM, win: ?types.WindowHandle, node: *Node) !u32 {
