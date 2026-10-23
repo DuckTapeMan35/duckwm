@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("types");
+const c = @import("xlib");
 
 pub fn now_ms() i64 {
     var ts: std.os.linux.timespec = undefined;
@@ -21,4 +22,36 @@ pub fn colors_eql(a: ?types.BorderColors, b: ?types.BorderColors) bool {
     const x = a.?;
     const y = b.?;
     return x.top == y.top and x.bottom == y.bottom and x.left == y.left and x.right == y.right;
+}
+
+/// Replace win's property prop with vals, as a list of 32-bit items of the
+/// given type (CARDINAL, ATOM, WINDOW...). Xlib passes them as longs.
+pub fn set_prop32(display: *c.Display, win: c.Window, prop: c.Atom, kind: c.Atom, vals: []const c_ulong) void {
+    _ = c.XChangeProperty(display, win, prop, kind, 32, c.PropModeReplace, @ptrCast(vals.ptr), @intCast(vals.len));
+}
+
+/// An Xft color for 0xRRGGBB on the default visual and colormap, or null.
+/// Free it with free_color.
+pub fn alloc_color(display: *c.Display, rgb: u32) ?c.XftColor {
+    const screen = c.XDefaultScreen(display);
+    var rc: c.XRenderColor = .{
+        .red = @intCast(((rgb >> 16) & 0xff) * 0x101),
+        .green = @intCast(((rgb >> 8) & 0xff) * 0x101),
+        .blue = @intCast((rgb & 0xff) * 0x101),
+        .alpha = 0xffff,
+    };
+    var col: c.XftColor = undefined;
+    if (c.XftColorAllocValue(
+        display,
+        c.XDefaultVisual(display, screen),
+        c.XDefaultColormap(display, screen),
+        &rc,
+        &col,
+    ) == 0) return null;
+    return col;
+}
+
+pub fn free_color(display: *c.Display, col: *c.XftColor) void {
+    const screen = c.XDefaultScreen(display);
+    c.XftColorFree(display, c.XDefaultVisual(display, screen), c.XDefaultColormap(display, screen), col);
 }

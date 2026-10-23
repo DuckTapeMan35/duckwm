@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("xlib");
 const types = @import("types");
+const util = @import("util.zig");
 const Backend = @import("backend.zig").Backend;
-const now_ms = @import("util.zig").now_ms;
 
 const prompt_font = "monospace:size=11";
 const prompt_bg: c_ulong = 0x1e1e2e;
@@ -29,15 +29,6 @@ pub const PromptBar = struct {
     deadline: ?i64 = null,
 };
 
-fn render_color(rgb: u32) c.XRenderColor {
-    return .{
-        .red = @intCast(((rgb >> 16) & 0xff) * 0x101),
-        .green = @intCast(((rgb >> 8) & 0xff) * 0x101),
-        .blue = @intCast((rgb & 0xff) * 0x101),
-        .alpha = 0xffff,
-    };
-}
-
 // ---- error bar ----
 /// Show msg in a reserved bar at the top of the screen, replacing any existing one.
 pub fn show_error(self: *Backend, msg: []const u8) !void {
@@ -50,10 +41,10 @@ pub fn show_error(self: *Backend, msg: []const u8) !void {
     if (win == 0) return error.ErrorBarCreateFailed;
     errdefer _ = c.XDestroyWindow(self.display, win);
 
-    _ = c.XChangeProperty(self.display, win, self.atoms._NET_WM_WINDOW_TYPE, self.atoms.ATOM, 32, c.PropModeReplace, @ptrCast(&self.atoms._NET_WM_WINDOW_TYPE_DOCK), 1);
+    util.set_prop32(self.display, win, self.atoms._NET_WM_WINDOW_TYPE, self.atoms.ATOM, &.{self.atoms._NET_WM_WINDOW_TYPE_DOCK});
 
     const strut = [12]c_ulong{ 0, 0, bar_height, 0, 0, 0, 0, 0, 0, size.width, 0, 0 };
-    _ = c.XChangeProperty(self.display, win, self.atoms._NET_WM_STRUT_PARTIAL, self.atoms.CARDINAL, 32, c.PropModeReplace, @ptrCast(&strut), 12);
+    util.set_prop32(self.display, win, self.atoms._NET_WM_STRUT_PARTIAL, self.atoms.CARDINAL, &strut);
 
     var wa: c.XSetWindowAttributes = std.mem.zeroes(c.XSetWindowAttributes);
     wa.override_redirect = 1;
@@ -135,7 +126,7 @@ pub fn show_message(self: *Backend, text: []const u8, timeout_ms: u32) !void {
         _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
         b.grabbed = false;
     }
-    b.deadline = now_ms() + timeout_ms;
+    b.deadline = util.now_ms() + timeout_ms;
     try set_bar(self, b, "", text, null, false);
 }
 
@@ -143,11 +134,8 @@ pub fn hide_prompt(self: *Backend) void {
     var b = self.bar orelse return;
     self.bar = null;
     if (b.grabbed) _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
-    const screen = c.XDefaultScreen(self.display);
-    const visual = c.XDefaultVisual(self.display, screen);
-    const cmap = c.XDefaultColormap(self.display, screen);
-    c.XftColorFree(self.display, visual, cmap, &b.fg);
-    c.XftColorFree(self.display, visual, cmap, &b.bg);
+    util.free_color(self.display, &b.fg);
+    util.free_color(self.display, &b.bg);
     c.XftDrawDestroy(b.draw);
     c.XftFontClose(self.display, b.font);
     _ = c.XDestroyWindow(self.display, b.win);
@@ -188,10 +176,10 @@ fn open_bar(self: *Backend) !*PromptBar {
     errdefer _ = c.XDestroyWindow(self.display, win);
 
     const draw = c.XftDrawCreate(self.display, win, visual, cmap) orelse return error.PromptCreateFailed;
-    var fg: c.XftColor = undefined;
-    var bg: c.XftColor = undefined;
-    _ = c.XftColorAllocValue(self.display, visual, cmap, &render_color(prompt_fg), &fg);
-    _ = c.XftColorAllocValue(self.display, visual, cmap, &render_color(@intCast(prompt_bg)), &bg);
+    errdefer c.XftDrawDestroy(draw);
+    var fg = util.alloc_color(self.display, prompt_fg) orelse return error.PromptCreateFailed;
+    errdefer util.free_color(self.display, &fg);
+    const bg = util.alloc_color(self.display, @intCast(prompt_bg)) orelse return error.PromptCreateFailed;
 
     _ = c.XSelectInput(self.display, win, c.ExposureMask);
     _ = c.XMapRaised(self.display, win);

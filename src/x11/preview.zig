@@ -2,6 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("xlib");
 const types = @import("types");
+const info = @import("info.zig");
+const util = @import("util.zig");
+
 const Atoms = @import("atoms.zig").Atoms;
 
 const Icon = struct {
@@ -57,15 +60,8 @@ pub const Renderer = struct {
 
         const font = self.font_for(gpa, display, screen, style.font);
 
-        var render_color = c.XRenderColor{
-            .red = @intCast(((style.text >> 16) & 0xFF) * 0x101),
-            .green = @intCast(((style.text >> 8) & 0xFF) * 0x101),
-            .blue = @intCast((style.text & 0xFF) * 0x101),
-            .alpha = 0xffff,
-        };
-        var xft_color: c.XftColor = undefined;
-        const have_color = c.XftColorAllocValue(display, visual, colormap, &render_color, &xft_color) != 0;
-        defer if (have_color) c.XftColorFree(display, visual, colormap, &xft_color);
+        var text_color = util.alloc_color(display, style.text);
+        defer if (text_color) |*col| util.free_color(display, col);
 
         const xft_draw = c.XftDrawCreate(display, pw, visual, colormap);
         defer if (xft_draw != null) c.XftDrawDestroy(xft_draw);
@@ -85,13 +81,13 @@ pub const Renderer = struct {
                 if (self.draw_icon(gpa, display, atoms, visual, depth, gc, pw, @intCast(w), cx, cy, it.icon_size, style.win_bg)) continue;
             }
 
-            if (it.label.len == 0 or !have_color or xft_draw == null) continue;
+            if (it.label.len == 0 or text_color == null or xft_draw == null) continue;
             const f = font orelse continue;
             var ext: c.XGlyphInfo = undefined;
             c.XftTextExtentsUtf8(display, f, it.label.ptr, @intCast(it.label.len), &ext);
             const tx = cx - @divTrunc(@as(i32, ext.width), 2);
             const ty = cy + @divTrunc(f.*.ascent, 2);
-            c.XftDrawStringUtf8(xft_draw, &xft_color, f, tx, ty, it.label.ptr, @intCast(it.label.len));
+            c.XftDrawStringUtf8(xft_draw, &text_color.?, f, tx, ty, it.label.ptr, @intCast(it.label.len));
         }
     }
 
@@ -168,20 +164,13 @@ pub const Renderer = struct {
     }
 };
 
-/// Pick the _NET_WM_ICON entry closest to `target` and scale it to fit (nearest neighbor).
+/// Pick the _NET_WM_ICON entry closest to target and scale it to fit (nearest neighbor).
 fn load_icon(gpa: std.mem.Allocator, display: *c.Display, atoms: *const Atoms, win: c.Window, target: u32) ?Icon {
-    var actual_type: c.Atom = 0;
-    var actual_format: c_int = 0;
-    var nitems: c_ulong = 0;
-    var bytes_after: c_ulong = 0;
-    var prop: [*c]u8 = null;
-    if (c.XGetWindowProperty(display, win, atoms._NET_WM_ICON, 0, 65536, 0, atoms.CARDINAL, &actual_type, &actual_format, &nitems, &bytes_after, &prop) != c.Success) return null;
-    defer if (prop != null) {
-        _ = c.XFree(prop);
-    };
-    if (prop == null or nitems < 2 or actual_format != 32) return null;
-
-    const data: [*]const c_ulong = @ptrCast(@alignCast(prop));
+    const prop = info.get_prop(display, win, atoms._NET_WM_ICON, atoms.CARDINAL, 65536) orelse return null;
+    defer prop.deinit();
+    if (prop.len < 2 or prop.format != 32) return null;
+    const data = prop.longs();
+    const nitems = data.len;
     var best: usize = 0;
     var best_diff: u64 = std.math.maxInt(u64);
     var off: usize = 0;

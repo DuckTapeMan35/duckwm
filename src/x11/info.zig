@@ -5,6 +5,47 @@ const Atoms = @import("atoms.zig").Atoms;
 const Strut = @import("docks.zig").Strut;
 const FocusModel = @import("frames.zig").FocusModel;
 
+/// A window property as XGetWindowProperty returns it. Free it with deinit.
+pub const Prop = struct {
+    data: [*c]u8,
+    /// 8, 16 or 32; Xlib hands 32-bit items over as longs.
+    format: c_int,
+    /// Number of items.
+    len: usize,
+
+    /// The items of a format-32 property.
+    pub fn longs(p: Prop) []const c_ulong {
+        const ptr: [*]const c_ulong = @ptrCast(@alignCast(p.data));
+        return ptr[0..p.len];
+    }
+
+    /// The bytes of a format-8 property.
+    pub fn bytes(p: Prop) []const u8 {
+        return p.data[0..p.len];
+    }
+
+    pub fn deinit(p: Prop) void {
+        _ = c.XFree(p.data);
+    }
+};
+
+/// Up to max_longs 32-bit units of win's property prop, if it's of type kind
+/// (or any type, for c.AnyPropertyType). Null when it's missing or empty.
+pub fn get_prop(display: *c.Display, win: c.Window, prop: c.Atom, kind: c.Atom, max_longs: c_long) ?Prop {
+    var actual_type: c.Atom = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*c]u8 = null;
+    if (c.XGetWindowProperty(display, win, prop, 0, max_longs, 0, kind, &actual_type, &actual_format, &nitems, &bytes_after, &data) != c.Success) return null;
+    if (data == null) return null;
+    if (nitems == 0) {
+        _ = c.XFree(data);
+        return null;
+    }
+    return .{ .data = data, .format = actual_format, .len = @intCast(nitems) };
+}
+
 pub fn read_focus_model(display: *c.Display, atoms: *const Atoms, win: c.Window) FocusModel {
     var m: FocusModel = .{};
     if (c.XGetWMHints(display, win)) |h| {
@@ -46,28 +87,10 @@ fn read_class(display: *c.Display, win: c.Window, info: *types.WindowInfo) void 
 
 /// Prefer UTF-8 _NET_WM_NAME, fall back to legacy WM_NAME.
 fn read_title(display: *c.Display, atoms: *const Atoms, win: c.Window, info: *types.WindowInfo) void {
-    var actual_type: c.Atom = 0;
-    var actual_format: c_int = 0;
-    var nitems: c_ulong = 0;
-    var bytes_after: c_ulong = 0;
-    var prop: [*c]u8 = null;
-    if (c.XGetWindowProperty(
-        display,
-        win,
-        atoms._NET_WM_NAME,
-        0,
-        1024,
-        0,
-        atoms.UTF8_STRING,
-        &actual_type,
-        &actual_format,
-        &nitems,
-        &bytes_after,
-        &prop,
-    ) == c.Success and prop != null) {
-        defer _ = c.XFree(prop);
-        if (actual_format == 8 and nitems > 0) {
-            info.set_title(prop[0..@intCast(nitems)]);
+    if (get_prop(display, win, atoms._NET_WM_NAME, atoms.UTF8_STRING, 1024)) |p| {
+        defer p.deinit();
+        if (p.format == 8) {
+            info.set_title(p.bytes());
             return;
         }
     }
@@ -80,50 +103,19 @@ fn read_title(display: *c.Display, atoms: *const Atoms, win: c.Window, info: *ty
 }
 
 fn read_pid(display: *c.Display, atoms: *const Atoms, win: c.Window) ?u32 {
-    var actual_type: c.Atom = undefined;
-    var actual_format: c_int = undefined;
-    var nitems: c_ulong = undefined;
-    var bytes_after: c_ulong = undefined;
-    var prop: [*c]u8 = null;
-    const result = c.XGetWindowProperty(display, win, atoms._NET_WM_PID, 0, 1, 0, c.AnyPropertyType, &actual_type, &actual_format, &nitems, &bytes_after, &prop);
-    if (result != c.Success or prop == null or nitems == 0) {
-        if (prop != null) _ = c.XFree(prop);
-        return null;
-    }
-    defer _ = c.XFree(prop);
-    const pid: c_ulong = @as(*c_ulong, @ptrCast(@alignCast(prop))).*;
-    return @intCast(pid);
+    const p = get_prop(display, win, atoms._NET_WM_PID, c.AnyPropertyType, 1) orelse return null;
+    defer p.deinit();
+    return @intCast(p.longs()[0]);
 }
 
 /// Read an atom-list property (format 32) into out. Returns the filled prefix.
 pub fn read_atoms(display: *c.Display, win: c.Window, prop: c.Atom, out: []c.Atom) []c.Atom {
-    var actual_type: c.Atom = 0;
-    var actual_format: c_int = 0;
-    var nitems: c_ulong = 0;
-    var bytes_after: c_ulong = 0;
-    var data: [*c]u8 = null;
-    if (c.XGetWindowProperty(
-        display,
-        win,
-        prop,
-        0,
-        @intCast(out.len),
-        0,
-        c.AnyPropertyType,
-        &actual_type,
-        &actual_format,
-        &nitems,
-        &bytes_after,
-        &data,
-    ) != c.Success) return out[0..0];
-    defer if (data != null) {
-        _ = c.XFree(data);
-    };
-    if (data == null or actual_format != 32 or nitems == 0) return out[0..0];
-
-    const n = @min(@as(usize, @intCast(nitems)), out.len);
-    const src: [*]const c_ulong = @ptrCast(@alignCast(data));
-    for (0..n) |i| out[i] = src[i];
+    const p = get_prop(display, win, prop, c.AnyPropertyType, @intCast(out.len)) orelse return out[0..0];
+    defer p.deinit();
+    if (p.format != 32) return out[0..0];
+    const src = p.longs();
+    const n = @min(src.len, out.len);
+    @memcpy(out[0..n], src[0..n]);
     return out[0..n];
 }
 
@@ -196,18 +188,10 @@ pub fn read_hints(display: *c.Display, atoms: *const Atoms, win: c.Window) types
 }
 
 pub fn read_strut(display: *c.Display, atoms: *const Atoms, win: c.Window) ?Strut {
-    var actual_type: c.Atom = 0;
-    var actual_format: c_int = 0;
-    var nitems: c_ulong = 0;
-    var bytes_after: c_ulong = 0;
-    var data: [*c]u8 = null;
-    if (c.XGetWindowProperty(display, win, atoms._NET_WM_STRUT_PARTIAL, 0, 12, 0, atoms.CARDINAL, &actual_type, &actual_format, &nitems, &bytes_after, &data) != c.Success) return null;
-    defer if (data != null) {
-        _ = c.XFree(data);
-    };
-    if (data == null or nitems < 12 or actual_format != 32) return null;
-
-    const v: [*]const c_ulong = @ptrCast(@alignCast(data));
+    const p = get_prop(display, win, atoms._NET_WM_STRUT_PARTIAL, atoms.CARDINAL, 12) orelse return null;
+    defer p.deinit();
+    if (p.len < 12 or p.format != 32) return null;
+    const v = p.longs();
     return .{
         .left = @intCast(v[0]),
         .right = @intCast(v[1]),

@@ -1,8 +1,9 @@
 const std = @import("std");
 const c = @import("xlib");
 const types = @import("types");
-const Backend = @import("backend.zig").Backend;
 const info = @import("info.zig");
+const util = @import("util.zig");
+const Backend = @import("backend.zig").Backend;
 
 const NormalState: c_ulong = 1;
 
@@ -125,8 +126,8 @@ pub fn create(self: *Backend, client: c.Window, opts: types.FrameOptions) !c.Win
     }
 
     const xdnd_version: c_ulong = 5;
-    _ = c.XChangeProperty(self.display, frame, self.atoms.XdndAware, self.atoms.ATOM, 32, c.PropModeReplace, @ptrCast(&xdnd_version), 1);
-    _ = c.XChangeProperty(self.display, client, self.atoms.XdndAware, self.atoms.ATOM, 32, c.PropModeReplace, @ptrCast(&xdnd_version), 1);
+    util.set_prop32(self.display, frame, self.atoms.XdndAware, self.atoms.ATOM, &.{xdnd_version});
+    util.set_prop32(self.display, client, self.atoms.XdndAware, self.atoms.ATOM, &.{xdnd_version});
 
     if (use_alpha) _ = c.XSetWindowBackgroundPixmap(self.display, frame, c.None);
 
@@ -194,12 +195,12 @@ fn destroy_window(self: *Backend, frame: c.Window) void {
 pub fn set_extents(self: *const Backend, client: c.Window, bw: u32) void {
     const v: c_ulong = bw;
     const vals = [4]c_ulong{ v, v, v, v };
-    _ = c.XChangeProperty(self.display, client, self.atoms._NET_FRAME_EXTENTS, self.atoms.CARDINAL, 32, c.PropModeReplace, @ptrCast(&vals), 4);
+    util.set_prop32(self.display, client, self.atoms._NET_FRAME_EXTENTS, self.atoms.CARDINAL, &vals);
 }
 
 fn set_wm_state(self: *const Backend, client: c.Window, state: c_ulong) void {
     const data = [2]c_ulong{ state, c.None }; // state, icon window
-    _ = c.XChangeProperty(self.display, client, self.atoms.WM_STATE, self.atoms.WM_STATE, 32, c.PropModeReplace, @ptrCast(&data), 2);
+    util.set_prop32(self.display, client, self.atoms.WM_STATE, self.atoms.WM_STATE, &data);
 }
 
 /// Hold clicks on the frame until translate_button decides who gets them.
