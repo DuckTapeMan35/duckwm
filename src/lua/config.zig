@@ -190,6 +190,22 @@ pub fn reload(wm: *WM) void {
     std.debug.print("config reloaded successfully\n", .{});
 }
 
+/// Run a config given as source text instead of a file (tests: the fake
+/// backend's harness). No fallback and no watching; an error is returned.
+pub fn load_source(wm: *WM, source: [:0]const u8) !void {
+    util.global_wm = wm;
+    const lua = try Lua.init(wm.allocator);
+    wm.lua = lua;
+    vm.setup_lua(wm, lua);
+    wm.eval_fn = repl.eval;
+    lua.doString(source) catch |err| {
+        std.debug.print("load_source: {s}\n", .{lua.toString(-1) catch @errorName(err)});
+        lua.pop(1);
+        return err;
+    };
+    for (wm.outputs.items) |o| remap_all_graphs(wm, &o.root);
+}
+
 /// Startup: run the user config, falling back to the system one. A failing
 /// user config is reported once the WM is up (post_load_error).
 pub fn load(wm: *WM) !void {

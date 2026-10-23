@@ -9,6 +9,8 @@ fn utf8_prefix_len(s: []const u8, max: usize) usize {
 pub const platform = struct {
     pub const x11 = 1;
     pub const river = 2;
+    /// test backend.
+    pub const fake = 3;
 };
 
 /// A monitor, as a backend reports it.

@@ -465,4 +465,45 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
     const protocol_tests = b.addTest(.{ .root_module = protocol_mod });
     test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
+    // The whole WM on the fake backend (src/fake.zig), whatever -Dplatform says.
+    const fake_mod = b.createModule(.{
+        .root_source_file = b.path("src/fake.zig"),
+        .target = target,
+    });
+    fake_mod.addImport("types", types_mod);
+    const wm_fake_mod = b.createModule(.{
+        .root_source_file = b.path("src/wm.zig"),
+        .target = target,
+    });
+    wm_fake_mod.addImport("graph", graph_mod);
+    wm_fake_mod.addImport("types", types_mod);
+    wm_fake_mod.addImport("platform", fake_mod);
+    wm_fake_mod.addImport("libc", libc_mod);
+    wm_fake_mod.addImport("ziglua", zlua);
+    wm_fake_mod.addImport("protocol", protocol_mod);
+    const lua_fake_mod = b.createModule(.{
+        .root_source_file = b.path("src/lua.zig"),
+        .target = target,
+    });
+    lua_fake_mod.addImport("ziglua", zlua);
+    lua_fake_mod.addImport("wm", wm_fake_mod);
+    lua_fake_mod.addImport("graph", graph_mod);
+    lua_fake_mod.addImport("types", types_mod);
+    lua_fake_mod.addImport("api_docs", api_mod);
+    lua_fake_mod.addImport("libc", libc_mod);
+    lua_fake_mod.addImport("protocol", protocol_mod);
+    const harness_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("tests/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "wm", .module = wm_fake_mod },
+            .{ .name = "platform", .module = fake_mod },
+            .{ .name = "types", .module = types_mod },
+            .{ .name = "config", .module = lua_fake_mod },
+        },
+    }) });
+    harness_tests.root_module.addAnonymousImport("default_config", .{ .root_source_file = b.path("config/default.lua") });
+    test_step.dependOn(&b.addRunArtifact(harness_tests).step);
 }
