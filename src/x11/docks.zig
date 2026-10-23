@@ -1,6 +1,8 @@
 const std = @import("std");
 const c = @import("xlib");
 const types = @import("types");
+const output = @import("outputs.zig");
+
 const Backend = @import("backend.zig").Backend;
 
 pub const Strut = struct { left: u32 = 0, right: u32 = 0, top: u32 = 0, bottom: u32 = 0 };
@@ -134,7 +136,7 @@ pub fn update_strut(self: *Backend, win: c.Window, strut: ?Strut) bool {
 pub fn restack(self: *Backend) void {
     var rects: [16]types.Rect = undefined;
     var ids: [16]u32 = undefined;
-    const n = self.monitor_rects(&rects, &ids);
+    const n = output.monitors(self, &rects, &ids);
     // Per monitor, how far its top, bottom, left and right are taken so far.
     var used = std.mem.zeroes([16][4]i32);
     var it = self.docks.map.iterator();

@@ -10,6 +10,9 @@ const bars = @import("bars.zig");
 const outlines = @import("outlines.zig");
 const events = @import("events.zig");
 const scene = @import("scene.zig");
+const input = @import("input.zig");
+const ewmh = @import("ewmh.zig");
+const output = @import("outputs.zig");
 const now_ms = util.now_ms;
 const clamp16 = util.clamp16;
 const rect_eql = util.rect_eql;
@@ -18,8 +21,6 @@ const Atoms = @import("atoms.zig").Atoms;
 const Size = types.Size;
 const Docks = docks_mod.Docks;
 const FrameOptions = types.FrameOptions;
-
-const key_lock_masks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2Mask };
 
 var wm_detected: bool = false;
 
@@ -50,11 +51,6 @@ comptime {
         types.mod.num_lock != c.Mod2Mask or types.mod.mod3 != c.Mod3Mask or
         types.mod.super != c.Mod4Mask or types.mod.mod5 != c.Mod5Mask)
         @compileError("types.mod must match X11 modifier masks for identity mapping");
-}
-
-comptime {
-    if (@sizeOf(c_ulong) != @sizeOf(types.WindowHandle))
-        @compileError("publish_window_list assumes WindowHandle has the size of c_ulong");
 }
 
 comptime {
@@ -129,91 +125,29 @@ pub const Backend = struct {
         };
     }
 
-    fn send_protocol(self: *const Backend, win: c.Window, proto: c.Atom) void {
-        var ev: c.XEvent = std.mem.zeroes(c.XEvent);
-        ev.xclient.type = c.ClientMessage;
-        ev.xclient.window = win;
-        ev.xclient.message_type = self.atoms.WM_PROTOCOLS;
-        ev.xclient.format = 32;
-        ev.xclient.data.l[0] = @intCast(proto);
-        ev.xclient.data.l[1] = c.CurrentTime;
-        _ = c.XSendEvent(self.display, win, 0, c.NoEventMask, &ev);
-    }
-
     pub fn close_window(self: *Backend, h: types.WindowHandle) void {
-        self.send_protocol(@intCast(h), self.atoms.WM_DELETE_WINDOW);
+        ewmh.send_protocol(self, @intCast(h), self.atoms.WM_DELETE_WINDOW);
     }
 
     pub fn publish_work_area(self: *const Backend, area: types.Rect) void {
-        const vals = [4]c_ulong{
-            @intCast(area.x), @intCast(area.y), area.width, area.height,
-        };
-        _ = c.XChangeProperty(
-            self.display,
-            self.root,
-            self.atoms._NET_WORKAREA,
-            self.atoms.CARDINAL,
-            32,
-            c.PropModeReplace,
-            @ptrCast(&vals),
-            4,
-        );
+        ewmh.work_area(self, area);
     }
 
     pub fn publish_workspaces(self: *const Backend, count: u32, current: u32) void {
-        const n: c_ulong = count;
-        const cur: c_ulong = current;
-        _ = c.XChangeProperty(
-            self.display,
-            self.root,
-            self.atoms._NET_NUMBER_OF_DESKTOPS,
-            self.atoms.CARDINAL,
-            32,
-            c.PropModeReplace,
-            @ptrCast(&n),
-            1,
-        );
-        _ = c.XChangeProperty(
-            self.display,
-            self.root,
-            self.atoms._NET_CURRENT_DESKTOP,
-            self.atoms.CARDINAL,
-            32,
-            c.PropModeReplace,
-            @ptrCast(&cur),
-            1,
-        );
+        ewmh.workspaces(self, count, current);
     }
 
     pub fn publish_window_list(self: *const Backend, handles: []const types.WindowHandle) void {
-        if (handles.len == 0) {
-            _ = c.XDeleteProperty(self.display, self.root, self.atoms._NET_CLIENT_LIST);
-            return;
-        }
-        _ = c.XChangeProperty(
-            self.display,
-            self.root,
-            self.atoms._NET_CLIENT_LIST,
-            self.atoms.WINDOW,
-            32,
-            c.PropModeReplace,
-            @ptrCast(handles.ptr),
-            @intCast(handles.len),
-        );
+        ewmh.window_list(self, handles);
     }
 
     pub fn publish_window_workspace(self: *const Backend, h: types.WindowHandle, index: u32) void {
-        const idx: c_ulong = index;
-        _ = c.XChangeProperty(
-            self.display,
-            @intCast(h),
-            self.atoms._NET_WM_DESKTOP,
-            self.atoms.CARDINAL,
-            32,
-            c.PropModeReplace,
-            @ptrCast(&idx),
-            1,
-        );
+        ewmh.window_workspace(self, @intCast(h), index);
+    }
+
+    /// Tell the outside world whether h is fullscreen, preserving its other states.
+    pub fn publish_window_fullscreen(self: *const Backend, h: types.WindowHandle, on: bool) void {
+        ewmh.window_fullscreen(self, @intCast(h), on);
     }
 
     /// Show msg in a reserved bar at the top of the screen, replacing any existing one.
@@ -295,84 +229,28 @@ pub const Backend = struct {
         _ = c.XFlush(self.display);
     }
 
-    pub fn keysym_from_name(self: *const Backend, name: []const u8) ?types.Keysym {
-        _ = self;
-        var buf: [64]u8 = undefined;
-        const z = std.fmt.bufPrintZ(&buf, "{s}", .{name}) catch return null;
-        const ks = c.XStringToKeysym(z.ptr);
-        if (ks == c.NoSymbol) return null;
-        return @intCast(ks);
+    pub fn keysym_from_name(_: *const Backend, name: []const u8) ?types.Keysym {
+        return input.keysym_from_name(name);
     }
 
     pub fn grab_key(self: *const Backend, k: types.KeyCombo) void {
-        const keycode = c.XKeysymToKeycode(self.display, k.keysym);
-        if (keycode == 0) return;
-        const mods: c_uint = k.mods;
-        for (key_lock_masks) |lock| {
-            _ = c.XGrabKey(self.display, keycode, mods | lock, self.root, 1, c.GrabModeAsync, c.GrabModeAsync);
-        }
+        input.grab_key(self, k);
     }
 
     pub fn ungrab_all_keys(self: *const Backend) void {
-        _ = c.XUngrabKey(self.display, c.AnyKey, c.AnyModifier, self.root);
-        _ = c.XSync(self.display, 0);
-    }
-
-    pub fn release_keyboard_grab(self: *const Backend) void {
-        if (self.bar) |b| if (b.grabbed) return; // the input bar holds it
-        _ = c.XUngrabKeyboard(self.display, c.CurrentTime);
-        _ = c.XSync(self.display, 0);
+        input.ungrab_all_keys(self);
     }
 
     pub fn set_pointer_grabs(self: *Backend, grabs: []const types.PointerGrab) void {
-        for (self.pointer_grabs[0..self.pointer_grab_count]) |g| {
-            const btn: c_uint = if (g.button) |b| b else c.AnyButton;
-            const mods: c_uint = g.mods;
-            for (key_lock_masks) |lock| {
-                _ = c.XUngrabButton(self.display, btn, mods | lock, self.root);
-            }
-        }
-
-        const n = @min(grabs.len, self.pointer_grabs.len);
-        for (grabs[0..n], 0..) |g, i| {
-            self.pointer_grabs[i] = g;
-            const btn: c_uint = if (g.button) |b| b else c.AnyButton;
-            const mods: c_uint = g.mods;
-            for (key_lock_masks) |lock| {
-                _ = c.XGrabButton(
-                    self.display,
-                    btn,
-                    mods | lock,
-                    self.root,
-                    0,
-                    c.ButtonPressMask | c.ButtonReleaseMask | c.PointerMotionMask,
-                    c.GrabModeAsync,
-                    c.GrabModeAsync,
-                    c.None,
-                    c.None,
-                );
-            }
-        }
-        self.pointer_grab_count = n;
-        _ = c.XFlush(self.display);
+        input.set_pointer_grabs(self, grabs);
     }
 
     /// Become the window manager for this display.
     pub fn start(self: *Backend) !void {
         wm_detected = false;
         _ = c.XSetErrorHandler(on_wm_detected);
-        _ = c.XSelectInput(self.display, self.root, root_event_mask);
-        _ = c.XSync(self.display, 0);
-        if (wm_detected) return error.AnotherWmRunning;
-
-        _ = c.XSetErrorHandler(on_x_error);
-        var ev_base: c_int = 0;
-        var err_base: c_int = 0;
-        if (c.XRRQueryExtension(self.display, &ev_base, &err_base) != 0) {
-            self.rr_event_base = ev_base;
-            c.XRRSelectInput(self.display, self.root, c.RRScreenChangeNotifyMask);
-        }
-        self.announce_supported();
+        output.watch(self);
+        ewmh.announce_supported(self);
         _ = c.XSync(self.display, 0);
     }
 
@@ -388,7 +266,7 @@ pub const Backend = struct {
     pub fn set_input_focus(self: *Backend, h: ?types.WindowHandle, publish_active: bool) bool {
         const win: c.Window = if (h) |v| @intCast(v) else {
             _ = c.XSetInputFocus(self.display, self.root, c.RevertToParent, c.CurrentTime);
-            self.set_active_window(0);
+            ewmh.set_active_window(self, 0);
             _ = c.XFlush(self.display);
             return true;
         };
@@ -401,71 +279,9 @@ pub const Backend = struct {
         if (model.accepts_input) {
             _ = c.XSetInputFocus(self.display, win, c.RevertToParent, c.CurrentTime);
         }
-        if (model.takes_focus) self.send_protocol(win, self.atoms.WM_TAKE_FOCUS);
-        self.set_active_window(if (publish_active) win else 0);
+        if (model.takes_focus) ewmh.send_protocol(self, win, self.atoms.WM_TAKE_FOCUS);
+        ewmh.set_active_window(self, if (publish_active) win else 0);
         return true;
-    }
-
-    fn set_active_window(self: *const Backend, win: c.Window) void {
-        _ = c.XChangeProperty(self.display, self.root, self.atoms._NET_ACTIVE_WINDOW, self.atoms.WINDOW, 32, c.PropModeReplace, @ptrCast(&win), 1);
-    }
-
-    /// Crossing events caused by our own reconfiguration arrive as NotifyGrab
-    /// while this is active, so focus-follows-mouse ignores them.
-    pub fn begin_ignore_crossing(self: *const Backend) void {
-        _ = c.XGrabPointer(
-            self.display,
-            self.root,
-            0,
-            c.PointerMotionMask | c.ButtonPressMask | c.ButtonReleaseMask,
-            c.GrabModeAsync,
-            c.GrabModeAsync,
-            c.None,
-            c.None,
-            c.CurrentTime,
-        );
-    }
-
-    pub fn end_ignore_crossing(self: *const Backend) void {
-        _ = c.XUngrabPointer(self.display, c.CurrentTime);
-    }
-
-    fn announce_supported(self: *Backend) void {
-        const a = &self.atoms;
-        const supported = [_]c.Atom{
-            a._NET_WM_STATE,            a._NET_WM_STATE_FULLSCREEN, a._NET_WM_STATE_DEMANDS_ATTENTION,
-            a._NET_WM_WINDOW_TYPE,      a._NET_WM_WINDOW_TYPE_DOCK, a._NET_WM_WINDOW_TYPE_TOOLBAR,
-            a._NET_WM_STRUT_PARTIAL,    a._NET_WORKAREA,            a._NET_ACTIVE_WINDOW,
-            a._NET_NUMBER_OF_DESKTOPS,  a._NET_CURRENT_DESKTOP,     a._NET_CLIENT_LIST,
-            a._NET_WM_DESKTOP,          a.WM_HINTS,                 a._NET_FRAME_EXTENTS,
-            a._NET_SUPPORTING_WM_CHECK, a._NET_WM_NAME,
-        };
-        _ = c.XChangeProperty(self.display, self.root, a._NET_SUPPORTED, a.ATOM, 32, c.PropModeReplace, @ptrCast(&supported), supported.len);
-
-        self.check_win = c.XCreateSimpleWindow(self.display, self.root, -1, -1, 1, 1, 0, 0, 0);
-        _ = c.XChangeProperty(self.display, self.root, a._NET_SUPPORTING_WM_CHECK, a.WINDOW, 32, c.PropModeReplace, @ptrCast(&self.check_win), 1);
-        _ = c.XChangeProperty(self.display, self.check_win, a._NET_SUPPORTING_WM_CHECK, a.WINDOW, 32, c.PropModeReplace, @ptrCast(&self.check_win), 1);
-        _ = c.XChangeProperty(self.display, self.check_win, a._NET_WM_NAME, a.UTF8_STRING, 8, c.PropModeReplace, "duckwm", 6);
-    }
-
-    /// Tell the outside world whether h is fullscreen, preserving its other states.
-    pub fn publish_window_fullscreen(self: *const Backend, h: types.WindowHandle, on: bool) void {
-        const win: c.Window = @intCast(h);
-        const a = &self.atoms;
-
-        var current: [32]c.Atom = undefined;
-        var next: [33]c.Atom = undefined;
-        var n: usize = 0;
-        for (info_mod.read_atoms(self.display, win, a._NET_WM_STATE, &current)) |s| {
-            if (s == a._NET_WM_STATE_FULLSCREEN) continue;
-            next[n] = s;
-            n += 1;
-        }
-        if (on) {
-            next[n] = a._NET_WM_STATE_FULLSCREEN;
-            n += 1;
-        }
-        _ = c.XChangeProperty(self.display, win, a._NET_WM_STATE, a.ATOM, 32, c.PropModeReplace, @ptrCast(&next), @intCast(n));
     }
 
     /// Advertise the decoration size to every framed client.
@@ -605,22 +421,12 @@ pub const Backend = struct {
 
     /// End any pointer grab (e.g. an interrupted drag).
     pub fn release_pointer(self: *const Backend) void {
-        _ = c.XUngrabPointer(self.display, c.CurrentTime);
+        input.release_pointer(self);
     }
 
     /// Route all pointer motion and the button release to the WM (for a drag).
     pub fn capture_pointer(self: *const Backend) void {
-        _ = c.XGrabPointer(
-            self.display,
-            self.root,
-            0,
-            c.PointerMotionMask | c.ButtonReleaseMask,
-            c.GrabModeAsync,
-            c.GrabModeAsync,
-            c.None,
-            c.None,
-            c.CurrentTime,
-        );
+        input.capture_pointer(self);
     }
 
     /// Wait until the server has processed everything sent so far.
@@ -635,50 +441,11 @@ pub const Backend = struct {
 
     /// Runs setxkbmap; the server's MappingNotify then triggers keymap_changed.
     pub fn set_keymap(self: *Backend, km: types.Keymap) bool {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        const a = arena.allocator();
-
-        var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .empty;
-        const add = struct {
-            fn f(al: std.mem.Allocator, list: *std.ArrayListUnmanaged(?[*:0]const u8), s: []const u8) void {
-                const zs = al.dupeZ(u8, s) catch return;
-                list.append(al, zs.ptr) catch {};
-            }
-        }.f;
-        add(a, &argv, "setxkbmap");
-        add(a, &argv, "-layout");
-        add(a, &argv, km.layout);
-        if (km.variant.len > 0) {
-            add(a, &argv, "-variant");
-            add(a, &argv, km.variant);
-        }
-        if (km.model.len > 0) {
-            add(a, &argv, "-model");
-            add(a, &argv, km.model);
-        }
-        // An empty -option clears what's set; setxkbmap otherwise appends.
-        add(a, &argv, "-option");
-        add(a, &argv, "");
-        if (km.options.len > 0) {
-            add(a, &argv, "-option");
-            add(a, &argv, km.options);
-        }
-        argv.append(a, null) catch return false;
-
-        const pid = c.fork();
-        if (pid < 0) return false;
-        if (pid == 0) {
-            _ = c.execvp("setxkbmap", @ptrCast(argv.items.ptr));
-            c._exit(127);
-        }
-        var status: c_int = 0;
-        _ = c.waitpid(pid, &status, 0);
-        return true;
+        return input.set_keymap(self, km);
     }
 
     pub fn set_layout_index(self: *Backend, index: u32) void {
-        _ = c.XkbLockGroup(self.display, c.XkbUseCoreKbd, index);
+        input.set_layout_index(self, index);
     }
 
     /// Animations on X belong to a compositor; nothing to do here yet.
@@ -693,46 +460,7 @@ pub const Backend = struct {
         return @intCast(std.math.clamp(d - now_ms(), 0, std.math.maxInt(i32)));
     }
 
-    /// The monitors' rectangles, primary first; the whole screen without XRandR.
-    pub fn monitor_rects(self: *const Backend, buf: []types.Rect, ids: []u32) usize {
-        var n: c_int = 0;
-        const mons = c.XRRGetMonitors(self.display, self.root, 1, &n);
-        defer if (mons != null) {
-            c.XRRFreeMonitors(mons);
-        };
-        var count: usize = 0;
-        var i: usize = 0;
-        while (mons != null and i < @as(usize, @intCast(@max(0, n))) and count < buf.len) : (i += 1) {
-            const m = mons[i];
-            const r: types.Rect = .{ .x = m.x, .y = m.y, .width = @intCast(m.width), .height = @intCast(m.height) };
-            const id: u32 = @truncate(m.name);
-            if (m.primary != 0 and count > 0) {
-                buf[count] = buf[0];
-                ids[count] = ids[0];
-                buf[0] = r;
-                ids[0] = id;
-            } else {
-                buf[count] = r;
-                ids[count] = id;
-            }
-            count += 1;
-        }
-        if (count == 0) {
-            const s = self.screen_size();
-            buf[0] = .{ .x = 0, .y = 0, .width = s.width, .height = s.height };
-            ids[0] = 0;
-            count = 1;
-        }
-        return count;
-    }
-
     pub fn outputs(self: *Backend, buf: []types.OutputInfo) []types.OutputInfo {
-        var rects: [16]types.Rect = undefined;
-        var ids: [16]u32 = undefined;
-        const n = @min(self.monitor_rects(&rects, &ids), buf.len);
-        for (buf[0..n], rects[0..n], ids[0..n]) |*o, r, id| {
-            o.* = .{ .id = id, .rect = r, .usable = r.inset(self.docks.insets_on(r)) };
-        }
-        return buf[0..n];
+        return output.list(self, buf);
     }
 };

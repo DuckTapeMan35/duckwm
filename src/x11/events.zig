@@ -5,6 +5,8 @@ const docks = @import("docks.zig");
 const info = @import("info.zig");
 const bars = @import("bars.zig");
 const scene = @import("scene.zig");
+const input = @import("input.zig");
+
 const Backend = @import("backend.zig").Backend;
 const Strut = @import("docks.zig").Strut;
 
@@ -254,7 +256,7 @@ fn translate_enter(self: *Backend, ev: *c.XCrossingEvent) ?types.Event {
     if (lookup == 0) return null;
     if (self.frames.client_of(lookup)) |client| return .{ .pointer_enter = client };
     if (self.frames.frame_of(lookup) != null) return null; // a client itself: nothing to do
-    self.release_keyboard_grab(); // over something unmanaged
+    input.release_keyboard_grab(self); // over something unmanaged
     return null;
 }
 
