@@ -1,7 +1,7 @@
 {
   description = "duckwm — a graph-based tiling window manager";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   # Zig 0.17 isn't in 26.05; only zig and zls come from here.
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
