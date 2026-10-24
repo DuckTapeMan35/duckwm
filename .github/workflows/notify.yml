@@ -16,3 +16,11 @@ jobs:
           gh api repos/DuckTapeMan35/duckwm_py/dispatches \
             -f event_type=duckwm-proto-changed \
             -f "client_payload[sha]=${{ github.sha }}"
+
+      - name: Tell duckwm_rs
+        env:
+          GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
+        run: |
+          gh api repos/DuckTapeMan35/duckwm_rs/dispatches \
+            -f event_type=duckwm-proto-changed \
+            -f "client_payload[sha]=${{ github.sha }}"
