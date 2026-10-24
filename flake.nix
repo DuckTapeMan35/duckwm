@@ -28,7 +28,11 @@
         default = self.packages.${system}.duckwm;
       };
 
-      nixosModules.duckwm = import ./nix/module.nix;
+      nixosModules.duckwm = {
+        imports = [ ./nix/module.nix ];
+        programs.duckwm.package = nixpkgs.lib.mkDefault self.packages.${system}.duckwm;
+        programs.duckwm.riverPackage = nixpkgs.lib.mkDefault self.packages.${system}.duckwm-river;
+      };
       nixosModules.default = self.nixosModules.duckwm;
 
       devShells.${system}.default = pkgs.mkShell {

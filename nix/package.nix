@@ -37,12 +37,12 @@ let
     dontConfigure = true;
     buildPhase = ''
       export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
-      zig build --fetch=all
+      zig build -l > /dev/null
     '';
     installPhase = "cp -r $TMPDIR/zig-cache/p $out";
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-A7IhyX3yEJ7wTGU0QX5T1RAXNePStU5ngExYV3e3G2E=";
+    outputHash = "sha256-T3J0P+qrmK/yxzowAuBgMcKWZn93UYyQHvSACUDGZgM=";
   };
 
   deps = runCommand "duckwm-deps" { } ''
