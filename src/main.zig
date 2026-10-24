@@ -17,11 +17,6 @@ const usage =
     \\
 ;
 
-fn signal_handler(sig: i32) callconv(.c) void {
-    _ = sig;
-    std.process.exit(1);
-}
-
 fn mainImpl(init: std.process.Init) !void {
     // Arguments live in the process arena, so commands_path stays valid for the WM's lifetime.
     const args = try init.minimal.args.toSlice(init.arena.allocator());
@@ -57,18 +52,6 @@ fn mainImpl(init: std.process.Init) !void {
     defer wm.deinit();
     try output.init_all(&wm);
     wm.commands_path = commands_path;
-
-    const handler = std.os.linux.Sigaction{
-        .handler = .{ .handler = @ptrCast(&signal_handler) },
-        .mask = std.mem.zeroes(std.os.linux.sigset_t),
-        .flags = 0,
-    };
-
-    _ = std.os.linux.sigaction(std.os.linux.SIG.SEGV, &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.ABRT, &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.FPE, &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.ILL, &handler, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.BUS, &handler, null);
 
     if (no_lua) {
         // A reload (reload_config) re-applies the commands file, the only config there is.

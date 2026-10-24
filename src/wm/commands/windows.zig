@@ -188,6 +188,8 @@ pub fn scratchpad_hide(wm: *WM, args: Args(.scratchpad_hide), _: Allocator) !Val
 
 /// The nodes stashed in the scratchpad, oldest first.
 pub fn get_scratchpad(wm: *WM, _: void, arena: Allocator) !Value {
+    // The scratchpad is made at startup, after the config has loaded.
+    if (!wm.startup_done) return .{ .list = &.{} };
     var out: std.ArrayListUnmanaged(Value) = .empty;
     for (wm.scratch_graph.nodes.items) |n| {
         if (n.content == .empty) continue;
