@@ -255,6 +255,11 @@ pub const Backend = struct {
     pub fn start(self: *Backend) !void {
         wm_detected = false;
         _ = c.XSetErrorHandler(on_wm_detected);
+        _ = c.XSelectInput(self.display, self.root, root_event_mask);
+        _ = c.XSync(self.display, 0);
+        if (wm_detected) return error.AnotherWmRunning;
+
+        _ = c.XSetErrorHandler(on_x_error);
         output.watch(self);
         ewmh.announce_supported(self);
         _ = c.XSync(self.display, 0);
