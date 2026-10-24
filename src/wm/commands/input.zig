@@ -130,6 +130,26 @@ pub fn unbind(wm: *WM, args: Args(.unbind), _: Allocator) !Value {
     return .nil;
 }
 
+/// Every bound key combination, once each, whichever layer or graph made it.
+pub fn get_keybinds(wm: *WM, _: void, arena: Allocator) !Value {
+    var seen: std.AutoHashMapUnmanaged(types.KeyCombo, void) = .empty;
+    var out: std.ArrayListUnmanaged(Value) = .empty;
+    var it = wm.keybinds.keyIterator();
+    while (it.next()) |k| {
+        if ((try seen.getOrPut(arena, k.combo)).found_existing) continue;
+        var buf: [64]u8 = undefined;
+        const key = if (wm.backend.keysym_name(k.combo.keysym, &buf)) |name|
+            try arena.dupe(u8, name)
+        else
+            try std.fmt.allocPrint(arena, "0x{x}", .{k.combo.keysym});
+        try out.append(arena, .{ .map = try arena.dupe(Value.Field, &.{
+            .{ .key = "mods", .value = .{ .integer = k.combo.mods } },
+            .{ .key = "key", .value = .{ .str = key } },
+        }) });
+    }
+    return .{ .list = out.items };
+}
+
 pub fn read_line(wm: *WM, args: Args(.read_line), _: Allocator) !Value {
     const cb = try util.callback(wm, args.callback);
     try input_bar.open(wm, args.prompt, args.initial orelse "", cb);

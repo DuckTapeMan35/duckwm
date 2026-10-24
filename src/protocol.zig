@@ -243,8 +243,9 @@ pub const CommandId = enum(u32) {
     bind_commands = 516,
     unbind = 517,
     bind = 518,
-    read_line = 519,
-    set_prompt_keys = 520,
+    get_keybinds = 519,
+    read_line = 520,
+    set_prompt_keys = 521,
 
     // appearance: 600-699
     set_default_focused_border_color = 600,
@@ -492,6 +493,7 @@ pub const Command = union(CommandId) {
     bind_commands: struct { mods: Mods, key: []const u8, commands: []const Command },
     unbind: struct { mods: Mods, key: []const u8 },
     bind: struct { mods: Mods, key: []const u8, callback: Callback },
+    get_keybinds,
     read_line: struct { prompt: []const u8, callback: Callback, initial: ?[]const u8 },
     set_prompt_keys: struct { keys: PromptKeys },
 

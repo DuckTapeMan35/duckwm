@@ -391,9 +391,12 @@ pub const Backend = struct {
     }
 
     // ---- input ----
-
     pub fn keysym_from_name(_: *const Backend, name: []const u8) ?types.Keysym {
         return keyboard.keysym_from_name(name);
+    }
+
+    pub fn keysym_name(_: *const Backend, ks: types.Keysym, buf: []u8) ?[]const u8 {
+        return keyboard.keysym_name(ks, buf);
     }
 
     /// Bindings are created and enabled in the next manage sequence.

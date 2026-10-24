@@ -871,8 +871,9 @@ message Command {
     BindCommands bind_commands = 516;
     Unbind unbind = 517;
     Bind bind = 518;
-    ReadLine read_line = 519;
-    SetPromptKeys set_prompt_keys = 520;
+    Empty get_keybinds = 519;
+    ReadLine read_line = 520;
+    SetPromptKeys set_prompt_keys = 521;
     SetDefaultFocusedBorderColor set_default_focused_border_color = 600;
     SetDefaultUnfocusedBorderColor set_default_unfocused_border_color = 601;
     SetDefaultUrgentBorderColor set_default_urgent_border_color = 602;

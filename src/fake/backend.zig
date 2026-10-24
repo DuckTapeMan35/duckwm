@@ -285,6 +285,14 @@ pub const Backend = struct {
         return keysym(name);
     }
 
+    /// Hashed keysyms can't be turned back into names.
+    pub fn keysym_name(self: *const Backend, ks: types.Keysym, buf: []u8) ?[]const u8 {
+        _ = self;
+        _ = ks;
+        _ = buf;
+        return null;
+    }
+
     pub fn grab_key(self: *const Backend, k: types.KeyCombo) void {
         _ = self;
         _ = k;

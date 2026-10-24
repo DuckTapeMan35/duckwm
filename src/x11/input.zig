@@ -15,6 +15,12 @@ pub fn keysym_from_name(name: []const u8) ?types.Keysym {
     return @intCast(ks);
 }
 
+/// The keysym's name ("Return", "h"), or null if X has none for it.
+pub fn keysym_name(ks: types.Keysym) ?[]const u8 {
+    const name = c.XKeysymToString(ks) orelse return null;
+    return std.mem.span(name);
+}
+
 pub fn grab_key(self: *const Backend, k: types.KeyCombo) void {
     const keycode = c.XKeysymToKeycode(self.display, k.keysym);
     if (keycode == 0) return;

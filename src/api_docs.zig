@@ -174,32 +174,11 @@ pub const entries = [_]ApiEntry{
         .ret = "nil",
     },
     .{
-        .category = "Input",
-        .name = "read_line",
-        .desc = "Open the input bar at the top of the screen and read a line, StumpWM style. fn gets the text on Enter; Escape closes the bar without calling it (with vi keys, Escape from normal mode). While it's open every key goes to the bar, so binds don't fire.",
-        .params = &.{
-            .{ .name = "prompt", .typ = "string" },
-            .{ .name = "fn", .typ = "fun(text: string)" },
-            .{ .name = "initial", .typ = "string?" },
-        },
-        .ret = "nil",
-    },
-    .{
-        .category = "Input",
-        .name = "set_prompt_keys",
-        .desc = "Editing keys for the input bar: 'emacs' (readline's; Escape cancels) or 'vi' (insert and normal modes, counts, motions, d/c/y, undo, j/k for history). Default: 'emacs'.",
-        .params = &.{.{ .name = "keys", .typ = "'emacs'|'vi'" }},
-        .ret = "nil",
-    },
-    .{
-        .category = "Input",
-        .name = "message",
-        .desc = "Show text in the input bar for timeout_ms milliseconds (0: 3 seconds). Ignored while a line is being typed.",
-        .params = &.{
-            .{ .name = "text", .typ = "string" },
-            .{ .name = "timeout_ms", .typ = "integer" },
-        },
-        .ret = "nil",
+        .category = "Keybindings",
+        .name = "get_keybinds",
+        .desc = "Every bound key combination, once each: mods is the modifier bitmask bind takes, key the keysym name ('Return', 'q'). Says nothing about what the binds do.",
+        .params = &.{},
+        .ret = "{ mods: integer, key: string }[]",
     },
 
     // =========================================================
@@ -1635,6 +1614,34 @@ pub const entries = [_]ApiEntry{
         .name = "set_keyboard_layout_index",
         .desc = "Switch to the layout at this 0-based index within the current keymap (\"us,pt\": 0 = us, 1 = pt).",
         .params = &.{.{ .name = "index", .typ = "integer" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Input",
+        .name = "read_line",
+        .desc = "Open the input bar at the top of the screen and read a line, StumpWM style. fn gets the text on Enter; Escape closes the bar without calling it (with vi keys, Escape from normal mode). While it's open every key goes to the bar, so binds don't fire.",
+        .params = &.{
+            .{ .name = "prompt", .typ = "string" },
+            .{ .name = "fn", .typ = "fun(text: string)" },
+            .{ .name = "initial", .typ = "string?" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Input",
+        .name = "set_prompt_keys",
+        .desc = "Editing keys for the input bar: 'emacs' (readline's; Escape cancels) or 'vi' (insert and normal modes, counts, motions, d/c/y, undo, j/k for history). Default: 'emacs'.",
+        .params = &.{.{ .name = "keys", .typ = "'emacs'|'vi'" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Input",
+        .name = "message",
+        .desc = "Show text in the input bar for timeout_ms milliseconds (0: 3 seconds). Ignored while a line is being typed.",
+        .params = &.{
+            .{ .name = "text", .typ = "string" },
+            .{ .name = "timeout_ms", .typ = "integer" },
+        },
         .ret = "nil",
     },
 

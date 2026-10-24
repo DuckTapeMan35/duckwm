@@ -233,6 +233,12 @@ pub const Backend = struct {
         return input.keysym_from_name(name);
     }
 
+    pub fn keysym_name(self: *const Backend, ks: types.Keysym, buf: []u8) ?[]const u8 {
+        _ = self;
+        _ = buf;
+        return input.keysym_name(ks);
+    }
+
     pub fn grab_key(self: *const Backend, k: types.KeyCombo) void {
         input.grab_key(self, k);
     }

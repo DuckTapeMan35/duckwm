@@ -57,6 +57,7 @@ comptime {
         "show_message",
         "hide_prompt",
         "outputs",
+        "keysym_name",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

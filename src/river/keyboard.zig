@@ -83,6 +83,14 @@ pub fn keysym_from_name(name: []const u8) ?types.Keysym {
     return @intCast(@backingInt(sym));
 }
 
+/// The keysym's name ("Return", "h") written into buf, or null if it has none.
+pub fn keysym_name(ks: types.Keysym, buf: []u8) ?[]const u8 {
+    const sym: xkb.Keysym = @fromBackingInt(@intCast(ks));
+    const n = sym.getName(buf.ptr, buf.len);
+    if (n <= 0 or n >= buf.len) return null;
+    return buf[0..@intCast(n)];
+}
+
 // ---- typing into the input bar ----
 /// One key into the bar, as keysym, X-style modifiers and UTF-8 text.
 fn push_prompt_key(s: *State, keycode: u32) void {
