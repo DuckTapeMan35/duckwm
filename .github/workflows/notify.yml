@@ -1,4 +1,4 @@
-name: Notify duckwm_py
+name: Notify duckwm bindings libraries
 
 on:
   push:
