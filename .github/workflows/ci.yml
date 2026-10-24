@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+
+      - name: Tests (wire, JSON, and the fake-backend harness)
+        run: nix develop --command zig build test --summary all
+
+      - name: Build both backends
+        run: |
+          nix develop --command zig build -Dplatform=x11
+          nix develop --command zig build -Dplatform=river
+
+      - name: Type-check every X11 hook
+        run: nix develop --command zig build check
+
+      - name: Generated files are up to date
+        run: |
+          nix develop --command zig build proto meta
+          git diff --exit-code -- proto/duckwm.proto meta/wm.lua API.md API.norg
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build .#duckwm .#duckwm-river -L
