@@ -186,6 +186,16 @@ pub fn scratchpad_hide(wm: *WM, args: Args(.scratchpad_hide), _: Allocator) !Val
     return .nil;
 }
 
+/// The nodes stashed in the scratchpad, oldest first.
+pub fn get_scratchpad(wm: *WM, _: void, arena: Allocator) !Value {
+    var out: std.ArrayListUnmanaged(Value) = .empty;
+    for (wm.scratch_graph.nodes.items) |n| {
+        if (n.content == .empty) continue;
+        if (wm.get_id_for_node(n)) |id| try out.append(arena, .{ .integer = id });
+    }
+    return .{ .list = out.items };
+}
+
 // ---- rules ----
 pub fn add_rule(wm: *WM, args: Args(.add_rule), _: Allocator) !Value {
     const cb = try util.callback(wm, args.callback);

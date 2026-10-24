@@ -339,6 +339,13 @@ pub const entries = [_]ApiEntry{
         .params = &.{.{ .name = "id", .typ = "integer" }},
         .ret = "nil",
     },
+    .{
+        .category = "Window Management",
+        .name = "get_scratchpad",
+        .desc = "The node IDs stashed in the scratchpad, oldest first. They survive a config reload, so a config can find its scratchpad windows again with this.",
+        .params = &.{},
+        .ret = "integer[]",
+    },
 
     // =========================================================
     // Focus

@@ -849,8 +849,9 @@ message Command {
     One scratchpad_toggle = 411;
     One scratchpad_show = 412;
     One scratchpad_hide = 413;
-    AddRule add_rule = 414;
-    RemoveRule remove_rule = 415;
+    Empty get_scratchpad = 414;
+    AddRule add_rule = 415;
+    RemoveRule remove_rule = 416;
     SetResizeModifier set_resize_modifier = 500;
     SetFloatModifier set_float_modifier = 501;
     SetPanModifier set_pan_modifier = 502;

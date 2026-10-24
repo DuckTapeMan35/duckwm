@@ -219,8 +219,9 @@ pub const CommandId = enum(u32) {
     scratchpad_toggle = 411,
     scratchpad_show = 412,
     scratchpad_hide = 413,
-    add_rule = 414,
-    remove_rule = 415,
+    get_scratchpad = 414,
+    add_rule = 415,
+    remove_rule = 416,
 
     // input: 500-599
     set_resize_modifier = 500,
@@ -459,6 +460,7 @@ pub const Command = union(CommandId) {
     scratchpad_toggle: One,
     scratchpad_show: One,
     scratchpad_hide: One,
+    get_scratchpad,
 
     // rules
     add_rule: struct { callback: Callback },
