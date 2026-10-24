@@ -44,7 +44,7 @@ const Reader = struct {
     fn fixed(r: *Reader, comptime T: type) Error!T {
         const n = @sizeOf(T);
         if (r.buf.len - r.pos < n) return error.Truncated;
-        const bits = std.mem.readInt(std.meta.Int(.unsigned, n * 8), r.buf[r.pos..][0..n], .little);
+        const bits = std.mem.readInt(@Int(.unsigned, n * 8), r.buf[r.pos..][0..n], .little);
         r.pos += n;
         return @bitCast(bits);
     }
@@ -60,7 +60,7 @@ const Reader = struct {
     fn tag(r: *Reader) Error!struct { u32, WireType } {
         const t = try r.varint();
         const num = std.math.cast(u32, t >> 3) orelse return error.OutOfRange;
-        return .{ num, @enumFromInt(@as(u3, @truncate(t))) };
+        return .{ num, @fromBackingInt(@intCast(@as(u3, @truncate(t)))) };
     }
 
     fn skip(r: *Reader, wt: WireType) Error!void {
@@ -97,7 +97,7 @@ fn is_list(comptime T: type) bool {
 
 /// Commands are numbered by CommandId; everything else by declaration order.
 fn field_number(comptime T: type, comptime i: usize, comptime name: []const u8) u32 {
-    if (T == Command) return @intFromEnum(@field(CommandId, name));
+    if (T == Command) return @backingInt(@field(CommandId, name));
     return i + 1;
 }
 
@@ -106,12 +106,12 @@ fn zero(comptime T: type) T {
     return switch (@typeInfo(T)) {
         .bool => false,
         .int, .float => 0,
-        .@"enum" => |e| @enumFromInt(e.fields[0].value),
+        .@"enum" => |e| @fromBackingInt(@intCast(e.field_values[0])),
         .optional => null,
         .pointer => &.{},
         .@"struct" => |s| blk: {
             var v: T = undefined;
-            inline for (s.fields) |f| @field(v, f.name) = zero(f.type);
+            inline for (s.field_names, s.field_types) |f_name, f_type| @field(v, f_name) = zero(f_type);
             break :blk v;
         },
         // A oneof has no default: decode_message requires it to be sent.
@@ -131,8 +131,8 @@ fn unzigzag(raw: u64) i64 {
 // ---- decoding ----
 /// The enum value with this number, if T declares one.
 fn to_enum(comptime T: type, raw: u64) ?T {
-    inline for (@typeInfo(T).@"enum".fields) |f| {
-        if (raw == f.value) return @enumFromInt(f.value);
+    inline for (@typeInfo(T).@"enum".field_values) |value| {
+        if (raw == value) return @fromBackingInt(@intCast(value));
     }
     return null;
 }
@@ -214,22 +214,22 @@ pub fn decode_message(comptime T: type, buf: []const u8, a: Allocator) Error!T {
     switch (@typeInfo(T)) {
         .@"struct" => |s| {
             var out = zero(T);
-            var seen = [_]bool{false} ** s.fields.len;
+            var seen: [s.field_names.len]bool = @splat(false);
             while (!r.done()) {
                 const num, const wt = try r.tag();
                 var matched = false;
-                inline for (s.fields, 0..) |f, i| {
-                    if (!matched and num == field_number(T, i, f.name)) {
+                inline for (s.field_names, s.field_types, 0..) |f_name, f_type, i| {
+                    if (!matched and num == field_number(T, i, f_name)) {
                         matched = true;
                         seen[i] = true;
-                        try read_field(f.type, &@field(out, f.name), &r, wt, a);
+                        try read_field(f_type, &@field(out, f_name), &r, wt, a);
                     }
                 }
                 if (!matched) try r.skip(wt); // a newer client's field
             }
             // A union field (a oneof message) has no default, so it must have been sent.
-            inline for (s.fields, 0..) |f, i| {
-                if (@typeInfo(f.type) == .@"union" and !seen[i]) return error.MissingVariant;
+            inline for (s.field_types, 0..) |f_type, i| {
+                if (@typeInfo(f_type) == .@"union" and !seen[i]) return error.MissingVariant;
             }
             return out;
         },
@@ -238,15 +238,15 @@ pub fn decode_message(comptime T: type, buf: []const u8, a: Allocator) Error!T {
             while (!r.done()) {
                 const num, const wt = try r.tag();
                 var matched = false;
-                inline for (u.fields, 0..) |f, i| {
-                    if (!matched and num == field_number(T, i, f.name)) {
+                inline for (u.field_names, u.field_types, 0..) |f_name, f_type, i| {
+                    if (!matched and num == field_number(T, i, f_name)) {
                         matched = true;
-                        if (f.type == void) {
+                        if (f_type == void) {
                             if (wt != .len) return error.WireTypeMismatch;
                             _ = try r.bytes(); // Empty
-                            out = @unionInit(T, f.name, {});
+                            out = @unionInit(T, f_name, {});
                         } else {
-                            out = @unionInit(T, f.name, try read_value(f.type, &r, wt, a));
+                            out = @unionInit(T, f_name, try read_value(f_type, &r, wt, a));
                         }
                     }
                 }
@@ -275,13 +275,13 @@ const Writer = struct {
     }
 
     fn tag(w: *Writer, num: u32, wt: WireType) Error!void {
-        try w.varint((@as(u64, num) << 3) | @intFromEnum(wt));
+        try w.varint((@as(u64, num) << 3) | @backingInt(wt));
     }
 
     fn fixed(w: *Writer, v: anytype) Error!void {
         const T = @TypeOf(v);
         var b: [@sizeOf(T)]u8 = undefined;
-        std.mem.writeInt(std.meta.Int(.unsigned, @bitSizeOf(T)), &b, @bitCast(v), .little);
+        std.mem.writeInt(@Int(.unsigned, @bitSizeOf(T)), &b, @bitCast(v), .little);
         try w.out.appendSlice(w.a, &b);
     }
 
@@ -314,7 +314,7 @@ fn write_field(w: *Writer, num: u32, comptime F: type, v: F, a: Allocator) Error
         },
         .@"enum" => {
             try w.tag(num, .varint);
-            try w.varint(@intCast(@intFromEnum(v)));
+            try w.varint(@intCast(@backingInt(v)));
         },
         else => @compileError("no protobuf mapping for " ++ @typeName(F)),
     }
@@ -324,16 +324,16 @@ fn write_field(w: *Writer, num: u32, comptime F: type, v: F, a: Allocator) Error
 pub fn encode_message(comptime T: type, v: T, a: Allocator) Error![]u8 {
     var w: Writer = .{ .a = a };
     switch (@typeInfo(T)) {
-        .@"struct" => |s| inline for (s.fields, 0..) |f, i| {
-            try write_field(&w, field_number(T, i, f.name), f.type, @field(v, f.name), a);
+        .@"struct" => |s| inline for (s.field_names, s.field_types, 0..) |f_name, f_type, i| {
+            try write_field(&w, field_number(T, i, f_name), f_type, @field(v, f_name), a);
         },
         .@"union" => |u| {
             @setEvalBranchQuota(100000);
             const active = std.meta.activeTag(v);
-            inline for (u.fields, 0..) |f, i| {
-                if (active == @field(std.meta.Tag(T), f.name)) {
-                    const num = field_number(T, i, f.name);
-                    if (f.type == void) try w.bytes(num, "") else try write_field(&w, num, f.type, @field(v, f.name), a);
+            inline for (u.field_names, u.field_types, 0..) |f_name, f_type, i| {
+                if (active == @field(std.meta.Tag(T), f_name)) {
+                    const num = field_number(T, i, f_name);
+                    if (f_type == void) try w.bytes(num, "") else try write_field(&w, num, f_type, @field(v, f_name), a);
                 }
             }
         },

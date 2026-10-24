@@ -26,8 +26,8 @@ pub fn reload_config(wm: *WM, _: Args(.reload_config), _: Allocator) !Value {
 
 pub fn setenv(_: *WM, args: Args(.setenv), arena: Allocator) !Value {
     // setenv needs NUL-terminated strings; Lua's are, but the slices don't say so.
-    const key = try arena.dupeZ(u8, args.key);
-    const value = try arena.dupeZ(u8, args.value);
+    const key = try arena.dupeSentinel(u8, args.key, 0);
+    const value = try arena.dupeSentinel(u8, args.value, 0);
     if (c.setenv(key.ptr, value.ptr, 1) != 0) return error.SetenvFailed;
     return .nil;
 }

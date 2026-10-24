@@ -45,7 +45,7 @@ pub const Solver = struct {
         return .{
             .allocator = allocator,
             .n_vars = n_vars,
-            .equations = .{ .items = &.{}, .capacity = 0 },
+            .equations = .empty,
             .vals = vals,
         };
     }
@@ -338,7 +338,7 @@ fn solve_scc(s: *Solver) !void {
         for (var_to_eqs) |*l| l.deinit(s.allocator);
         s.allocator.free(var_to_eqs);
     }
-    for (var_to_eqs) |*l| l.* = .{ .items = &.{}, .capacity = 0 };
+    for (var_to_eqs) |*l| l.* = .empty;
     try build_adjacency(s, var_to_eqs);
 
     // Tarjan's SCC
@@ -346,7 +346,7 @@ fn solve_scc(s: *Solver) !void {
         .index = try s.allocator.alloc(i32, n),
         .lowlink = try s.allocator.alloc(i32, n),
         .on_stack = try s.allocator.alloc(bool, n),
-        .stack = .{ .items = &.{}, .capacity = 0 },
+        .stack = .empty,
         .scc_id = try s.allocator.alloc(i32, n),
         .n_sccs = 0,
         .counter = 0,
@@ -455,7 +455,7 @@ fn solve_scc(s: *Solver) !void {
             defer scc_set.deinit(s.allocator);
             for (vars) |v| try scc_set.put(s.allocator, v, {});
 
-            var scc_eqs = std.ArrayListUnmanaged(Equation){ .items = &.{}, .capacity = 0 };
+            var scc_eqs: std.ArrayListUnmanaged(Equation) = .empty;
             defer scc_eqs.deinit(s.allocator);
 
             var seen_eqs = std.AutoHashMapUnmanaged(u32, void){};

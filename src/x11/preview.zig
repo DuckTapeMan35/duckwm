@@ -95,7 +95,7 @@ pub const Renderer = struct {
         if (self.fonts.get(name)) |f| return f;
 
         var buf: [257]u8 = undefined;
-        const z = std.fmt.bufPrintZ(&buf, "{s}", .{name}) catch return null;
+        const z = std.mem.printSentinel(&buf, "{s}", .{name}, 0) catch return null;
         const f = c.XftFontOpenName(display, screen, z.ptr) orelse
             c.XftFontOpenName(display, screen, "fixed:pixelsize=9");
 

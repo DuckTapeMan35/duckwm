@@ -65,7 +65,7 @@ fn convert(comptime T: type, a: Allocator, v: std.json.Value, path: *std.ArrayLi
             };
             if (std.meta.stringToEnum(T, s)) |x| return x;
             comptime var names: []const u8 = "";
-            inline for (e.fields, 0..) |f, i| names = names ++ (if (i > 0) ", " else "") ++ f.name;
+            inline for (e.field_names, 0..) |f_name, i| names = names ++ (if (i > 0) ", " else "") ++ f_name;
             return fail(a, path, diag, "'{s}' is not one of {s}", .{ s, names });
         },
         .optional => |o| return if (v == .null) null else try convert(o.child, a, v, path, diag),
@@ -93,23 +93,23 @@ fn convert(comptime T: type, a: Allocator, v: std.json.Value, path: *std.ArrayLi
             };
             var it = obj.iterator();
             while (it.next()) |e| {
-                const known = inline for (s.fields) |f| {
-                    if (std.mem.eql(u8, e.key_ptr.*, f.name)) break true;
+                const known = inline for (s.field_names) |f_name| {
+                    if (std.mem.eql(u8, e.key_ptr.*, f_name)) break true;
                 } else false;
                 if (!known) return fail(a, path, diag, "unknown field '{s}'", .{e.key_ptr.*});
             }
             var out: T = undefined;
-            inline for (s.fields) |f| {
-                if (obj.get(f.name)) |fv| {
-                    const saved = try push(a, path, "{s}", .{f.name});
+            inline for (s.field_names, s.field_types) |f_name, f_type| {
+                if (obj.get(f_name)) |fv| {
+                    const saved = try push(a, path, "{s}", .{f_name});
                     defer path.shrinkRetainingCapacity(saved);
-                    @field(out, f.name) = try convert(f.type, a, fv, path, diag);
-                } else switch (@typeInfo(f.type)) {
-                    .optional => @field(out, f.name) = null,
-                    .pointer => if (f.type != []const u8) {
-                        @field(out, f.name) = &.{};
-                    } else return fail(a, path, diag, "missing field '{s}'", .{f.name}),
-                    else => return fail(a, path, diag, "missing field '{s}'", .{f.name}),
+                    @field(out, f_name) = try convert(f_type, a, fv, path, diag);
+                } else switch (@typeInfo(f_type)) {
+                    .optional => @field(out, f_name) = null,
+                    .pointer => if (f_type != []const u8) {
+                        @field(out, f_name) = &.{};
+                    } else return fail(a, path, diag, "missing field '{s}'", .{f_name}),
+                    else => return fail(a, path, diag, "missing field '{s}'", .{f_name}),
                 }
             }
             return out;
@@ -133,11 +133,11 @@ fn convert(comptime T: type, a: Allocator, v: std.json.Value, path: *std.ArrayLi
             if (obj.count() != 1) return fail(a, path, diag, "expected exactly one key, got {d}", .{obj.count()});
             var it = obj.iterator();
             const e = it.next().?;
-            inline for (u.fields) |f| {
-                if (std.mem.eql(u8, e.key_ptr.*, f.name)) {
-                    const saved = try push(a, path, "{s}", .{f.name});
+            inline for (u.field_names, u.field_types) |f_name, f_type| {
+                if (std.mem.eql(u8, e.key_ptr.*, f_name)) {
+                    const saved = try push(a, path, "{s}", .{f_name});
                     defer path.shrinkRetainingCapacity(saved);
-                    if (f.type == void) {
+                    if (f_type == void) {
                         // No arguments: {} (or null) as the value.
                         const empty = switch (e.value_ptr.*) {
                             .null => true,
@@ -145,9 +145,9 @@ fn convert(comptime T: type, a: Allocator, v: std.json.Value, path: *std.ArrayLi
                             else => false,
                         };
                         if (!empty) return fail(a, path, diag, "takes no arguments; use {{}}", .{});
-                        return @unionInit(T, f.name, {});
+                        return @unionInit(T, f_name, {});
                     }
-                    return @unionInit(T, f.name, try convert(f.type, a, e.value_ptr.*, path, diag));
+                    return @unionInit(T, f_name, try convert(f_type, a, e.value_ptr.*, path, diag));
                 }
             }
             return fail(a, path, diag, "unknown '{s}'", .{e.key_ptr.*});

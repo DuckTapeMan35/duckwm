@@ -23,7 +23,7 @@ pub const Fonts = struct {
         const name = if (pattern.len > 0) pattern else "monospace:size=10";
         if (self.map.get(name)) |f| return f;
 
-        const key = allocator.dupeZ(u8, name) catch return null;
+        const key = allocator.dupeSentinel(u8, name, 0) catch return null;
         var names = [_][*c]const u8{key.ptr};
         const font = c.fcft_from_name(1, &names, null) orelse {
             allocator.free(key);

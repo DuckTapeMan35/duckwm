@@ -20,11 +20,11 @@ const Value = command.Value;
 const Args = util.Args;
 
 comptime {
-    for (std.meta.fields(ConstraintSpec)) |f| {
-        if (!@hasField(Constraint, f.name)) @compileError("ConstraintSpec." ++ f.name ++ " has no Constraint counterpart");
+    for (@typeInfo(ConstraintSpec).@"union".field_names) |f_name| {
+        if (!@hasField(Constraint, f_name)) @compileError("ConstraintSpec." ++ f_name ++ " has no Constraint counterpart");
     }
-    for (std.meta.fields(Constraint)) |f| {
-        if (!@hasField(ConstraintSpec, f.name)) @compileError("Constraint." ++ f.name ++ " is missing from ConstraintSpec");
+    for (@typeInfo(Constraint).@"union".field_names) |f_name| {
+        if (!@hasField(ConstraintSpec, f_name)) @compileError("Constraint." ++ f_name ++ " is missing from ConstraintSpec");
     }
 }
 
@@ -371,7 +371,7 @@ pub fn describe_spec(wm: *WM, g: *Graph, a: Allocator) !LayoutSpec {
 
 // ---- print_graph ----
 fn print_graph_to_buf(wm: *WM, buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, g: *graph_mod.Graph, depth: u32) !void {
-    var ind = std.ArrayListUnmanaged(u8){ .items = &.{}, .capacity = 0 };
+    var ind: std.ArrayListUnmanaged(u8) = .empty;
     defer ind.deinit(allocator);
     for (0..depth) |_| ind.appendSlice(allocator, "  ") catch {};
 

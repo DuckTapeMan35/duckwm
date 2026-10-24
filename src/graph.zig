@@ -350,8 +350,8 @@ pub const Journal = struct {
 pub const Graph = struct {
     id: GraphId = .{ .level = 0, .number = 0 },
     output: u32 = 0,
-    nodes: std.ArrayListUnmanaged(*Node) = .{ .items = &.{}, .capacity = 0 },
-    focus_edges: std.ArrayListUnmanaged(FocusEdge) = .{ .items = &.{}, .capacity = 0 },
+    nodes: std.ArrayListUnmanaged(*Node) = .empty,
+    focus_edges: std.ArrayListUnmanaged(FocusEdge) = .empty,
     active_workspace: usize = 0,
     gap_inner_h: u32 = 0,
     gap_inner_v: u32 = 0,

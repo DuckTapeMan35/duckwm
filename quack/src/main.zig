@@ -75,39 +75,39 @@ fn bad(comptime fmt: []const u8, args: anytype) error{InvalidArgument} {
 
 fn parse_command(a: Allocator, name: []const u8, args: []const []const u8) !Command {
     @setEvalBranchQuota(100000);
-    inline for (@typeInfo(Command).@"union".fields) |f| {
-        if (std.mem.eql(u8, name, f.name)) {
-            if (f.type == void) {
-                if (args.len > 0) return bad("{s} takes no arguments", .{f.name});
-                return @unionInit(Command, f.name, {});
+    inline for (@typeInfo(Command).@"union".field_names, @typeInfo(Command).@"union".field_types) |f_name, f_type| {
+        if (std.mem.eql(u8, name, f_name)) {
+            if (f_type == void) {
+                if (args.len > 0) return bad("{s} takes no arguments", .{f_name});
+                return @unionInit(Command, f_name, {});
             }
-            return @unionInit(Command, f.name, try parse_payload(f.type, a, f.name, args));
+            return @unionInit(Command, f_name, try parse_payload(f_type, a, f_name, args));
         }
     }
     return bad("unknown command: {s} (see quack --help)", .{name});
 }
 
 fn parse_payload(comptime T: type, a: Allocator, comptime cmd: []const u8, args: []const []const u8) !T {
-    const fields = @typeInfo(T).@"struct".fields;
+    const s = @typeInfo(T).@"struct";
     var out: T = undefined;
     var i: usize = 0;
-    inline for (fields, 0..) |f, fi| {
-        const last = fi == fields.len - 1;
-        if (comptime last and is_list(f.type)) {
+    inline for (s.field_names, s.field_types, 0..) |f_name, f_type, fi| {
+        const last = fi == s.field_names.len - 1;
+        if (comptime last and is_list(f_type)) {
             // The last list takes everything left: quack spawn ghostty -e htop
-            const L = unwrap(f.type);
+            const L = unwrap(f_type);
             const E = @typeInfo(L).pointer.child;
             const items = try a.alloc(E, args.len - i);
-            for (args[i..], items) |arg, *item| item.* = try parse_scalar(E, a, f.name, arg);
-            @field(out, f.name) = items;
+            for (args[i..], items) |arg, *item| item.* = try parse_scalar(E, a, f_name, arg);
+            @field(out, f_name) = items;
             i = args.len;
         } else if (i < args.len) {
-            @field(out, f.name) = try parse_arg(f.type, a, f.name, args[i]);
+            @field(out, f_name) = try parse_arg(f_type, a, f_name, args[i]);
             i += 1;
-        } else if (@typeInfo(f.type) == .optional) {
-            @field(out, f.name) = null;
+        } else if (@typeInfo(f_type) == .optional) {
+            @field(out, f_name) = null;
         } else {
-            return bad("{s}: missing argument <{s}> (usage: quack {s})", .{ cmd, f.name, signature(T, cmd) });
+            return bad("{s}: missing argument <{s}> (usage: quack {s})", .{ cmd, f_name, signature(T, cmd) });
         }
     }
     if (i < args.len) return bad("{s}: too many arguments (usage: quack {s})", .{ cmd, signature(T, cmd) });
@@ -232,7 +232,7 @@ fn parse_scalar(comptime T: type, a: Allocator, comptime field: []const u8, arg:
         .@"enum" => |e| {
             if (std.meta.stringToEnum(T, arg)) |v| return v;
             comptime var names: []const u8 = "";
-            inline for (e.fields, 0..) |ef, i| names = names ++ (if (i > 0) ", " else "") ++ ef.name;
+            inline for (e.field_names, 0..) |ef_name, i| names = names ++ (if (i > 0) ", " else "") ++ ef_name;
             return bad("<{s}>: expected one of {s}, got '{s}'", .{ field, names, arg });
         },
         else => return parse_arg(T, a, field, arg),
@@ -244,11 +244,11 @@ fn signature(comptime T: type, comptime cmd: []const u8) []const u8 {
     return comptime blk: {
         var s: []const u8 = cmd;
         if (T == void) break :blk s;
-        const fields = @typeInfo(T).@"struct".fields;
-        for (fields, 0..) |f, i| {
-            const last = i == fields.len - 1;
-            const name = if (last and is_list(f.type)) f.name ++ "..." else f.name;
-            s = s ++ if (@typeInfo(f.type) == .optional) " [" ++ name ++ "]" else " <" ++ name ++ ">";
+        const info = @typeInfo(T).@"struct";
+        for (info.field_names, info.field_types, 0..) |f_name, f_type, i| {
+            const last = i == info.field_names.len - 1;
+            const name = if (last and is_list(f_type)) f_name ++ "..." else f_name;
+            s = s ++ if (@typeInfo(f_type) == .optional) " [" ++ name ++ "]" else " <" ++ name ++ ">";
         }
         break :blk s;
     };
@@ -265,8 +265,8 @@ fn usage(a: Allocator) ![]u8 {
         \\Commands:
         \\
     );
-    inline for (@typeInfo(Command).@"union".fields) |f| {
-        try out.print(a, "  {s}\n", .{comptime signature(f.type, f.name)});
+    inline for (@typeInfo(Command).@"union".field_names, @typeInfo(Command).@"union".field_types) |f_name, f_type| {
+        try out.print(a, "  {s}\n", .{comptime signature(f_type, f_name)});
     }
     return out.items;
 }

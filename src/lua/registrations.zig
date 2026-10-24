@@ -16,11 +16,11 @@ pub const handwritten = blk: {
     @setEvalBranchQuota(100000);
     var regs: []const Registration = &.{};
     for (modules) |m| {
-        for (@typeInfo(m).@"struct".decls) |d| {
-            if (!std.mem.startsWith(u8, d.name, "l_")) continue;
+        for (@typeInfo(m).@"struct".decl_names) |name| {
+            if (!std.mem.startsWith(u8, name, "l_")) continue;
             regs = regs ++ [_]Registration{.{
-                .func = ziglua.wrap(@field(m, d.name)),
-                .name = d.name[2..],
+                .func = ziglua.wrap(@field(m, name)),
+                .name = name[2..],
             }};
         }
     }

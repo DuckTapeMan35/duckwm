@@ -104,11 +104,11 @@ fn collect(comptime T: type, comptime ctx: []const u8, comptime acc: []const Nam
     const name = type_name(T, ctx);
     var out = acc;
     switch (@typeInfo(T)) {
-        .@"struct" => |s| for (s.fields) |f| {
-            out = collect(f.type, name ++ pascal(f.name), out);
+        .@"struct" => |s| for (s.field_names, s.field_types) |f_name, f_type| {
+            out = collect(f_type, name ++ pascal(f_name), out);
         },
-        .@"union" => |u| for (u.fields) |f| {
-            if (f.type != void) out = collect(f.type, name ++ pascal(f.name), out);
+        .@"union" => |u| for (u.field_names, u.field_types) |f_name, f_type| {
+            if (f_type != void) out = collect(f_type, name ++ pascal(f_name), out);
         },
         else => {},
     }
@@ -119,8 +119,8 @@ fn collect(comptime T: type, comptime ctx: []const u8, comptime acc: []const Nam
 const payload_types = blk: {
     @setEvalBranchQuota(1_000_000);
     var acc: []const Named = &.{};
-    for (std.meta.fields(Command)) |f| {
-        if (f.type != void) acc = collect(f.type, pascal(f.name), acc);
+    for (@typeInfo(Command).@"union".field_names, @typeInfo(Command).@"union".field_types) |f_name, f_type| {
+        if (f_type != void) acc = collect(f_type, pascal(f_name), acc);
     }
     // The framed messages (ServerMessage is in the header: it holds Response).
     acc = collect(protocol.ClientMessage, "ClientMessage", acc);
@@ -133,23 +133,23 @@ fn emit(g: *Gen, comptime n: Named) !void {
     switch (@typeInfo(n.T)) {
         .@"enum" => |e| {
             try g.print("enum {s} {{\n", .{n.name});
-            inline for (e.fields) |f| {
-                try g.print("  {s}_{s} = {d};\n", .{ comptime screaming(n.name), comptime screaming(f.name), f.value });
+            inline for (e.field_names, e.field_values) |f_name, f_value| {
+                try g.print("  {s}_{s} = {d};\n", .{ comptime screaming(n.name), comptime screaming(f_name), f_value });
             }
             try g.print("}}\n\n", .{});
         },
         .@"struct" => |s| {
             try g.print("message {s} {{\n", .{n.name});
-            inline for (s.fields, 1..) |f, i| {
-                try g.print("  {s} {s} = {d};\n", .{ comptime field_type(f.type, n.name ++ pascal(f.name)), f.name, i });
+            inline for (s.field_names, s.field_types, 1..) |f_name, f_type, i| {
+                try g.print("  {s} {s} = {d};\n", .{ comptime field_type(f_type, n.name ++ pascal(f_name)), f_name, i });
             }
             try g.print("}}\n\n", .{});
         },
         .@"union" => |u| {
             try g.print("message {s} {{\n  oneof kind {{\n", .{n.name});
-            inline for (u.fields, 1..) |f, i| {
-                const t = comptime if (f.type == void) "Empty" else field_type(f.type, n.name ++ pascal(f.name));
-                try g.print("    {s} {s} = {d};\n", .{ t, f.name, i });
+            inline for (u.field_names, u.field_types, 1..) |f_name, f_type, i| {
+                const t = comptime if (f_type == void) "Empty" else field_type(f_type, n.name ++ pascal(f_name));
+                try g.print("    {s} {s} = {d};\n", .{ t, f_name, i });
             }
             try g.print("  }}\n}}\n\n", .{});
         },
@@ -223,11 +223,19 @@ pub fn generate(a: std.mem.Allocator) ![]u8 {
 
     // Command: one oneof member per CommandId, numbered by it.
     try g.print("message Command {{\n  oneof kind {{\n", .{});
-    inline for (std.meta.fields(Command)) |f| {
-        const t = comptime if (f.type == void) "Empty" else field_type(f.type, pascal(f.name));
-        try g.print("    {s} {s} = {d};\n", .{ t, f.name, @intFromEnum(@field(CommandId, f.name)) });
+    inline for (@typeInfo(Command).@"union".field_names, @typeInfo(Command).@"union".field_types) |f_name, f_type| {
+        const t = comptime if (f_type == void) "Empty" else field_type(f_type, pascal(f_name));
+        try g.print("    {s} {s} = {d};\n", .{ t, f_name, @backingInt(@field(CommandId, f_name)) });
     }
     try g.print("  }}\n}}\n", .{});
 
     return g.out.items;
+}
+
+pub fn main(init: std.process.Init) !void {
+    const a = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(a);
+    if (args.len != 2) return error.Usage;
+    const text = try generate(a);
+    try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[1], .data = text });
 }

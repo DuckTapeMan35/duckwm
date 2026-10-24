@@ -38,11 +38,11 @@ const handlers = .{
     @import("commands/diagram.zig"),
 };
 comptime {
-    for (std.meta.fields(ConstraintKind)) |f| {
-        if (!@hasField(Constraint, f.name)) @compileError("ConstraintKind." ++ f.name ++ " is not a constraint");
+    for (@typeInfo(ConstraintKind).@"enum".field_names) |f_name| {
+        if (!@hasField(Constraint, f_name)) @compileError("ConstraintKind." ++ f_name ++ " is not a constraint");
     }
-    for (std.meta.fields(Constraint)) |f| {
-        if (!@hasField(ConstraintKind, f.name)) @compileError("constraint " ++ f.name ++ " is missing from ConstraintKind");
+    for (@typeInfo(Constraint).@"union".field_names) |f_name| {
+        if (!@hasField(ConstraintKind, f_name)) @compileError("constraint " ++ f_name ++ " is missing from ConstraintKind");
     }
 }
 

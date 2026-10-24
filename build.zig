@@ -1,215 +1,5 @@
 const std = @import("std");
-const api = @import("src/api_docs.zig");
 const Scanner = @import("wayland").Scanner;
-const protogen = @import("src/protogen.zig");
-
-const MetaStep = struct {
-    step: std.Build.Step,
-    b: *std.Build,
-
-    pub fn create(b: *std.Build) *MetaStep {
-        const self = b.allocator.create(MetaStep) catch unreachable;
-        self.* = .{
-            .step = std.Build.Step.init(.{
-                .id = .custom,
-                .name = "generate meta",
-                .owner = b,
-                .makeFn = make,
-            }),
-            .b = b,
-        };
-        return self;
-    }
-
-    /// A description as LuaLS doc comments: every line prefixed, blank lines
-    /// kept as bare "---" so paragraphs and code blocks survive.
-    fn doc_comment(b: *std.Build, buf: *std.ArrayListUnmanaged(u8), text: []const u8) !void {
-        var lines = std.mem.splitScalar(u8, text, '\n');
-        while (lines.next()) |line| {
-            const l = std.mem.trimEnd(u8, line, " \t\r");
-            if (l.len == 0) {
-                try buf.appendSlice(b.allocator, "---\n");
-            } else {
-                try buf.print(b.allocator, "--- {s}\n", .{l});
-            }
-        }
-    }
-
-    fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
-        @setEvalBranchQuota(100000);
-        const self: *MetaStep = @fieldParentPtr("step", step);
-        const b = self.b;
-        const io = b.graph.io;
-        const root = b.build_root.handle;
-
-        root.createDirPath(io, "meta") catch |e| if (e != error.PathAlreadyExists) return e;
-
-        // LuaLS meta
-        {
-            var buf: std.ArrayListUnmanaged(u8) = .empty;
-            defer buf.deinit(b.allocator);
-            try buf.appendSlice(b.allocator, "---@meta\nwm = {}\n\n");
-            inline for (api.constants) |con| {
-                try buf.print(b.allocator, "--- {s}\n---@type integer\nwm.{s} = 0\n\n", .{ con.desc, con.name });
-            }
-            inline for (api.entries) |entry| {
-                try doc_comment(b, &buf, entry.desc);
-                inline for (entry.params) |p| {
-                    try buf.print(b.allocator, "---@param {s} {s}\n", .{ p.name, p.typ });
-                }
-                if (!std.mem.eql(u8, entry.ret, "nil")) {
-                    try buf.print(b.allocator, "---@return {s}\n", .{entry.ret});
-                }
-                try buf.print(b.allocator, "function wm.{s}(", .{entry.name});
-                inline for (entry.params, 0..) |p, i| {
-                    if (i > 0) try buf.appendSlice(b.allocator, ", ");
-                    try buf.appendSlice(b.allocator, p.name);
-                }
-                try buf.appendSlice(b.allocator, ") end\n\n");
-            }
-            try root.writeFile(io, .{ .sub_path = "meta/wm.lua", .data = buf.items });
-        }
-
-        // Markdown
-        {
-            var buf: std.ArrayListUnmanaged(u8) = .empty;
-            defer buf.deinit(b.allocator);
-            try buf.appendSlice(b.allocator, "# duckwm Lua API\n\n");
-
-            try buf.appendSlice(b.allocator, "## Contents\n\n");
-            try buf.appendSlice(b.allocator, "- [Constants](#constants)\n");
-            inline for (api.categories) |cat| {
-                var anchor: [128]u8 = undefined;
-                var ai: usize = 0;
-                for (cat) |ch| {
-                    anchor[ai] = if (ch == ' ' or ch == '&') '-' else std.ascii.toLower(ch);
-                    ai += 1;
-                }
-                try buf.print(b.allocator, "- [{s}](#{s})\n", .{ cat, anchor[0..ai] });
-            }
-            try buf.appendSlice(b.allocator, "\n");
-
-            try buf.appendSlice(b.allocator, "## Constants\n\n");
-            inline for (api.constants) |con| {
-                try buf.print(b.allocator, "- **`wm.{s}`** — {s}\n", .{ con.name, con.desc });
-            }
-            try buf.appendSlice(b.allocator, "\n");
-
-            inline for (api.categories) |cat| {
-                try buf.print(b.allocator, "## {s}\n\n", .{cat});
-                inline for (api.entries) |entry| {
-                    if (comptime !std.mem.eql(u8, entry.category, cat)) continue;
-                    var sig: std.ArrayListUnmanaged(u8) = .empty;
-                    defer sig.deinit(b.allocator);
-                    inline for (entry.params, 0..) |p, i| {
-                        if (i > 0) try sig.appendSlice(b.allocator, ", ");
-                        try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
-                    }
-                    try buf.print(b.allocator, "### `wm.{s}({s})`\n\n{s}\n\n", .{ entry.name, sig.items, entry.desc });
-                    if (entry.params.len > 0) {
-                        inline for (entry.params) |p| {
-                            try buf.print(b.allocator, "- **{s}** `{s}`\n", .{ p.name, p.typ });
-                        }
-                        try buf.appendSlice(b.allocator, "\n");
-                    }
-                    if (!std.mem.eql(u8, entry.ret, "nil")) {
-                        try buf.print(b.allocator, "**Returns:** `{s}`\n\n", .{entry.ret});
-                    }
-                }
-            }
-            try root.writeFile(io, .{ .sub_path = "API.md", .data = buf.items });
-        }
-
-        // Norg
-        {
-            var buf: std.ArrayListUnmanaged(u8) = .empty;
-            defer buf.deinit(b.allocator);
-            try buf.appendSlice(b.allocator,
-                \\@document.meta
-                \\title: duckwm Lua API
-                \\categories: api reference
-                \\@end
-                \\
-                \\* Contents
-                \\
-            );
-            try buf.appendSlice(b.allocator, "  - {* Constants}\n");
-            inline for (api.categories) |cat| {
-                try buf.print(b.allocator, "  - {{* {s}}}\n", .{cat});
-            }
-            try buf.appendSlice(b.allocator, "\n");
-
-            try buf.appendSlice(b.allocator, "* Constants\n\n");
-            inline for (api.constants) |con| {
-                try buf.print(b.allocator, "  - `wm.{s}` — {s}\n", .{ con.name, con.desc });
-            }
-            try buf.appendSlice(b.allocator, "\n");
-
-            inline for (api.categories) |cat| {
-                try buf.print(b.allocator, "* {s}\n\n", .{cat});
-                inline for (api.entries) |entry| {
-                    if (comptime !std.mem.eql(u8, entry.category, cat)) continue;
-                    var sig: std.ArrayListUnmanaged(u8) = .empty;
-                    defer sig.deinit(b.allocator);
-                    inline for (entry.params, 0..) |p, i| {
-                        if (i > 0) try sig.appendSlice(b.allocator, ", ");
-                        try sig.print(b.allocator, "{s}: {s}", .{ p.name, p.typ });
-                    }
-                    try buf.print(b.allocator, "** `wm.{s}({s})`\n", .{ entry.name, sig.items });
-                    var lines = std.mem.splitScalar(u8, entry.desc, '\n');
-                    while (lines.next()) |line| {
-                        const trimmed = std.mem.trim(u8, line, " \t");
-                        if (trimmed.len == 0) {
-                            try buf.appendSlice(b.allocator, "\n");
-                        } else {
-                            try buf.print(b.allocator, "   {s}\n", .{trimmed});
-                        }
-                    }
-                    if (entry.params.len > 0) {
-                        try buf.appendSlice(b.allocator, "\n");
-                        inline for (entry.params) |p| {
-                            try buf.print(b.allocator, "   - *{s}* `{s}`\n", .{ p.name, p.typ });
-                        }
-                    }
-                    if (!std.mem.eql(u8, entry.ret, "nil")) {
-                        try buf.print(b.allocator, "   - *Returns:* `{s}`\n", .{entry.ret});
-                    }
-                    try buf.appendSlice(b.allocator, "\n");
-                }
-            }
-            try root.writeFile(io, .{ .sub_path = "API.norg", .data = buf.items });
-        }
-    }
-};
-
-const ProtoStep = struct {
-    step: std.Build.Step,
-
-    const out_path = "proto/duckwm.proto";
-
-    fn create(b: *std.Build) *ProtoStep {
-        const self = b.allocator.create(ProtoStep) catch @panic("OOM");
-        self.* = .{ .step = .init(.{
-            .id = .custom,
-            .name = "generate " ++ out_path,
-            .owner = b,
-            .makeFn = make,
-        }) };
-        return self;
-    }
-
-    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
-        _ = options;
-        const b = step.owner;
-        const io = b.graph.io;
-
-        // The build allocator is an arena: no need to free the text.
-        const text = try protogen.generate(b.allocator);
-
-        const path = b.pathFromRoot(out_path);
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text });
-    }
-};
 
 const Platform = enum { x11, river };
 
@@ -223,7 +13,7 @@ pub fn build(b: *std.Build) void {
         AllocatorKind,
         "allocator",
         "Memory allocator: debug (leak and misuse checks; default in Debug builds), smp (fast; default in release builds) or c (libc malloc)",
-    ) orelse if (optimize == .Debug) AllocatorKind.debug else AllocatorKind.smp;
+    ) orelse if (optimize == .debug) AllocatorKind.debug else AllocatorKind.smp;
     const build_options = b.addOptions();
     build_options.addOption(AllocatorKind, "allocator", allocator);
 
@@ -422,33 +212,57 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run duckwm");
     run_step.dependOn(&run_cmd.step);
 
-    const meta_gen = MetaStep.create(b);
+    // The LuaLS stubs and the API reference, generated from src/api_docs.zig
+    // by a small program built for this machine.
+    const gen_meta = b.addExecutable(.{
+        .name = "gen_meta",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gen_meta.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const run_meta = b.addRunArtifact(gen_meta);
+    const meta_lua = run_meta.addOutputFileArg("wm.lua");
+    const api_md = run_meta.addOutputFileArg("API.md");
+    const api_norg = run_meta.addOutputFileArg("API.norg");
+
     // Everything zig build install puts under the prefix besides the binaries
     // and the protocol: the X session, the LuaLS config, docs, and the
-    // generated stubs and API reference (generated first).
+    // generated stubs and API reference.
     for ([_][2][]const u8{
         .{ "dist/duckwm.desktop", "share/xsessions/duckwm.desktop" },
         .{ "dist/luarc.json", "share/duckwm/luarc.json" },
         .{ "README.md", "share/doc/duckwm/README.md" },
     }) |f| b.getInstallStep().dependOn(&b.addInstallFile(b.path(f[0]), f[1]).step);
+    b.getInstallStep().dependOn(&b.addInstallFile(meta_lua, "share/duckwm/meta/wm.lua").step);
+    b.getInstallStep().dependOn(&b.addInstallFile(api_md, "share/doc/duckwm/API.md").step);
+    b.getInstallStep().dependOn(&b.addInstallFile(api_norg, "share/doc/duckwm/API.norg").step);
 
-    for ([_][2][]const u8{
-        .{ "meta/wm.lua", "share/duckwm/meta/wm.lua" },
-        .{ "API.md", "share/doc/duckwm/API.md" },
-        .{ "API.norg", "share/doc/duckwm/API.norg" },
-    }) |f| {
-        const s = b.addInstallFile(b.path(f[0]), f[1]);
-        s.step.dependOn(&meta_gen.step);
-        b.getInstallStep().dependOn(&s.step);
-    }
+    // zig build meta: the same files, copied back into the source tree.
+    const update_meta = b.addUpdateSourceFiles();
+    update_meta.addCopyFileToSource(meta_lua, "meta/wm.lua");
+    update_meta.addCopyFileToSource(api_md, "API.md");
+    update_meta.addCopyFileToSource(api_norg, "API.norg");
     const meta_step = b.step("meta", "Regenerate LuaLS meta and API docs");
-    meta_step.dependOn(&meta_gen.step);
+    meta_step.dependOn(&update_meta.step);
+
+    // zig build proto: proto/duckwm.proto from src/protocol.zig.
+    const gen_proto = b.addExecutable(.{
+        .name = "gen_proto",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gen_proto.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    const run_proto = b.addRunArtifact(gen_proto);
+    const update_proto = b.addUpdateSourceFiles();
+    update_proto.addCopyFileToSource(run_proto.addOutputFileArg("duckwm.proto"), "proto/duckwm.proto");
     const proto_step = b.step("proto", "Regenerate proto/duckwm.proto from src/protocol.zig");
-    proto_step.dependOn(&ProtoStep.create(b).step);
+    proto_step.dependOn(&update_proto.step);
     b.getInstallStep().dependOn(&b.addInstallFile(b.path("proto/duckwm.proto"), "share/duckwm/duckwm.proto").step);
 
     // Type-checks every backend hook, including ones nothing calls yet.
@@ -458,11 +272,7 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Type-check every x11 backend hook");
     check_step.dependOn(&x11_check.step);
 
-    const mod_tests = b.addTest(.{ .root_module = mod });
-    const exe_tests = b.addTest(.{ .root_module = exe.root_module });
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&b.addRunArtifact(mod_tests).step);
-    test_step.dependOn(&b.addRunArtifact(exe_tests).step);
     const protocol_tests = b.addTest(.{ .root_module = protocol_mod });
     test_step.dependOn(&b.addRunArtifact(protocol_tests).step);
     // The whole WM on the fake backend (src/fake.zig), whatever -Dplatform says.

@@ -67,16 +67,16 @@ pub const Atoms = struct {
     XdndActionCopy: c.Atom,
 
     pub fn init(display: *c.Display) !Atoms {
-        const fields = std.meta.fields(Atoms);
+        const fields = @typeInfo(Atoms).@"struct".field_names;
         var names: [fields.len][*c]u8 = undefined;
-        inline for (fields, 0..) |f, i| names[i] = @constCast(f.name.ptr);
+        inline for (fields, 0..) |name, i| names[i] = @constCast(name.ptr);
 
         var out: [fields.len]c.Atom = undefined;
         if (c.XInternAtoms(display, &names, fields.len, 0, &out) == 0)
             return error.AtomInternFailed;
 
         var a: Atoms = undefined;
-        inline for (fields, 0..) |f, i| @field(a, f.name) = out[i];
+        inline for (fields, 0..) |name, i| @field(a, name) = out[i];
         return a;
     }
 };

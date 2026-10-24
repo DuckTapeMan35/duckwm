@@ -210,11 +210,11 @@ pub const Backend = struct {
 
     pub fn set_cursor_theme(self: *const Backend, theme: []const u8, size: u32) void {
         var theme_buf: [256]u8 = undefined;
-        const theme_z = std.fmt.bufPrintZ(&theme_buf, "{s}", .{theme}) catch return;
+        const theme_z = std.mem.printSentinel(&theme_buf, "{s}", .{theme}, 0) catch return;
         _ = c.setenv("XCURSOR_THEME", theme_z.ptr, 1);
 
         var size_buf: [16]u8 = undefined;
-        const size_z = std.fmt.bufPrintZ(&size_buf, "{d}", .{size}) catch return;
+        const size_z = std.mem.printSentinel(&size_buf, "{d}", .{size}, 0) catch return;
         _ = c.setenv("XCURSOR_SIZE", size_z.ptr, 1);
 
         var res_buf: [320]u8 = undefined;

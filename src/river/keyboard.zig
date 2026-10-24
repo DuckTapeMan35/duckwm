@@ -21,7 +21,7 @@ pub fn set_keymap(s: *State, km: types.Keymap) bool {
     const z = struct {
         fn f(al: std.mem.Allocator, v: []const u8) ?[*:0]const u8 {
             if (v.len == 0) return null;
-            return (al.dupeZ(u8, v) catch return null).ptr;
+            return (al.dupeSentinel(u8, v, 0) catch return null).ptr;
         }
     }.f;
 
@@ -80,7 +80,7 @@ pub fn keysym_from_name(name: []const u8) ?types.Keysym {
     buf[name.len] = 0;
     const sym = xkb.Keysym.fromName(buf[0..name.len :0], .no_flags);
     if (sym == .NoSymbol) return null;
-    return @intCast(@intFromEnum(sym));
+    return @intCast(@backingInt(sym));
 }
 
 // ---- typing into the input bar ----
@@ -88,7 +88,7 @@ pub fn keysym_from_name(name: []const u8) ?types.Keysym {
 fn push_prompt_key(s: *State, keycode: u32) void {
     const st = s.xkb_state orelse return;
     var k: types.PromptKey = .{
-        .keysym = @intCast(@intFromEnum(st.keyGetOneSym(keycode))),
+        .keysym = @intCast(@backingInt(st.keyGetOneSym(keycode))),
         .mods = xkb_mods(s),
     };
     var buf: [16]u8 = undefined;
@@ -102,7 +102,7 @@ fn push_prompt_key(s: *State, keycode: u32) void {
 
 fn xkb_mods(s: *State) types.Mods {
     const st = s.xkb_state orelse return 0;
-    const effective: xkb.State.Component = @enumFromInt(xkb.State.Component.mods_effective);
+    const effective: xkb.State.Component = @fromBackingInt(@intCast(xkb.State.Component.mods_effective));
     var m: types.Mods = 0;
     if (st.modNameIsActive("Shift", effective) > 0) m |= types.mod.shift;
     if (st.modNameIsActive("Control", effective) > 0) m |= types.mod.ctrl;

@@ -120,7 +120,7 @@ pub fn activate_window(wm: *WM, node: *Node) !void {
         }
 
         // walk down the parent_node chain into target
-        var chain: std.ArrayListUnmanaged(*Node) = .{ .items = &.{}, .capacity = 0 };
+        var chain: std.ArrayListUnmanaged(*Node) = .empty;
         defer chain.deinit(wm.allocator);
         var g: *Graph = target;
         while (g != wm.current_graph) {

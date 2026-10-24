@@ -34,7 +34,7 @@ fn report(wm: *WM, a: std.mem.Allocator, comptime fmt: []const u8, args: anytype
 }
 
 fn read_file(a: std.mem.Allocator, path: []const u8) ![]u8 {
-    const path_z = try a.dupeZ(u8, path);
+    const path_z = try a.dupeSentinel(u8, path, 0);
     const rc = linux.open(path_z, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (linux.errno(rc) != .SUCCESS) return error.OpenFailed;
     const fd: i32 = @intCast(rc);

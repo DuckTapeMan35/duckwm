@@ -438,7 +438,7 @@ pub const Backend = struct {
 
     pub fn set_cursor_theme(self: *const Backend, theme: []const u8, size: u32) void {
         const s = self.state;
-        const owned = s.allocator.dupeZ(u8, theme) catch return;
+        const owned = s.allocator.dupeSentinel(u8, theme, 0) catch return;
         if (s.cursor_theme) |old| s.allocator.free(old);
         s.cursor_theme = owned;
         s.cursor_size = size;

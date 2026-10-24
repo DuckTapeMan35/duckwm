@@ -28,7 +28,7 @@ fn resolve_user_path(wm: *WM) ?[]const u8 {
 fn user_path_z(wm: *WM) ?[:0]u8 {
     const path = resolve_user_path(wm) orelse return null;
     defer wm.allocator.free(path);
-    return wm.allocator.dupeZ(u8, path) catch null;
+    return wm.allocator.dupeSentinel(u8, path, 0) catch null;
 }
 
 fn watch_config(wm: *WM, path: []const u8) void {
@@ -37,7 +37,7 @@ fn watch_config(wm: *WM, path: []const u8) void {
         return;
     };
     std.debug.print("watch_config: watching dir '{s}'\n", .{dir});
-    const dir_z = wm.allocator.dupeZ(u8, dir) catch return;
+    const dir_z = wm.allocator.dupeSentinel(u8, dir, 0) catch return;
     defer wm.allocator.free(dir_z);
     wm.watch_config_dir(dir_z);
 }
@@ -227,7 +227,7 @@ pub fn load(wm: *WM) !void {
     for (paths_to_try) |maybe_path| {
         const path = maybe_path orelse continue;
         std.debug.print("load: trying path '{s}'\n", .{path});
-        const path_z = wm.allocator.dupeZ(u8, path) catch continue;
+        const path_z = wm.allocator.dupeSentinel(u8, path, 0) catch continue;
         defer wm.allocator.free(path_z);
 
         lua.doFile(path_z) catch |err| {

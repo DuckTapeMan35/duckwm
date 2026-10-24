@@ -121,7 +121,7 @@ pub fn spawn(wm: *WM, argv: []const []const u8) !void {
         wm.allocator.free(owned);
     }
     for (argv) |arg| {
-        owned[n] = try wm.allocator.dupeZ(u8, arg);
+        owned[n] = try wm.allocator.dupeSentinel(u8, arg, 0);
         n += 1;
     }
     effect(wm, .{ .spawn = owned });
@@ -145,6 +145,6 @@ fn spawn_now(argv: []const [:0]u8) !void {
     } else if (pid < 0) {
         return error.ForkFailed;
     }
-    var status: u32 = 0;
+    var status: i32 = 0;
     _ = std.os.linux.waitpid(pid, &status, 0);
 }

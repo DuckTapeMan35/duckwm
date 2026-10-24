@@ -38,21 +38,21 @@ pub fn push(lua: *Lua, comptime T: type, v: T) void {
             }
         },
         .@"struct" => |s| {
-            lua.createTable(0, @intCast(s.fields.len));
+            lua.createTable(0, @intCast(s.field_names.len));
             set_fields(lua, T, v);
         },
         .@"union" => |u| {
             const active = std.meta.activeTag(v);
             if (comptime @hasDecl(T, "shorthand")) {
                 // A Ref: a bare number for the shorthand, { key = k } otherwise.
-                inline for (u.fields) |f| {
-                    if (active == @field(std.meta.Tag(T), f.name)) {
-                        if (comptime std.mem.eql(u8, f.name, T.shorthand)) {
-                            push(lua, f.type, @field(v, f.name));
+                inline for (u.field_names, u.field_types) |f_name, f_type| {
+                    if (active == @field(std.meta.Tag(T), f_name)) {
+                        if (comptime std.mem.eql(u8, f_name, T.shorthand)) {
+                            push(lua, f_type, @field(v, f_name));
                         } else {
                             lua.createTable(0, 1);
-                            push(lua, f.type, @field(v, f.name));
-                            lua.setField(-2, f.name);
+                            push(lua, f_type, @field(v, f_name));
+                            lua.setField(-2, f_name);
                         }
                     }
                 }
@@ -61,12 +61,12 @@ pub fn push(lua: *Lua, comptime T: type, v: T) void {
             lua.createTable(0, 4);
             _ = lua.pushString(@tagName(active));
             lua.setField(-2, "type");
-            inline for (u.fields) |f| {
-                if (f.type != void and active == @field(std.meta.Tag(T), f.name)) {
-                    if (@typeInfo(f.type) == .@"struct") {
-                        set_fields(lua, f.type, @field(v, f.name));
+            inline for (u.field_names, u.field_types) |f_name, f_type| {
+                if (f_type != void and active == @field(std.meta.Tag(T), f_name)) {
+                    if (@typeInfo(f_type) == .@"struct") {
+                        set_fields(lua, f_type, @field(v, f_name));
                     } else {
-                        push(lua, f.type, @field(v, f.name));
+                        push(lua, f_type, @field(v, f_name));
                         lua.setField(-2, "value");
                     }
                 }
@@ -78,9 +78,9 @@ pub fn push(lua: *Lua, comptime T: type, v: T) void {
 
 /// Set each of v's fields on the table on top of the stack.
 fn set_fields(lua: *Lua, comptime S: type, v: S) void {
-    inline for (std.meta.fields(S)) |f| {
-        push(lua, f.type, @field(v, f.name));
-        lua.setField(-2, f.name);
+    inline for (@typeInfo(S).@"struct".field_names, @typeInfo(S).@"struct".field_types) |f_name, f_type| {
+        push(lua, f_type, @field(v, f_name));
+        lua.setField(-2, f_name);
     }
 }
 
@@ -137,10 +137,10 @@ pub fn read(comptime T: type, lua: *Lua, index: i32, a: Allocator) Error!T {
         .@"struct" => |s| {
             if (lua.typeOf(i) != .table) return error.ExpectedTable;
             var out: T = undefined;
-            inline for (s.fields) |f| {
-                _ = lua.getField(i, f.name);
+            inline for (s.field_names, s.field_types) |f_name, f_type| {
+                _ = lua.getField(i, f_name);
                 defer lua.pop(1);
-                @field(out, f.name) = try read(f.type, lua, -1, a);
+                @field(out, f_name) = try read(f_type, lua, -1, a);
             }
             return out;
         },
@@ -149,11 +149,11 @@ pub fn read(comptime T: type, lua: *Lua, index: i32, a: Allocator) Error!T {
                 if (lua.typeOf(i) == .number)
                     return @unionInit(T, T.shorthand, try read(@FieldType(T, T.shorthand), lua, i, a));
                 if (lua.typeOf(i) == .table) {
-                    inline for (u.fields) |f| {
-                        if (f.type != void) {
-                            _ = lua.getField(i, f.name);
+                    inline for (u.field_names, u.field_types) |f_name, f_type| {
+                        if (f_type != void) {
+                            _ = lua.getField(i, f_name);
                             defer lua.pop(1);
-                            if (!lua.isNil(-1)) return @unionInit(T, f.name, try read(f.type, lua, -1, a));
+                            if (!lua.isNil(-1)) return @unionInit(T, f_name, try read(f_type, lua, -1, a));
                         }
                     }
                 }
@@ -165,13 +165,18 @@ pub fn read(comptime T: type, lua: *Lua, index: i32, a: Allocator) Error!T {
                 return error.ExpectedString;
             };
             lua.pop(1); // the table still holds the string
-            inline for (u.fields) |f| {
-                if (std.mem.eql(u8, name, f.name)) {
-                    if (f.type == void) return @unionInit(T, f.name, {});
-                    if (@typeInfo(f.type) == .@"struct") return @unionInit(T, f.name, try read(f.type, lua, i, a));
+            inline for (u.field_names, u.field_types) |f_name, f_type| {
+                if (std.mem.eql(u8, name, f_name)) {
+                    if (f_type == void) return @unionInit(T, f_name, {});
+                    if (@typeInfo(f_type) == .@"struct") return @unionInit(T, f_name, try read(
+                        f_type,
+                        lua,
+                        i,
+                        a,
+                    ));
                     _ = lua.getField(i, "value");
                     defer lua.pop(1);
-                    return @unionInit(T, f.name, try read(f.type, lua, -1, a));
+                    return @unionInit(T, f_name, try read(f_type, lua, -1, a));
                 }
             }
             return error.InvalidChoice;

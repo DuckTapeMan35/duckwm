@@ -16,7 +16,7 @@ fn matches(name: []const u8, info: *const types.WindowInfo) bool {
 
 fn read_ppid(pid: u32) ?u32 {
     var buf: [64]u8 = undefined;
-    const path = std.fmt.bufPrintZ(&buf, "/proc/{d}/status", .{pid}) catch return null;
+    const path = std.mem.printSentinel(&buf, "/proc/{d}/status", .{pid}, 0) catch return null;
     const f = c.fopen(path.ptr, "r") orelse return null;
     defer _ = c.fclose(f);
     var line: [256]u8 = undefined;
@@ -134,7 +134,7 @@ fn do_swallow(wm: *WM, term_id: u32, term_node: *graph_mod.Node, child_node: *gr
 
     child_node.constraints.deinit(wm.allocator);
     child_node.constraints = term_node.constraints;
-    term_node.constraints = .{ .items = &.{}, .capacity = 0 };
+    term_node.constraints = .empty;
 
     rewrite_refs(g, term_node, child_node);
 
@@ -174,7 +174,7 @@ pub fn try_unswallow(wm: *WM, child_id: u32) bool {
     // Transfer constraints back: child -> term
     term_node.constraints.deinit(wm.allocator);
     term_node.constraints = child_node.constraints;
-    child_node.constraints = .{ .items = &.{}, .capacity = 0 };
+    child_node.constraints = .empty;
 
     // Rewrite graph-wide constraint references: child -> term
     rewrite_refs(g, child_node, term_node);

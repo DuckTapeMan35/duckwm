@@ -3,7 +3,7 @@
   stdenv,
   runCommand,
   # duckwm is written for Zig 0.16; nixpkgs' plain `zig` has moved on to 0.17.
-  zig_0_16,
+  zig,
   pkg-config,
   # x11
   libx11,
@@ -27,7 +27,6 @@ assert lib.assertOneOf "platform" platform [
 ];
 
 let
-  zig = zig_0_16;
   src = ../.;
   isRiver = platform == "river";
 

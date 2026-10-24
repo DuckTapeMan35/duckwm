@@ -645,6 +645,11 @@ message SetArrangerIndex {
   sint32 index = 1;
 }
 
+message PrintGraphPretty {
+  optional uint32 cols = 1;
+  optional uint32 rows = 2;
+}
+
 message FocusOutput {
   Dir dir = 1;
 }
@@ -926,6 +931,7 @@ message Command {
     Empty get_arranger_name = 906;
     Empty get_arranger_index = 907;
     SetArrangerIndex set_arranger_index = 908;
+    PrintGraphPretty print_graph_pretty = 909;
     Empty get_outputs = 1000;
     FocusOutput focus_output = 1001;
     SendToOutput send_to_output = 1002;

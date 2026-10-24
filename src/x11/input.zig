@@ -9,7 +9,7 @@ const key_lock_masks = [_]c_uint{ 0, c.LockMask, c.Mod2Mask, c.LockMask | c.Mod2
 // ---- keys ----
 pub fn keysym_from_name(name: []const u8) ?types.Keysym {
     var buf: [64]u8 = undefined;
-    const z = std.fmt.bufPrintZ(&buf, "{s}", .{name}) catch return null;
+    const z = std.mem.printSentinel(&buf, "{s}", .{name}, 0) catch return null;
     const ks = c.XStringToKeysym(z.ptr);
     if (ks == c.NoSymbol) return null;
     return @intCast(ks);
@@ -101,7 +101,7 @@ pub fn set_keymap(self: *Backend, km: types.Keymap) bool {
     var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .empty;
     const add = struct {
         fn f(al: std.mem.Allocator, list: *std.ArrayListUnmanaged(?[*:0]const u8), s: []const u8) void {
-            const zs = al.dupeZ(u8, s) catch return;
+            const zs = al.dupeSentinel(u8, s, 0) catch return;
             list.append(al, zs.ptr) catch {};
         }
     }.f;

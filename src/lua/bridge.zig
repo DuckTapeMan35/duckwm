@@ -68,8 +68,8 @@ pub fn pending_base() usize {
 fn parse_args(comptime P: type, lua: *Lua, a: std.mem.Allocator) !P {
     if (P == void) return {};
     var out: P = undefined;
-    inline for (std.meta.fields(P), 1..) |f, i| {
-        @field(out, f.name) = try read_arg(f.type, lua, @intCast(i), a);
+    inline for (@typeInfo(P).@"struct".field_names, @typeInfo(P).@"struct".field_types, 1..) |f_name, f_type, i| {
+        @field(out, f_name) = try read_arg(f_type, lua, @intCast(i), a);
     }
     return out;
 }
@@ -113,10 +113,10 @@ fn read_arg(comptime T: type, lua: *Lua, index: i32, a: std.mem.Allocator) !T {
         .@"struct" => |s| {
             if (lua.typeOf(i) != .table) return error.ExpectedTable;
             var out: T = undefined;
-            inline for (s.fields) |f| {
-                _ = lua.getField(i, f.name);
+            inline for (s.field_names, s.field_types) |f_name, f_type| {
+                _ = lua.getField(i, f_name);
                 defer lua.pop(1);
-                @field(out, f.name) = try read_arg(f.type, lua, -1, a);
+                @field(out, f_name) = try read_arg(f_type, lua, -1, a);
             }
             return out;
         },
@@ -135,11 +135,15 @@ fn read_arg(comptime T: type, lua: *Lua, index: i32, a: std.mem.Allocator) !T {
                     ));
                 }
                 if (lua.typeOf(i) == .table) {
-                    inline for (u.fields) |f| {
-                        if (f.type != void) {
-                            _ = lua.getField(i, f.name);
+                    inline for (u.field_names, u.field_types) |f_name, f_type| {
+                        if (f_type != void) {
+                            _ = lua.getField(i, f_name);
                             defer lua.pop(1);
-                            if (!lua.isNil(-1)) return @unionInit(T, f.name, try read_arg(f.type, lua, -1, a));
+                            if (!lua.isNil(-1)) return @unionInit(
+                                T,
+                                f_name,
+                                try read_arg(f_type, lua, -1, a),
+                            );
                         }
                     }
                 }
@@ -151,10 +155,10 @@ fn read_arg(comptime T: type, lua: *Lua, index: i32, a: std.mem.Allocator) !T {
                 return error.ExpectedString;
             };
             lua.pop(1); // the table still holds the string, so name stays valid
-            inline for (u.fields) |f| {
-                if (std.mem.eql(u8, name, f.name)) {
-                    if (f.type == void) return @unionInit(T, f.name, {});
-                    return @unionInit(T, f.name, try read_arg(f.type, lua, i, a));
+            inline for (u.field_names, u.field_types) |f_name, f_type| {
+                if (std.mem.eql(u8, name, f_name)) {
+                    if (f_type == void) return @unionInit(T, f_name, {});
+                    return @unionInit(T, f_name, try read_arg(f_type, lua, i, a));
                 }
             }
             return error.InvalidChoice;
@@ -227,10 +231,10 @@ fn skipped(comptime name: []const u8) bool {
 pub const registrations = blk: {
     @setEvalBranchQuota(100000);
     var regs: []const Registration = &.{};
-    for (std.meta.fields(Command)) |f| {
-        if (skipped(f.name)) continue;
-        const tag = @field(std.meta.Tag(Command), f.name);
-        regs = regs ++ [_]Registration{.{ .func = ziglua.wrap(lua_command(tag)), .name = f.name }};
+    for (@typeInfo(Command).@"union".field_names) |f_name| {
+        if (skipped(f_name)) continue;
+        const tag = @field(std.meta.Tag(Command), f_name);
+        regs = regs ++ [_]Registration{.{ .func = ziglua.wrap(lua_command(tag)), .name = f_name }};
     }
     break :blk regs;
 };
