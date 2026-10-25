@@ -9,7 +9,7 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Tell duckwm_py to regenerate
+      - name: Tell duckwm_py to sync
         env:
           GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
         run: |
@@ -17,10 +17,10 @@ jobs:
             -f event_type=duckwm-proto-changed \
             -f "client_payload[sha]=${{ github.sha }}"
 
-      - name: Tell duckwm_rs
+      - name: Tell duckwm_rust to sync
         env:
           GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
         run: |
-          gh api repos/DuckTapeMan35/duckwm_rs/dispatches \
+          gh api repos/DuckTapeMan35/duckwm_rust/dispatches \
             -f event_type=duckwm-proto-changed \
             -f "client_payload[sha]=${{ github.sha }}"

@@ -1,7 +1,7 @@
 {
   lib,
   stdenv,
-  runCommand,
+  callPackage,
   # duckwm is written for Zig 0.16; nixpkgs' plain `zig` has moved on to 0.17.
   zig,
   pkg-config,
@@ -30,34 +30,8 @@ let
   src = ../.;
   isRiver = platform == "river";
 
-  depsTarballs = stdenv.mkDerivation {
-    name = "duckwm-deps-tarballs";
-    inherit src;
-    nativeBuildInputs = [ zig ];
-    dontConfigure = true;
-    buildPhase = ''
-      export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
-      zig build -l > /dev/null
-    '';
-    installPhase = "cp -r $TMPDIR/zig-cache/p $out";
-    outputHashMode = "recursive";
-    outputHashAlgo = "sha256";
-    outputHash = "sha256-T3J0P+qrmK/yxzowAuBgMcKWZn93UYyQHvSACUDGZgM=";
-  };
+  deps = callPackage ./deps.nix { inherit zig; };
 
-  deps = runCommand "duckwm-deps" { } ''
-    mkdir -p $out
-    for f in ${depsTarballs}/*.tar.gz; do
-      name=$(basename "$f" .tar.gz)
-      mkdir -p "$out/$name"
-      top=$(tar -tzf "$f" | cut -d/ -f1 | sort -u | wc -l)
-      if [ "$top" -eq 1 ]; then
-        tar -xzf "$f" -C "$out/$name" --strip-components=1
-      else
-        tar -xzf "$f" -C "$out/$name"
-      fi
-    done
-  '';
 in
 stdenv.mkDerivation {
   pname = if isRiver then "duckwm-river" else "duckwm";

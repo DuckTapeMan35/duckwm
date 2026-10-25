@@ -1,6 +1,6 @@
 const std = @import("std");
 const protocol = @import("protocol");
-const wire = protocol.wire;
+const client = @import("duckwm_client");
 const linux = std.os.linux;
 const Command = protocol.Command;
 const Value = protocol.Value;
@@ -25,12 +25,13 @@ pub fn main(init: std.process.Init) !void {
         break :blk one;
     };
 
-    const fd = connect(a);
-    defer _ = linux.close(fd);
+    var c = connect(a);
+    defer c.deinit();
 
-    const results = switch (try roundtrip(a, fd, cmds)) {
-        .ok => |r| r,
-        .err => |msg| fail(a, msg),
+    const results = c.run(a, cmds) catch |err| switch (err) {
+        error.Rejected => fail(a, c.why),
+        error.OutOfMemory => die("quack: out of memory\n"),
+        else => die("quack: duckwm closed the connection\n"),
     };
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
@@ -322,21 +323,12 @@ fn get_sock_path(a: Allocator) ![]u8 {
     return std.fmt.allocPrint(a, "/tmp/duckwm-{d}.sock", .{linux.getuid()});
 }
 
-fn connect(a: Allocator) i32 {
-    const path = get_sock_path(a) catch die("quack: out of memory\n");
-
-    const rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    if (linux.errno(rc) != .SUCCESS) die("quack: failed to create socket\n");
-    const fd: i32 = @intCast(rc);
-
-    var addr = std.mem.zeroes(linux.sockaddr.un);
-    addr.family = linux.AF.UNIX;
-    if (path.len >= addr.path.len) die("quack: socket path too long\n");
-    @memcpy(addr.path[0..path.len], path);
-
-    if (linux.errno(linux.connect(fd, @ptrCast(&addr), @sizeOf(linux.sockaddr.un))) != .SUCCESS)
-        die("quack: could not connect to duckwm (is it running?)\n");
-    return fd;
+fn connect(a: Allocator) client.Client {
+    return client.Client.connect(a) catch |err| switch (err) {
+        error.OutOfMemory => die("quack: out of memory\n"),
+        error.PathTooLong => die("quack: socket path too long\n"),
+        else => die("quack: could not connect to duckwm (is it running?)\n"),
+    };
 }
 
 fn write_all(fd: i32, buf: []const u8) !void {
@@ -366,31 +358,6 @@ fn read_exact(fd: i32, buf: []u8) !void {
     }
 }
 
-// ---- Round trip ----
-const Reply = union(enum) { ok: []const Value, err: []const u8 };
-
-/// Send one request and wait for its response.
-fn roundtrip(a: Allocator, fd: i32, cmds: []const Command) !Reply {
-    const body = try wire.encode_client_message(a, .{ .request = .{ .commands = cmds } });
-    var len: [4]u8 = undefined;
-    std.mem.writeInt(u32, &len, @intCast(body.len), .little);
-    write_all(fd, &len) catch die("quack: failed to send request\n");
-    write_all(fd, body) catch die("quack: failed to send request\n");
-
-    read_exact(fd, &len) catch die("quack: duckwm closed the connection\n");
-    const frame = try a.alloc(u8, std.mem.readInt(u32, &len, .little));
-    read_exact(fd, frame) catch die("quack: duckwm closed the connection\n");
-
-    const reply = wire.decode_server_message(frame, a) catch die("quack: malformed response\n");
-    // quack registers no callbacks, so the only thing duckwm sends it is the response.
-    const resp = switch (reply) {
-        .response => |r| r,
-        .call => die("quack: duckwm sent a callback call to quack\n"),
-    };
-    if (resp.err) |msg| return .{ .err = msg };
-    return .{ .ok = resp.results };
-}
-
 // ---- REPL ----
 /// quack repl: read Lua, run it inside duckwm, print what it printed and
 /// returned. A line that leaves a block open (for ... do, function f())
@@ -399,8 +366,8 @@ fn repl() !void {
     const gpa = std.heap.page_allocator;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
-    const fd = connect(arena.allocator());
-    defer _ = linux.close(fd);
+    var c = connect(gpa);
+    defer c.deinit();
 
     var src: std.ArrayListUnmanaged(u8) = .empty;
     defer src.deinit(gpa);
@@ -417,13 +384,13 @@ fn repl() !void {
         try src.appendSlice(gpa, line);
 
         const cmd = [_]Command{.{ .eval = .{ .source = src.items } }};
-        switch (try roundtrip(a, fd, &cmd)) {
-            .err => |msg| try write_all(1, try std.fmt.allocPrint(a, "duckwm: {s}\n", .{msg})),
-            .ok => |results| {
-                const r: Value = if (results.len > 0) results[0] else .nil;
-                if (std.mem.eql(u8, map_str(r, "status"), "incomplete")) continue;
-                try write_all(1, map_str(r, "output"));
-            },
+        if (c.run(a, &cmd)) |results| {
+            const r: Value = if (results.len > 0) results[0] else .nil;
+            if (std.mem.eql(u8, map_str(r, "status"), "incomplete")) continue;
+            try write_all(1, map_str(r, "output"));
+        } else |err| switch (err) {
+            error.Rejected => try write_all(1, try std.fmt.allocPrint(a, "duckwm: {s}\n", .{c.why})),
+            else => return err,
         }
         src.clearRetainingCapacity();
     }
@@ -464,8 +431,14 @@ test "arguments" {
     try std.testing.expect(try parse_command(a, "cleanup_left_behind", &.{}) == .cleanup_left_behind);
     try std.testing.expectEqual(@as(u32, 42), (try parse_command(a, "focus", &.{"42"})).focus.id);
     try std.testing.expectEqual(@as(i32, -5), (try parse_command(a, "pan_by", &.{ "-5", "3" })).pan_by.dx);
-    try std.testing.expectEqual(@as(u32, 0x1e1e2e), (try parse_command(a, "set_border_width", &.{"#1e1e2e"})).set_border_width.width);
-    try std.testing.expectEqual(protocol.Dir.up, (try parse_command(a, "resize_focused_edge", &.{ "up", "10" })).resize_focused_edge.direction);
+    try std.testing.expectEqual(
+        @as(u32, 0x1e1e2e),
+        (try parse_command(a, "set_border_width", &.{"#1e1e2e"})).set_border_width.width,
+    );
+    try std.testing.expectEqual(
+        protocol.Dir.up,
+        (try parse_command(a, "resize_focused_edge", &.{ "up", "10" })).resize_focused_edge.direction,
+    );
 
     const spawn = (try parse_command(a, "spawn", &.{ "ghostty", "-e", "htop" })).spawn;
     try std.testing.expectEqual(@as(usize, 3), spawn.argv.len);
@@ -524,7 +497,17 @@ test "json" {
     const a = arena.allocator();
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
-    const fields = [_]Value.Field{ .{ .key = "x", .value = .{ .integer = 1 } }, .{ .key = "s", .value = .{ .str = "a\"b\n" } } };
-    try write_json(a, &out, .{ .multi = &.{ .{ .map = &fields }, .{ .number = 0.5 }, .nil, .{ .boolean = false } } });
+    const fields = [_]Value.Field{
+        .{ .key = "x", .value = .{ .integer = 1 } },
+        .{ .key = "s", .value = .{ .str = "a\"b\n" } },
+    };
+    try write_json(a, &out, .{
+        .multi = &.{
+            .{ .map = &fields },
+            .{ .number = 0.5 },
+            .nil,
+            .{ .boolean = false },
+        },
+    });
     try std.testing.expectEqualStrings("[{\"x\":1,\"s\":\"a\\\"b\\n\"},0.5,null,false]", out.items);
 }

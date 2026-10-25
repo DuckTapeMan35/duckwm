@@ -1,7 +1,13 @@
 const std = @import("std");
 const protocol = @import("protocol.zig");
+const common = @import("gen_common.zig");
+
 const Command = protocol.Command;
 const CommandId = protocol.CommandId;
+const Named = common.Named;
+const pascal = common.pascal;
+const screaming = common.screaming;
+const is_list = common.is_list;
 
 const Gen = struct {
     a: std.mem.Allocator,
@@ -11,36 +17,6 @@ const Gen = struct {
         try self.out.print(self.a, fmt, args);
     }
 };
-
-/// snake_case -> PascalCase.
-fn pascal(comptime s: []const u8) []const u8 {
-    @setEvalBranchQuota(100000);
-    comptime {
-        var out: []const u8 = "";
-        var upper = true;
-        for (s) |ch| {
-            if (ch == '_') {
-                upper = true;
-                continue;
-            }
-            out = out ++ [_]u8{if (upper) std.ascii.toUpper(ch) else ch};
-            upper = false;
-        }
-        return out;
-    }
-}
-
-/// PascalCase or snake_case -> SCREAMING_SNAKE, for enum value names.
-fn screaming(comptime s: []const u8) []const u8 {
-    comptime {
-        var out: []const u8 = "";
-        for (s, 0..) |ch, i| {
-            if (std.ascii.isUpper(ch) and i > 0) out = out ++ "_";
-            out = out ++ [_]u8{std.ascii.toUpper(ch)};
-        }
-        return out;
-    }
-}
 
 /// A named type keeps its Zig name; an anonymous one is named from its context.
 fn type_name(comptime T: type, comptime fallback: []const u8) []const u8 {
@@ -56,10 +32,6 @@ fn type_name(comptime T: type, comptime fallback: []const u8) []const u8 {
         }
         return name;
     }
-}
-
-fn is_list(comptime T: type) bool {
-    return @typeInfo(T) == .pointer and T != []const u8;
 }
 
 /// The name of a single (non-list, non-optional) type.
@@ -86,9 +58,6 @@ fn field_type(comptime T: type, comptime ctx: []const u8) []const u8 {
         else => scalar_name(T, ctx),
     };
 }
-
-/// An enum or message to write, with its protobuf name.
-const Named = struct { T: type, name: []const u8 };
 
 /// The enums and messages T needs, added to acc after what they refer to.
 /// Command is written separately, so a payload holding commands stops there.

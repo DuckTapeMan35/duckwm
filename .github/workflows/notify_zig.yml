@@ -1,0 +1,25 @@
+name: Notify duckwm_zig
+
+# duckwm_zig copies these files (its scripts/sync), so it hears about them
+# rather than about duckwm.proto, so it gets its own sync action.
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/protocol.zig
+      - src/wire.zig
+      - src/json.zig
+      - src/client.zig
+      - src/gen_common.zig
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tell duckwm_zig to sync
+        env:
+          GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
+        run: |
+          gh api repos/DuckTapeMan35/duckwm_zig/dispatches \
+            -f event_type=duckwm-client-changed \
+            -f "client_payload[sha]=${{ github.sha }}"

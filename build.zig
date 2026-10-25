@@ -184,6 +184,15 @@ pub fn build(b: *std.Build) void {
     exe.use_lld = true;
     b.installArtifact(exe);
 
+    // ---- the client library: duckwm_client for Zig ----
+    const client_mod = b.addModule("duckwm_client", .{
+        .root_source_file = b.path("src/client.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    client_mod.addImport("protocol", protocol_mod);
+
     // ---- quack (IPC client) ----
     const quack = b.addExecutable(.{
         .name = "quack",
@@ -195,6 +204,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     quack.root_module.addImport("protocol", protocol_mod);
+    quack.root_module.addImport("duckwm_client", client_mod);
     b.installArtifact(quack);
 
     // ---- Steps ----
@@ -316,4 +326,6 @@ pub fn build(b: *std.Build) void {
     }) });
     harness_tests.root_module.addAnonymousImport("default_config", .{ .root_source_file = b.path("config/default.lua") });
     test_step.dependOn(&b.addRunArtifact(harness_tests).step);
+    const client_tests = b.addTest(.{ .root_module = client_mod });
+    test_step.dependOn(&b.addRunArtifact(client_tests).step);
 }
