@@ -20,6 +20,9 @@ pub const Client = struct {
     in: std.ArrayListUnmanaged(u8) = .empty,
     /// Encoded responses the socket hasn't accepted yet.
     out: std.ArrayListUnmanaged(u8) = .empty,
+    /// This client's requests being run right now: a call made meanwhile was
+    /// set off by one of them (Call.nested).
+    running: u32 = 0,
 
     fn deinit(c: *Client, a: std.mem.Allocator) void {
         close_fd(c.fd);
@@ -203,6 +206,8 @@ fn send(wm: *WM, c: *Client, body: []const u8) !void {
 
 /// Run a client's commands as one transaction, with it as the callback source.
 fn run_request(wm: *WM, c: *Client, cmds: []const protocol.Command, a: std.mem.Allocator) ![]u8 {
+    c.running += 1;
+    defer c.running -= 1;
     const results = try a.alloc(protocol.Value, cmds.len);
     const saved = wm.callback_source;
     wm.callback_source = .{ .client = c.id };
@@ -300,7 +305,11 @@ pub fn call(wm: *WM, client: u32, callback: u64, args: protocol.CallArgs, a: std
     const c = find(wm, client) orelse return error.ClientGone;
     if (c.dead) return error.ClientGone;
 
-    try send(wm, c, try wire.encode_server_call(a, .{ .callback = callback, .args = args }));
+    try send(wm, c, try wire.encode_server_call(a, .{
+        .callback = callback,
+        .args = args,
+        .nested = c.running > 0,
+    }));
 
     const deadline = now_ms() + call_timeout_ms;
     var eof = false;

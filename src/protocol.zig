@@ -614,7 +614,15 @@ pub const CallArgs = union(enum) {
 
 /// duckwm calling one of the client's callbacks, inside a transaction. The
 /// client may send requests (they run in that transaction), then a Return.
-pub const Call = struct { callback: u64, args: CallArgs };
+pub const Call = struct {
+    callback: u64,
+    args: CallArgs,
+    /// Set off by a request of this client's that's still running. A call that
+    /// isn't, arriving while the client waits on a response, crossed that
+    /// request on the wire: duckwm runs the request inside this call, and
+    /// answers it before anything the callback sends.
+    nested: bool = false,
+};
 
 /// The end of a Call: commands to run in the same transaction, or an error
 /// that rolls it back. A factory sets callback to the arranger it made; an

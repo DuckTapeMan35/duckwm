@@ -754,6 +754,7 @@ message CallArgs {
 message Call {
   uint64 callback = 1;
   CallArgs args = 2;
+  bool nested = 3;
 }
 
 message Command {
