@@ -16,10 +16,10 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Tell duckwm_zig to sync
+      - name: Tell libduckwm to sync
         env:
           GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
         run: |
-          gh api repos/DuckTapeMan35/duckwm_zig/dispatches \
+          gh api repos/DuckTapeMan35/libduckwm/dispatches \
             -f event_type=duckwm-client-changed \
             -f "client_payload[sha]=${{ github.sha }}"
