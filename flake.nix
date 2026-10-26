@@ -43,6 +43,7 @@
           pkgs.river
           pkgs.foot
           pkgs.protobuf
+          pkgs.lua-language-server
         ];
         buildInputs = with pkgs; [
           # x11 backend

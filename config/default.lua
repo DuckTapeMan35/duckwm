@@ -9,7 +9,6 @@
 --
 -- Every part is set up on its own, so one that fails (an API that changed,
 -- say) doesn't take the rest down: Super+F1 shows the keys, and what failed.
--- To make it yours, copy it to ~/.config/duckwm/config.lua.
 -- ============================================================
 
 local X11 = wm.PLATFORM == wm.PLATFORM_X11
@@ -129,6 +128,7 @@ end
 
 local HELP = "Super: Return terminal · R run · Shift+Q close · F float · F11 fullscreen · "
 	.. "hjkl/arrows focus (+Shift swap, +Ctrl resize) · 1-9 workspace (+Shift send) · "
+	.. "Ctrl+G group (+Shift ungroup) · Ctrl+U out of group · A group / Ctrl+A back in · "
 	.. ", . monitor (+Shift send) · Shift+N layout · Shift+R reload · Shift+E quit"
 
 local function help()
@@ -226,14 +226,14 @@ section("scratchpad", function()
 				return
 			end
 		end
-		wm.scratchpad_toggle(pad)
+		wm.scratchpad_toggle(pad --[[@as integer]])
 	end)
 
 	bind(M | S, "Escape", "release scratchpad", function()
 		if not alive() then
 			return
 		end
-		wm.scratchpad_show(pad) -- onto this workspace, focused
+		wm.scratchpad_show(pad --[[@as integer]]) -- onto this workspace, focused
 		wm.toggle_floating() -- it floats: toggling drops it into the tiling
 		pad = nil
 	end)
@@ -274,6 +274,34 @@ section("glue", function()
 		wm.align_top(f, a)
 		wm.align_top(a, f)
 	end)
+end)
+
+-- Groups: windows laid out as one, inside their own rectangle, by an arranger
+-- of their own. Super+Ctrl+G wraps the focused window in a group, and new
+-- windows open in the focused window's group; Super+Ctrl+U takes a window
+-- out of its group, Super+Ctrl+Shift+G dissolves the group. Super+A focuses
+-- the group itself, so closing, floating or sending it acts on all of it;
+-- Super+Ctrl+A goes back in.
+section("groups", function()
+	wm.set_group_outline(2, 0x5e81ac)
+	bind(M | C, "g", "group", function()
+		wm.create_group()
+	end)
+	bind(M | C | S, "g", "ungroup", function()
+		local f = wm.get_focused()
+		local g = f and (wm.get_node_type(f) == "group" and f or wm.get_group(f))
+		if g then
+			wm.ungroup(g)
+		end
+	end)
+	bind(M | C, "u", "out of group", function()
+		local f = wm.get_focused()
+		if f and wm.get_group(f) then
+			wm.move_to_group(f)
+		end
+	end)
+	bind(M, "a", "focus group", wm.focus_parent)
+	bind(M | C, "a", "focus in group", wm.focus_child)
 end)
 
 -- ------------------------------------------------------------
@@ -340,159 +368,19 @@ end)
 -- whole layout and the state to keep; duckwm stores the state per
 -- workspace. Window constraints are relative to the work area.
 -- ============================================================
-local L = {}
+-- wm.arrange (built into duckwm) has the pieces: rows and columns that
+-- compile to keyed splits, rectangles, track, and grid, fair and tile.
+local L = wm.arrange
 
-function L.key(k)
-	return { key = k }
-end
-
-function L.fixed(x, y, w, h)
-	return {
-		{ type = "fixed_x", value = x },
-		{ type = "fixed_y", value = y },
-		{ type = "fixed_width", value = math.max(0, w) },
-		{ type = "fixed_height", value = math.max(0, h) },
-	}
-end
-
-function L.at(id, x, y, w, h)
-	return { id = id, constraints = L.fixed(x, y, w, h) }
-end
-
-function L.cell_abs(container, x, y, w, h)
-	return { type = "grid_cell_abs", x = x, y = y, w = math.max(0, w), h = math.max(0, h), container = container }
-end
-
-function L.split(container, axis, children, ratios)
-	if not ratios then
-		ratios = {}
-		for i = 1, #children do
-			ratios[i] = 1 / #children
-		end
-	end
-	return { type = "split", container = container, axis = axis, ratios = ratios, children = children }
-end
-
--- The tiled windows, without the one being unmapped.
-function L.windows(s)
-	local out = {}
-	for _, w in ipairs(s.windows or {}) do
-		if not (s.event == "unmap" and w.id == s.id) then
-			out[#out + 1] = w.id
-		end
-	end
-	return out
-end
-
-function L.geometry(s, id)
-	for _, w in ipairs(s.windows or {}) do
-		if w.id == id then
-			return w.geometry
-		end
-	end
-end
-
-function L.area(s, id)
+-- A window's size in pixels, for picking the biggest.
+local function size(s, id)
 	local g = L.geometry(s, id)
 	return g and g.width * g.height or 0
 end
 
--- The state as stored, or a fresh default if it's missing or not a table.
-function L.state(s, default)
-	return type(s.state) == "table" and s.state or default
-end
-
--- Keyed container k's split ratios as duckwm has them: resizes end up here.
-function L.ratios_of(s, k)
-	for _, n in ipairs((s.layout or {}).nodes or {}) do
-		if type(n.id) == "table" and n.id.key == k then
-			for _, c in ipairs(n.constraints or {}) do
-				if c.type == "split" then
-					return c.ratios
-				end
-			end
-		end
-	end
-end
-
--- Nested rows ("h") and columns ("v"). A branch of one child without an
--- explicit key is just that child. opts: ratios, key.
-function L.branch(axis, kids, opts)
-	opts = opts or {}
-	if #kids == 0 then
-		return nil
-	end
-	if #kids == 1 and opts.key == nil then
-		return kids[1]
-	end
-	local ratios = opts.ratios
-	if ratios and #ratios ~= #kids then
-		ratios = nil
-	end
-	return { axis = axis, kids = kids, ratios = ratios, key = opts.key }
-end
-
--- A tree as nodes: keyed containers holding splits. Keys are depth-first
--- from 0 unless given; a container's ratios as duckwm has them win over the
--- tree's while it has the same number of children.
-function L.compile(s, t)
-	local wa = s.work_area
-	if t == nil then
-		return {}
-	end
-	if type(t) ~= "table" then
-		return { L.at(t, 0, 0, wa.width, wa.height) }
-	end
-	local branches, taken = {}, {}
-	local function walk(b)
-		branches[#branches + 1] = b
-		if b.key then
-			taken[b.key] = true
-		end
-		for _, c in ipairs(b.kids) do
-			if type(c) == "table" then
-				walk(c)
-			end
-		end
-	end
-	walk(t)
-	local auto = 0
-	for _, b in ipairs(branches) do
-		if b.key then
-			b.k = b.key
-		else
-			while taken[auto] do
-				auto = auto + 1
-			end
-			b.k, auto = auto, auto + 1
-		end
-	end
-	local nodes = {}
-	for _, b in ipairs(branches) do
-		local stored = L.ratios_of(s, b.k)
-		local ratios = (stored and #stored == #b.kids) and stored or b.ratios
-		local kids = {}
-		for i, c in ipairs(b.kids) do
-			kids[i] = type(c) == "table" and L.key(c.k) or c
-		end
-		local cons = b == t and L.fixed(0, 0, wa.width, wa.height) or {}
-		cons[#cons + 1] = L.split(L.key(b.k), b.axis, kids, ratios)
-		nodes[#nodes + 1] = { id = L.key(b.k), constraints = cons }
-		for _, c in ipairs(b.kids) do
-			if type(c) ~= "table" then
-				nodes[#nodes + 1] = { id = c, constraints = {} }
-			end
-		end
-	end
-	return nodes
-end
-
--- The reply: the whole layout and the state to keep; a new window gets focus.
-function L.done(s, nodes, state)
-	if s.event == "map" then
-		focus(s.id)
-	end
-	return { nodes = nodes }, state
+-- A row ("h") or column ("v") of these children.
+local function branch(axis, kids)
+	return (axis == "h" and L.row or L.col)(table.unpack(kids))
 end
 
 -- ------------------------------------------------------------
@@ -514,43 +402,6 @@ local function indicate(windows, focused)
 	if focused and contains(windows, focused) then
 		pcall(wm.set_node_indicator, focused, dir_of(focused) == "h" and "right" or "bottom")
 	end
-end
-
--- ------------------------------------------------------------
--- Grid: as square as fits, filled row by row. No state, nothing to go
--- wrong: also what any other layout falls back to if it fails.
--- ------------------------------------------------------------
-local function grid(s)
-	local ws = L.windows(s)
-	if #ws == 0 then
-		return L.done(s, {})
-	end
-	local cols = math.ceil(math.sqrt(#ws))
-	local rows = math.ceil(#ws / cols)
-	local W, H = s.work_area.width, s.work_area.height
-	local nodes = {}
-	for i, w in ipairs(ws) do
-		local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
-		local x0, x1 = math.floor(c * W / cols), math.floor((c + 1) * W / cols)
-		local y0, y1 = math.floor(r * H / rows), math.floor((r + 1) * H / rows)
-		nodes[i] = L.at(w, x0, y0, x1 - x0, y1 - y0)
-	end
-	return L.done(s, nodes)
-end
-
--- Fair: columns of near-equal windows; two side by side, then as square as possible.
-local function fair(s)
-	local ws = L.windows(s)
-	local rows = #ws == 2 and 1 or math.max(1, math.ceil(math.sqrt(#ws)))
-	local columns = {}
-	for i = 1, #ws, rows do
-		local col = {}
-		for j = i, math.min(#ws, i + rows - 1) do
-			col[#col + 1] = ws[j]
-		end
-		columns[#columns + 1] = L.branch("v", col)
-	end
-	return L.done(s, L.compile(s, L.branch("h", columns)))
 end
 
 -- Dwindle: each new window splits the focused one, alternating direction,
@@ -597,7 +448,7 @@ local function dw_build(t)
 	if type(t) ~= "table" then
 		return t
 	end
-	return L.branch(t.axis, { dw_build(t.a), dw_build(t.b) }, { key = t.k })
+	return branch(t.axis, { dw_build(t.a), dw_build(t.b) }):key(t.k)
 end
 
 local function dwindle(s)
@@ -620,7 +471,7 @@ local function dwindle(s)
 				local ls = dw_leaves(st.tree)
 				local target = ls[1]
 				for _, x in ipairs(ls) do
-					if L.area(s, x) > L.area(s, target) then
+					if size(s, x) > size(s, target) then
 						target = x
 					end
 				end
@@ -643,7 +494,7 @@ local function dwindle(s)
 			have[w] = true
 		end
 	end
-	return L.done(s, L.compile(s, dw_build(st.tree)), st)
+	return L.reply(s, dw_build(st.tree), st)
 end
 
 -- Scroller2D: rows of windows on a canvas wider than the screen, panned to
@@ -743,7 +594,7 @@ local function scroller2d(s)
 	if #rows == 0 then
 		wm.set_virtual_size(W, H)
 		wm.set_pan(0, 0)
-		return L.done(s, {}, false)
+		return L.reply(s, {}, false)
 	end
 
 	if s.event == "resize" then -- keep the sizes the user dragged to
@@ -810,7 +661,7 @@ local function scroller2d(s)
 		focus(t)
 		indicate(ids, t)
 	end
-	return L.done(s, nodes, { rows = rows })
+	return L.reply(s, nodes, { rows = rows })
 end
 
 -- Manual: i3-style. A new window joins the focused one's split if that split
@@ -880,7 +731,7 @@ local function m_insert(s, st, win)
 		f = s.prev_id
 	else
 		for _, x in ipairs(ls) do
-			if L.area(s, x) > L.area(s, f) then
+			if size(s, x) > size(s, f) then
 				f = x
 			end
 		end
@@ -890,13 +741,13 @@ local function m_insert(s, st, win)
 	local p, i = m_parent(st.tree, f)
 	if p and p.axis == axis then -- join f's split, right after it, with f's share
 		table.insert(p.kids, i + 1, win)
-		table.insert(p.ratios, i + 1, p.ratios[i] or 1 / #p.kids)
+		table.insert(p.ratios, i + 1, p.ratios[i] or (1 / #p.kids))
 		p.ratios = renorm(p.ratios)
 		return
 	end
 	local pair = { k = st.key, axis = axis, kids = { f, win }, ratios = { 0.5, 0.5 } }
 	st.key = st.key + 1
-	if p then
+	if p and i then
 		p.kids[i] = pair
 	else
 		st.tree = pair
@@ -914,7 +765,7 @@ local function m_remove(st, win)
 	p.ratios = renorm(p.ratios)
 	if #p.kids == 1 then -- a split of one: its child takes its place
 		local gp, j = m_parent(st.tree, p)
-		if gp then
+		if gp and j then
 			gp.kids[j] = p.kids[1]
 		else
 			st.tree = p.kids[1]
@@ -930,7 +781,7 @@ local function m_build(t)
 	for i, c in ipairs(t.kids) do
 		kids[i] = m_build(c)
 	end
-	return L.branch(t.axis, kids, { key = t.k, ratios = t.ratios })
+	return branch(t.axis, kids):key(t.k):ratios(t.ratios)
 end
 
 local function manual(s)
@@ -963,40 +814,125 @@ local function manual(s)
 	elseif s.event == "unmap" and #ids > 0 then
 		indicate(ids, contains(ids, s.prev_id) and s.prev_id or nil)
 	end
-	return L.done(s, L.compile(s, m_build(st.tree)), st)
+	return L.reply(s, m_build(st.tree), st)
+end
+
+-- Pinwheel: four arms turning around the first window, each one running
+-- along a side of it and past its corner. No series of splits makes this
+-- (there's no line across the screen to cut it along first), so no tree,
+-- stack or grid can hold it either: what holds it is constraints between
+-- windows. The centre is placed; every arm is tied to the centre's edges and
+-- to the work area's, so resizing the centre turns the arms with it. From
+-- the sixth window on, the arms take turns adding a window. Under five
+-- windows, it's tile.
+local function pinwheel(s)
+	local order = L.track(s, type(s.state) == "table" and s.state.order or {})
+	if #order < 5 then
+		local tile = L.row(order[1], L.col(table.unpack(order, 2))):ratios({ 0.55, 0.45 })
+		return L.reply(s, tile, { order = order })
+	end
+	local area = L.area(s)
+	local st = L.state(s, {})
+
+	-- The centre: where it was (resized by hand, maybe), or the middle 40%.
+	local c = st.center
+	if s.event == "resize" then
+		local g = L.geometry(s, order[1])
+		if g then
+			c = { g.x - s.work_area.x, g.y - s.work_area.y, g.width, g.height }
+		end
+	end
+	if type(c) ~= "table" or #c ~= 4 then
+		c = {
+			math.floor(area.width * 0.3),
+			math.floor(area.height * 0.3),
+			math.floor(area.width * 0.4),
+			math.floor(area.height * 0.4),
+		}
+	end
+
+	local function rel(kind, other)
+		return { type = kind, other = other }
+	end
+	local centre, root = order[1], L.key(0)
+	-- Top: from the left edge to the centre's right. Right: from the top to
+	-- the centre's bottom. Bottom: from the centre's left to the right edge.
+	-- Left: from the centre's top to the bottom.
+	local arms = {
+		{
+			axis = "h",
+			cons = { rel("align_left", root), rel("align_top", root), rel("above", centre), rel("align_right", centre) },
+		},
+		{
+			axis = "v",
+			cons = {
+				rel("right_of", centre),
+				rel("align_top", root),
+				rel("align_right", root),
+				rel("align_bottom", centre),
+			},
+		},
+		{
+			axis = "h",
+			cons = {
+				rel("below", centre),
+				rel("align_left", centre),
+				rel("align_right", root),
+				rel("align_bottom", root),
+			},
+		},
+		{
+			axis = "v",
+			cons = {
+				rel("left_of", centre),
+				rel("align_left", root),
+				rel("align_top", centre),
+				rel("align_bottom", root),
+			},
+		},
+	}
+	for i = 2, #order do -- windows 2-5 start the arms, the rest take turns
+		local arm = arms[(i - 2) % 4 + 1]
+		arm.windows = arm.windows or {}
+		arm.windows[#arm.windows + 1] = order[i]
+	end
+
+	local nodes = {
+		{ id = root, constraints = L.fixed(0, 0, area.width, area.height) },
+		{ id = centre, constraints = L.fixed(c[1], c[2], c[3], c[4]) },
+	}
+	for k, arm in ipairs(arms) do -- an arm is a container, its windows split along it
+		local cons = arm.cons
+		cons[#cons + 1] = L.split(L.key(k), arm.axis, arm.windows)
+		nodes[#nodes + 1] = { id = L.key(k), constraints = cons }
+		for _, w in ipairs(arm.windows) do
+			nodes[#nodes + 1] = { id = w, constraints = {} }
+		end
+	end
+	return L.reply(s, nodes, { order = order, center = c })
 end
 
 -- ============================================================
--- Arrangers. set_arranger takes a factory; state lives in duckwm, so every
--- workspace shares the one function. A layout that fails is reported and
--- laid out as a grid this time, its state reset so the next call starts over.
+-- Arrangers. A layout that fails is reported (Super+F1) and laid out as a
+-- grid this time, its state reset so the next call starts over.
 -- ============================================================
-local function arranger(name, f)
-	return function()
-		return function(_, _, _, s)
-			local ok, layout, state = pcall(f, s)
-			if ok then
-				return layout, state
-			end
-			complain("layout " .. name, layout)
-			local nodes = grid(s)
-			return nodes, false
-		end
-	end
+L.on_error = function(name, err)
+	complain("layout " .. name, err)
 end
 
 local LAYOUTS = {
-	{ "fair", fair },
-	{ "grid", grid },
-	{ "dwindle", dwindle },
-	{ "scroller2d", scroller2d },
-	{ "manual", manual },
+	L.fair,
+	L.grid,
+	L.arranger("dwindle", dwindle),
+	L.arranger("scroller2d", scroller2d),
+	L.arranger("manual", manual),
+	L.arranger("pinwheel", pinwheel),
 }
 
 local function use(i)
-	wm.set_arranger(arranger(LAYOUTS[i][1], LAYOUTS[i][2]), LAYOUTS[i][1])
+	L.set(LAYOUTS[i])
 	wm.set_arranger_index(i)
-	say("layout: " .. LAYOUTS[i][1], 1500)
+	say("layout: " .. LAYOUTS[i].name, 1500)
 end
 
 section("layouts", function()
@@ -1014,5 +950,5 @@ section("layouts", function()
 		DIRS[f] = dir_of(f) == "h" and "v" or "h"
 		indicate({ f }, f)
 	end)
-	wm.set_default_arranger(arranger("fair", fair), "fair")
+	L.set_default(L.fair)
 end)

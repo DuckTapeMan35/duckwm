@@ -14,8 +14,7 @@ zig-pkg/
 *.exe
 *.pdb
 
-# Generated API docs and meta
-meta/
+# Generated API docs
 API.md
 API.norg
 

@@ -34,6 +34,8 @@ pub fn free_graph(wm: *WM, g: *Graph) void {
     }
     g.nodes.deinit(wm.allocator);
     g.focus_edges.deinit(wm.allocator);
+    g.allocator.free(g.arranger_state);
+    g.arranger_state = "";
 }
 
 pub fn enter_workspace(wm: *WM, node: *Node) !void {

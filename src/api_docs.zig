@@ -1109,9 +1109,9 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Geometry",
         .name = "get_node_type",
-        .desc = "Return the type of a node: 'window', 'empty', or 'workspace', or nil if not found.",
+        .desc = "Return the type of a node: 'window', 'empty', 'group' or 'workspace', or nil if not found.",
         .params = &.{.{ .name = "id", .typ = "integer" }},
-        .ret = "'window'|'empty'|'workspace'|nil",
+        .ret = "'window'|'empty'|'workspace'|'workspace'|nil",
     },
     .{
         .category = "Geometry",

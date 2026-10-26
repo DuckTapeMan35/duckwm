@@ -1,3 +1,4 @@
+const std = @import("std");
 const ziglua = @import("ziglua");
 const wm_mod = @import("wm");
 const types = @import("types");
@@ -46,6 +47,21 @@ pub fn setup_lua(wm: *WM, lua: *Lua) void {
     }
     lua.setGlobal("wm");
     repl.install(lua);
+    install_arrange(lua);
+}
+
+/// wm.arrange, written in Lua: rows and columns, rectangles, track, and the
+/// ready-made arrangers. It sets wm.arrange itself.
+fn install_arrange(lua: *Lua) void {
+    lua.loadBuffer(@embedFile("arrange.lua"), "=duckwm/arrange.lua", .text) catch {
+        std.debug.print("wm.arrange: {s}\n", .{lua.toString(-1) catch "failed to load"});
+        lua.pop(1);
+        return;
+    };
+    lua.protectedCall(.{ .results = 0 }) catch {
+        std.debug.print("wm.arrange: {s}\n", .{lua.toString(-1) catch "failed to run"});
+        lua.pop(1);
+    };
 }
 
 pub fn reset_vm(wm: *WM) !*Lua {

@@ -47,7 +47,7 @@ return function(src)
 		local err
 		f, err = load(src, "=repl", "t")
 		if not f then
-			if err:find("<eof>$") then
+			if err and err:find("<eof>$") then
 				return "incomplete", ""
 			end
 			return "error", err .. "\n"

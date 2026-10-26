@@ -251,6 +251,8 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&b.addInstallFile(meta_lua, "share/duckwm/meta/wm.lua").step);
     b.getInstallStep().dependOn(&b.addInstallFile(api_md, "share/doc/duckwm/API.md").step);
     b.getInstallStep().dependOn(&b.addInstallFile(api_norg, "share/doc/duckwm/API.norg").step);
+    // wm.arrange is Lua itself, annotated: LuaLS reads it as it is.
+    b.getInstallStep().dependOn(&b.addInstallFile(b.path("src/lua/arrange.lua"), "share/duckwm/meta/arrange.lua").step);
 
     // zig build meta: the same files, copied back into the source tree.
     const update_meta = b.addUpdateSourceFiles();
