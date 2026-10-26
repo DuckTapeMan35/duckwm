@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Tell libduckwm to sync
         env:
-          GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
+          GH_TOKEN: ${{ secrets.DUCKWM_SYNC }}
         run: |
           gh api repos/DuckTapeMan35/libduckwm/dispatches \
             -f event_type=duckwm-client-changed \

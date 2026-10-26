@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Tell duckwm_py to sync
         env:
-          GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
+          GH_TOKEN: ${{ secrets.DUCKWM_SYNC }}
         run: |
           gh api repos/DuckTapeMan35/duckwm_py/dispatches \
             -f event_type=duckwm-proto-changed \
@@ -19,7 +19,7 @@ jobs:
 
       - name: Tell duckwm_rust to sync
         env:
-          GH_TOKEN: ${{ secrets.DUCKWM_PY_TOKEN }}
+          GH_TOKEN: ${{ secrets.DUCKWM_SYNC }}
         run: |
           gh api repos/DuckTapeMan35/duckwm_rust/dispatches \
             -f event_type=duckwm-proto-changed \
