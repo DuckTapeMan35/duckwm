@@ -17,10 +17,29 @@ pub const platform = struct {
 pub const OutputInfo = struct {
     /// Stays the same while it's connected.
     id: u32,
+    /// Its connector ("DP-1"), for paths; empty if the backend can't tell.
+    name: Name = .{},
     /// Where it is, in global coordinates.
     rect: Rect,
     /// rect minus the docks and bars on it.
     usable: Rect,
+
+    /// A short name kept in place, so an OutputInfo needs no allocation.
+    pub const Name = struct {
+        buf: [32]u8 = undefined,
+        len: u8 = 0,
+
+        /// s, cut to fit.
+        pub fn init(s: []const u8) Name {
+            var n: Name = .{ .len = @intCast(utf8_prefix_len(s, 32)) };
+            @memcpy(n.buf[0..n.len], s[0..n.len]);
+            return n;
+        }
+
+        pub fn slice(n: *const Name) []const u8 {
+            return n.buf[0..n.len];
+        }
+    };
 };
 
 pub const Event = union(enum) {

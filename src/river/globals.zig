@@ -34,8 +34,11 @@ pub fn registry_listener(registry: *wl.Registry, event: wl.Registry.Event, s: *S
                 s.xkb_config = o;
                 o.setListener(*State, keyboard.xkb_config_listener, s);
             }
+            if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq) {
+                s.wl_outputs.put(s.allocator, g.name, g.version) catch {};
+            }
         },
-        .global_remove => {},
+        .global_remove => |g| _ = s.wl_outputs.remove(g.name),
     }
 }
 

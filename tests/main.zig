@@ -222,3 +222,47 @@ test "the default config's pinwheel: arms around the centre, turning with it" {
     try std.testing.expectEqual(rect_of(&h, 2).y, rect_of(&h, 6).y);
     try std.testing.expect(!overlaps(rect_of(&h, 2), rect_of(&h, 6)));
 }
+
+// ---- names ----
+test "names: set, read back, cleared, and undone with a failed transaction" {
+    var h = try Harness.init(std.testing.allocator,
+        \\wm.bind(wm.MOD_SUPER, "n", function() wm.set_name(wm.get_focused(), "chat") end)
+        \\wm.bind(wm.MOD_SUPER, "c", function() wm.set_name(wm.get_focused(), nil) end)
+        \\wm.bind(wm.MOD_SUPER, "s", function()
+        \\    slash_refused = not pcall(wm.set_name, wm.get_focused(), "a/b")
+        \\end)
+    );
+    defer h.deinit();
+    const S = types.mod.super;
+    h.map(1);
+    const n = h.wm.node_registry.get(h.wm.window_to_node_id.get(1).?).?;
+    try std.testing.expectEqualStrings("", n.name);
+
+    h.key(S, "n");
+    try std.testing.expectEqualStrings("chat", n.name);
+    // Journaled like the rest: a transaction that fails puts it back.
+    const m = h.wm.tx_begin();
+    try n.owner_graph.?.replace_bytes(&n.name, "other");
+    h.wm.tx_end(m, false);
+    try std.testing.expectEqualStrings("chat", n.name);
+
+    h.key(S, "s"); // no '/' in a name
+    try std.testing.expectEqualStrings("chat", n.name);
+    const lua = h.wm.lua.?;
+    _ = lua.getGlobal("slash_refused");
+    defer lua.pop(1);
+    try std.testing.expect(lua.toBoolean(-1));
+    h.key(S, "c");
+    try std.testing.expectEqualStrings("", n.name);
+    h.key(S, "n"); // named when it's destroyed: freed with it (the test allocator checks)
+}
+
+test "names: outputs are named after their connector" {
+    var h = try Harness.init(std.testing.allocator,
+        \\local o = wm.get_outputs()[1]
+        \\assert(o.name == "FAKE-1", tostring(o.name))
+        \\assert(wm.get_output_states()[1].name == "FAKE-1")
+    );
+    defer h.deinit();
+    try std.testing.expectEqualStrings("FAKE-1", h.wm.output.name.slice());
+}

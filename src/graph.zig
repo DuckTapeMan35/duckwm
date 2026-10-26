@@ -91,75 +91,50 @@ const FocusEdge = struct {
 
 pub const Node = struct {
     content: NodeContent,
-    owner_graph: ?*Graph,
+    owner_graph: ?*Graph = null,
     preview_window: ?types.WindowHandle = null,
-    urgent: bool,
-    hidden: bool,
-    wants_fullscreen: bool,
+    urgent: bool = false,
+    hidden: bool = false,
+    wants_fullscreen: bool = false,
 
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    floating: bool,
+    x: i32 = 0,
+    y: i32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
+    floating: bool = false,
 
     constraints: std.ArrayListUnmanaged(Constraint),
 
-    border_color_focused: ?u32,
-    border_color_unfocused: ?u32,
-    border_color_top: ?u32,
-    border_color_bottom: ?u32,
-    border_color_left: ?u32,
-    border_color_right: ?u32,
+    border_color_focused: ?u32 = null,
+    border_color_unfocused: ?u32 = null,
+    border_color_top: ?u32 = null,
+    border_color_bottom: ?u32 = null,
+    border_color_left: ?u32 = null,
+    border_color_right: ?u32 = null,
     /// The border side drawn in the WM's indicator color, if any.
-    indicator_side: ?types.Side,
+    indicator_side: ?types.Side = null,
 
-    on_remove: ?ReparentStrategy,
-    dead: bool,
-    parked_term: ?*Node,
-    focus_serial: u64,
+    on_remove: ?ReparentStrategy = null,
+    dead: bool = false,
+    parked_term: ?*Node = null,
+    focus_serial: u64 = 0,
     /// A container named by a layout (protocol.Ref.key): duckwm creates it
     /// when a layout first mentions the key, and destroys it once one doesn't.
     key: ?u32 = null,
+    name: []const u8 = "",
 
-    info: types.WindowInfo,
+    info: types.WindowInfo = .{},
 
     pub fn init(content: NodeContent, allocator: std.mem.Allocator) !Node {
         return .{
             .content = content,
-            .owner_graph = null,
-            .preview_window = null,
-            .urgent = false,
-            .hidden = false,
-            .wants_fullscreen = false,
-
-            .x = 0,
-            .y = 0,
-            .width = 0,
-            .height = 0,
-            .floating = false,
-
-            .border_color_focused = null,
-            .border_color_unfocused = null,
-            .border_color_top = null,
-            .border_color_bottom = null,
-            .border_color_left = null,
-            .border_color_right = null,
-            .indicator_side = null,
-
             .constraints = try std.ArrayListUnmanaged(Constraint).initCapacity(allocator, 4),
-
-            .on_remove = null,
-            .dead = false,
-            .parked_term = null,
-            .focus_serial = 0,
-
-            .info = .{},
         };
     }
 
     pub fn deinit(self: *Node, allocator: std.mem.Allocator) void {
         self.constraints.deinit(allocator);
+        allocator.free(self.name);
     }
 
     /// The window shown for this node: its own, or a workspace's preview.

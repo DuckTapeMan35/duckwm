@@ -89,6 +89,7 @@ pub fn build(b: *std.Build) void {
             scanner.generate("river_xkb_config_v1", 1);
             scanner.generate("river_input_manager_v1", 1);
             scanner.generate("wl_seat", 5);
+            scanner.generate("wl_output", 4);
 
             const rc_tc = b.addTranslateC(.{
                 .root_source_file = b.path("src/river/c.h"),

@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
 const river = wayland.client.river;
+const wl = wayland.client.wl;
 const State = @import("state.zig").State;
 const nonneg = @import("util.zig").nonneg;
 
@@ -17,6 +18,9 @@ pub const Output = struct {
     /// Area left after layer-shell exclusive zones, in global coordinates.
     usable: ?types.Rect = null,
     default_pending: bool = false,
+    /// Its wl_output, bound only to hear its name.
+    wl_output: ?*wl.Output = null,
+    name: types.OutputInfo.Name = .{},
 
     /// The whole output, in global coordinates.
     pub fn rect(o: *const Output) types.Rect {
@@ -60,6 +64,7 @@ fn remove(s: *State, o: *Output) void {
         }
     }
     if (o.layer) |l| l.destroy();
+    if (o.wl_output) |w| if (w.getVersion() >= 3) w.release() else w.destroy();
     o.obj.destroy();
     if (s.primary == o) set_primary(s, if (s.outputs.items.len > 0) s.outputs.items[0] else null);
     s.push(.reserved_area_changed);
@@ -96,7 +101,7 @@ fn info(s: *const State, o: *const Output) types.OutputInfo {
         usable.y += @intCast(bar.height);
         usable.height -|= bar.height;
     };
-    return .{ .id = o.id, .rect = o.rect(), .usable = usable };
+    return .{ .id = o.id, .rect = o.rect(), .usable = usable, .name = o.name };
 }
 
 fn output_listener(_: *river.OutputV1, event: river.OutputV1.Event, o: *Output) void {
@@ -113,6 +118,25 @@ fn output_listener(_: *river.OutputV1, event: river.OutputV1.Event, o: *Output) 
             s.push(.reserved_area_changed);
         },
         .removed => remove(s, o),
+        .wl_output => |e| bind_wl_output(s, o, e.name),
+    }
+}
+
+/// river told us which wl_output o is: bind it for its name (wl_output 4+).
+fn bind_wl_output(s: *State, o: *Output, global: u32) void {
+    const version = s.wl_outputs.get(global) orelse return;
+    if (version < 4) return;
+    const w = s.registry.bind(global, wl.Output, 4) catch return;
+    o.wl_output = w;
+    w.setListener(*Output, wl_output_listener, o);
+}
+
+fn wl_output_listener(_: *wl.Output, event: wl.Output.Event, o: *Output) void {
+    switch (event) {
+        .name => |e| {
+            o.name = .init(std.mem.span(e.name));
+            o.state.push(.reserved_area_changed); // core picks it up from list()
+        },
         else => {},
     }
 }

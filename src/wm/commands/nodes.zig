@@ -97,6 +97,20 @@ pub fn move_window_to_node(wm: *WM, args: Args(.move_window_to_node), _: Allocat
     return .nil;
 }
 
+pub fn set_name(wm: *WM, args: Args(.set_name), _: Allocator) !Value {
+    const n = wm.get_node_by_id(args.id) orelse return error.NoSuchNode;
+    const name = args.name orelse "";
+    if (std.mem.indexOfScalar(u8, name, '/') != null) return error.InvalidName;
+    const g = n.owner_graph orelse return error.NotInGraph;
+    try g.replace_bytes(&n.name, name);
+    return .nil;
+}
+
+pub fn get_name(wm: *WM, args: Args(.get_name), _: Allocator) !Value {
+    const n = wm.get_node_by_id(args.id) orelse return .nil;
+    return if (n.name.len == 0) .nil else .{ .str = n.name };
+}
+
 // ---- queries ----
 pub fn get_container_of(wm: *WM, args: Args(.get_container_of), _: Allocator) !Value {
     const n = wm.get_node_by_id(args.id) orelse return .nil;

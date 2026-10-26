@@ -551,9 +551,9 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Workspaces",
         .name = "get_outputs",
-        .desc = "The monitors, the primary first: id, x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.",
+        .desc = "The monitors, the primary first: id, name (its connector, e.g. 'DP-1', nil if unknown), x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.",
         .params = &.{},
-        .ret = "{ id: integer, x: integer, y: integer, width: integer, height: integer, focused: boolean }[]",
+        .ret = "{ id: integer, name: string|nil, x: integer, y: integer, width: integer, height: integer, focused: boolean }[]",
     },
     .{
         .category = "Workspaces",
@@ -575,9 +575,9 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Workspaces",
         .name = "get_output_states",
-        .desc = "What every monitor shows, in one call (for bars): its id, x, y, whether it's focused, the positions of its workspaces with content (as get_workspace_positions), the current one's position, its level, layout name and window count, and its focused window (id, title, class) or nil.",
+        .desc = "What every monitor shows, in one call (for bars): its id, name, x, y, whether it's focused, the positions of its workspaces with content (as get_workspace_positions), the current one's position, its level, layout name and window count, and its focused window (id, title, class) or nil.",
         .params = &.{},
-        .ret = "{ id: integer, x: integer, y: integer, focused: boolean, workspaces: integer[], current: integer|nil, level: integer, layout: string|nil, windows: integer, window: { id: integer, title: string|nil, class: string|nil }|nil }[]",
+        .ret = "{ id: integer, name: string|nil, x: integer, y: integer, focused: boolean, workspaces: integer[], current: integer|nil, level: integer, layout: string|nil, windows: integer, window: { id: integer, title: string|nil, class: string|nil }|nil }[]",
     },
 
     // =========================================================
@@ -1509,6 +1509,23 @@ pub const entries = [_]ApiEntry{
     // =========================================================
     // Node Graph
     // =========================================================
+    .{
+        .category = "Node Graph",
+        .name = "set_name",
+        .desc = "Give a node a name, for paths like 'DP-1/web/chat' (no '/' in it). nil clears it. Kept until the node is gone, across config reloads.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "name", .typ = "string|nil" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Node Graph",
+        .name = "get_name",
+        .desc = "Return a node's name, or nil if it has none.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "string|nil",
+    },
     .{
         .category = "Node Graph",
         .name = "create_container",

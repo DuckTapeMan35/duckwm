@@ -25,7 +25,6 @@ pub const Backend = struct {
     state: *State,
 
     // ---- lifecycle ----
-
     pub fn init(allocator: std.mem.Allocator) !Backend {
         surface.init();
         const display = wl.Display.connect(null) catch return error.CannotOpenDisplay;
@@ -61,6 +60,7 @@ pub const Backend = struct {
         s.by_obj.deinit(s.allocator);
         for (s.outputs.items) |o| s.allocator.destroy(o);
         s.outputs.deinit(s.allocator);
+        s.wl_outputs.deinit(s.allocator);
         s.fresh.deinit(s.allocator);
         s.dead.deinit(s.allocator);
         s.events.deinit(s.allocator);

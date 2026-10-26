@@ -315,8 +315,8 @@ function wm.cleanup_left_behind() end
 ---@param enabled boolean
 function wm.set_autoclean(enabled) end
 
---- The monitors, the primary first: id, x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.
----@return { id: integer, x: integer, y: integer, width: integer, height: integer, focused: boolean }[]
+--- The monitors, the primary first: id, name (its connector, e.g. 'DP-1', nil if unknown), x, y, width, height, focused. Each has its own workspaces; switch_to_workspace acts on the focused one.
+---@return { id: integer, name: string|nil, x: integer, y: integer, width: integer, height: integer, focused: boolean }[]
 function wm.get_outputs() end
 
 --- Focus the nearest monitor in a direction: what was focused there last, or its top-left window. The pointer moves there too.
@@ -328,8 +328,8 @@ function wm.focus_output(dir) end
 ---@param dir 'left'|'right'|'up'|'down'
 function wm.send_to_output(id, dir) end
 
---- What every monitor shows, in one call (for bars): its id, x, y, whether it's focused, the positions of its workspaces with content (as get_workspace_positions), the current one's position, its level, layout name and window count, and its focused window (id, title, class) or nil.
----@return { id: integer, x: integer, y: integer, focused: boolean, workspaces: integer[], current: integer|nil, level: integer, layout: string|nil, windows: integer, window: { id: integer, title: string|nil, class: string|nil }|nil }[]
+--- What every monitor shows, in one call (for bars): its id, name, x, y, whether it's focused, the positions of its workspaces with content (as get_workspace_positions), the current one's position, its level, layout name and window count, and its focused window (id, title, class) or nil.
+---@return { id: integer, name: string|nil, x: integer, y: integer, focused: boolean, workspaces: integer[], current: integer|nil, level: integer, layout: string|nil, windows: integer, window: { id: integer, title: string|nil, class: string|nil }|nil }[]
 function wm.get_output_states() end
 
 --- Wrap nodes in a new group, which takes the place of the first of them. A group is laid out
@@ -874,6 +874,16 @@ function wm.set_reparent_strategy(id, strategy) end
 ---@param id integer
 ---@return { top: integer?, bottom: integer?, left: integer?, right: integer? }|nil
 function wm.get_node_border_side_colors(id) end
+
+--- Give a node a name, for paths like 'DP-1/web/chat' (no '/' in it). nil clears it. Kept until the node is gone, across config reloads.
+---@param id integer
+---@param name string|nil
+function wm.set_name(id, name) end
+
+--- Return a node's name, or nil if it has none.
+---@param id integer
+---@return string|nil
+function wm.get_name(id) end
 
 --- Create an empty container node in the current graph. Containers have no X window — they exist purely to define geometry for constraint targets.
 ---@return integer

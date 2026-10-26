@@ -136,7 +136,7 @@ pub fn update_strut(self: *Backend, win: c.Window, strut: ?Strut) bool {
 pub fn restack(self: *Backend) void {
     var rects: [16]types.Rect = undefined;
     var ids: [16]u32 = undefined;
-    const n = output.monitors(self, &rects, &ids);
+    const n = output.monitors(self, &rects, &ids, null);
     // Per monitor, how far its top, bottom, left and right are taken so far.
     var used = std.mem.zeroes([16][4]i32);
     var it = self.docks.map.iterator();

@@ -16,6 +16,7 @@ pub fn get_outputs(wm: *WM, _: void, arena: Allocator) !Value {
     for (wm.outputs.items, out) |o, *v| {
         v.* = .{ .map = try arena.dupe(Value.Field, &.{
             .{ .key = "id", .value = .{ .integer = o.id } },
+            .{ .key = "name", .value = try util.text(arena, o.name.slice()) },
             .{ .key = "x", .value = .{ .integer = o.rect.x } },
             .{ .key = "y", .value = .{ .integer = o.rect.y } },
             .{ .key = "width", .value = .{ .integer = o.rect.width } },
@@ -84,6 +85,7 @@ fn state_of(wm: *WM, o: *output.Output, is_focused: bool, arena: Allocator) !Val
 
     return .{ .map = try arena.dupe(Value.Field, &.{
         .{ .key = "id", .value = .{ .integer = o.id } },
+        .{ .key = "name", .value = try util.text(arena, o.name.slice()) },
         .{ .key = "x", .value = .{ .integer = o.rect.x } },
         .{ .key = "y", .value = .{ .integer = o.rect.y } },
         .{ .key = "focused", .value = .{ .boolean = is_focused } },

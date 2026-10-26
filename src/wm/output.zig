@@ -22,6 +22,8 @@ pub const Output = struct {
     rect: types.Rect,
     /// rect minus the docks, bars and error bar on it: where tiling happens.
     usable: types.Rect,
+    /// Its connector, as the backend names it ("DP-1"); may be empty.
+    name: types.OutputInfo.Name = .{},
     /// The usable area its arrangers last laid out for (to tell when they must again).
     arranged: types.Rect = zero,
     /// Its workspaces, as the one root graph used to hold them all.
@@ -67,6 +69,7 @@ pub fn sync(wm: *WM) !void {
         if (find(wm, info.id)) |o| {
             o.rect = info.rect;
             o.usable = info.usable;
+            o.name = info.name;
         } else try create(wm, info);
     }
     var i = wm.outputs.items.len;
@@ -95,7 +98,13 @@ pub fn deinit_all(wm: *WM) void {
 fn add(wm: *WM, info: types.OutputInfo) !*Output {
     const o = try wm.allocator.create(Output);
     errdefer wm.allocator.destroy(o);
-    o.* = .{ .id = info.id, .rect = info.rect, .usable = info.usable, .root = Graph.init(wm.allocator) };
+    o.* = .{
+        .id = info.id,
+        .rect = info.rect,
+        .usable = info.usable,
+        .name = info.name,
+        .root = Graph.init(wm.allocator),
+    };
     o.root.output = info.id;
     o.root.on_node_free = registry.on_node_freed;
     o.root.on_node_free_ctx = wm;

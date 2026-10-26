@@ -185,6 +185,8 @@ pub const CommandId = enum(u32) {
     get_node_info = 214,
     get_split_ratios = 215,
     get_all_windows = 216,
+    set_name = 217,
+    get_name = 218,
 
     // screen, pan, resizing: 300-399
     screen_width = 300,
@@ -415,6 +417,8 @@ pub const Command = union(CommandId) {
     get_node_info: One,
     get_split_ratios: One,
     get_all_windows,
+    set_name: struct { id: NodeId, name: ?[]const u8 },
+    get_name: One,
 
     // screen and work area
     screen_width,

@@ -37,6 +37,9 @@ pub const State = struct {
     seat: ?*river.SeatV1 = null,
     layer_seat: ?*river.LayerShellSeatV1 = null,
     outputs: std.ArrayListUnmanaged(*output.Output) = .empty,
+    /// wl_output globals' versions, by global name: bound when river says
+    /// which one an output is, to learn its connector's name.
+    wl_outputs: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     /// The output the pointer was last on, to report crossings.
     pointer_output: u32 = 0,
     /// Until multimonitor: the first output is "the screen".

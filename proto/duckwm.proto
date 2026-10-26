@@ -171,6 +171,11 @@ message MoveWindowToNode {
   uint32 dst = 2;
 }
 
+message SetName {
+  uint32 id = 1;
+  optional string name = 2;
+}
+
 message SetPan {
   sint32 x = 1;
   sint32 y = 2;
@@ -820,6 +825,8 @@ message Command {
     One get_node_info = 214;
     One get_split_ratios = 215;
     Empty get_all_windows = 216;
+    SetName set_name = 217;
+    One get_name = 218;
     Empty screen_width = 300;
     Empty screen_height = 301;
     Empty get_work_area = 302;
