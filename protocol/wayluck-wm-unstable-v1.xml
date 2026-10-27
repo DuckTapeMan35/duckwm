@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="wayluck_wm_unstable_v1">
+  <copyright>
+    SPDX-License-Identifier: GPL-3.0-or-later
+  </copyright>
+
+  <description summary="a window manager placing windows for wayluck">
+    The contract between wayluck and the window manager. The window manager
+    owns placement: where each window goes, what's shown and what isn't.
+    wayluck owns clients, buffers and pixels, and applies what it's told.
+
+    Unstable: changed in place, without version bumps, until it's frozen as
+    wayluck_wm_v1. A window manager and a wayluck from different commits may
+    not understand each other.
+  </description>
+
+  <interface name="wayluck_wm_manager_v1" version="1">
+    <description summary="the window manager's connection to wayluck">
+      Bound by the one window manager. On binding, wayluck sends an output
+      event for every output and a window event for every window, then
+      ready. After that, it sends them as they appear.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop managing">
+        Windows keep their places until another window manager binds.
+      </description>
+    </request>
+
+    <request name="transaction">
+      <description summary="start a transaction">
+        Changes made through it are applied together on commit, or not at all.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_transaction_v1"/>
+    </request>
+
+    <event name="unavailable">
+      <description summary="another window manager is bound">
+        This manager does nothing; the client should destroy it.
+      </description>
+    </event>
+
+    <event name="output">
+      <description summary="a new output"/>
+      <arg name="id" type="new_id" interface="wayluck_wm_output_v1"/>
+    </event>
+
+    <event name="window">
+      <description summary="a new window">
+        A toplevel that wants to be shown. Until a transaction places it,
+        it isn't.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_window_v1"/>
+    </event>
+
+    <event name="ready">
+      <description summary="everything that existed at bind time has been sent"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_output_v1" version="1">
+    <description summary="a monitor"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="forget the output (after removed)"/>
+    </request>
+
+    <event name="name">
+      <description summary="its connector name, e.g. DP-1"/>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="geometry">
+      <description summary="where it is, in global coordinates"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <event name="done">
+      <description summary="the events before this one describe the output's current state"/>
+    </event>
+
+    <event name="removed">
+      <description summary="the output is gone; destroy it"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_window_v1" version="1">
+    <description summary="a toplevel window"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="forget the window (after closed)"/>
+    </request>
+
+    <request name="close">
+      <description summary="ask the client to close it"/>
+    </request>
+
+    <event name="title">
+      <arg name="title" type="string"/>
+    </event>
+
+    <event name="app_id">
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="closed">
+      <description summary="the window is gone; destroy it">
+        It's no longer shown, and placing it does nothing.
+      </description>
+    </event>
+
+    <event name="focus_request">
+      <description summary="the user clicked it">
+        wayluck doesn't focus it: the window manager decides, with a
+        transaction's focus.
+      </description>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_transaction_v1" version="1">
+    <description summary="changes applied together">
+      Requests made before commit are collected, not applied. After commit,
+      the transaction takes no more requests; wayluck answers with applied
+      or failed, and then it should be destroyed.
+    </description>
+
+    <enum name="error">
+      <entry name="already_committed" value="0" summary="a request after commit"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="drop it; uncommitted changes are discarded"/>
+    </request>
+
+    <request name="place">
+      <description summary="show a window at a rectangle">
+        Global coordinates. The client is asked to take that size; whatever
+        size it commits, the window is shown at x, y.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="hide">
+      <description summary="stop showing a window"/>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+    </request>
+
+    <request name="commit">
+      <description summary="apply everything in this transaction, together"/>
+    </request>
+
+    <request name="focus">
+      <description summary="give a window the keyboard">
+        With no window, no window has it. The focused window is drawn as
+        active, and raised above the others.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1" allow-null="true"/>
+    </request>
+
+    <event name="applied">
+      <description summary="the changes are on screen"/>
+    </event>
+
+    <event name="failed">
+      <description summary="nothing was applied">
+        For example, a window in it was closed first.
+      </description>
+      <arg name="reason" type="string"/>
+    </event>
+  </interface>
+</protocol>
