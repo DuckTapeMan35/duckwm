@@ -1539,6 +1539,20 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Node Graph",
+        .name = "set_scope",
+        .desc = "Make the keybinds, rules and settings the caller sets up from now on apply only in path, as within does; nil for everywhere again. Each client has its own, and so does the config. The path is whole, not added to the current one. For clients: within is set_scope, the function, then set_scope back.",
+        .params = &.{.{ .name = "path", .typ = "string|nil" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Node Graph",
+        .name = "get_scope",
+        .desc = "The caller's scope (set_scope, or within's path), or nil for everywhere.",
+        .params = &.{},
+        .ret = "string|nil",
+    },
+    .{
+        .category = "Node Graph",
         .name = "find",
         .desc = "The node at a path: 'DP-1/web/chat' is the node named 'chat', in the nearest named thing 'web', on output 'DP-1'. Unnamed nodes in between don't count, and the start can be left off ('web/chat', 'chat') while only one node matches; more than one is an error. nil if none matches, or if the path names an output.",
         .params = &.{.{ .name = "path", .typ = "string" }},

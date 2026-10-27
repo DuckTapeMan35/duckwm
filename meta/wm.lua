@@ -891,6 +891,14 @@ function wm.get_name(id) end
 ---@param fn fun()
 function wm.within(path, fn) end
 
+--- Make the keybinds, rules and settings the caller sets up from now on apply only in path, as within does; nil for everywhere again. Each client has its own, and so does the config. The path is whole, not added to the current one. For clients: within is set_scope, the function, then set_scope back.
+---@param path string|nil
+function wm.set_scope(path) end
+
+--- The caller's scope (set_scope, or within's path), or nil for everywhere.
+---@return string|nil
+function wm.get_scope() end
+
 --- The node at a path: 'DP-1/web/chat' is the node named 'chat', in the nearest named thing 'web', on output 'DP-1'. Unnamed nodes in between don't count, and the start can be left off ('web/chat', 'chat') while only one node matches; more than one is an error. nil if none matches, or if the path names an output.
 ---@param path string
 ---@return integer|nil

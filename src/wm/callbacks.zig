@@ -13,6 +13,7 @@ const util = @import("commands/util.zig");
 const output = @import("output.zig");
 const groups = @import("groups.zig");
 const scopes = @import("scopes.zig");
+const workspace_settings = @import("workspace_settings.zig");
 
 const wire = protocol.wire;
 const WM = core.WM;
@@ -328,6 +329,7 @@ pub fn drop_client(self: *WM, client: u32) void {
         if (owned_by(cb, client)) self.default_arranger = null;
     }
     for (self.outputs.items) |o| drop_arrangers(&o.root, client);
+    workspace_settings.drop_source(self, .{ .client = client });
 
     if (self.prompt_cb) |cb| if (owned_by(cb, client)) {
         self.prompt_cb = null;

@@ -4,6 +4,7 @@ const types = @import("types");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
 const paths = @import("../paths.zig");
+const scopes = @import("../scopes.zig");
 const workspace_settings = @import("../workspace_settings.zig");
 const util = @import("util.zig");
 const WM = core.WM;
@@ -112,6 +113,18 @@ pub fn set_name(wm: *WM, args: Args(.set_name), _: Allocator) !Value {
 pub fn get_name(wm: *WM, args: Args(.get_name), _: Allocator) !Value {
     const n = wm.get_node_by_id(args.id) orelse return .nil;
     return if (n.name.len == 0) .nil else .{ .str = n.name };
+}
+
+/// What the caller's binds, rules and settings apply to from now on: a
+/// client's wm.within. Its own: each client, and the Lua config, has one.
+pub fn set_scope(wm: *WM, args: Args(.set_scope), _: Allocator) !Value {
+    const s = if (args.path) |p| try scopes.intern(wm, p) else scopes.everywhere;
+    try scopes.set_current(wm, s);
+    return .nil;
+}
+
+pub fn get_scope(wm: *WM, _: void, arena: Allocator) !Value {
+    return util.text(arena, scopes.path_of(wm, scopes.current(wm)));
 }
 
 // ---- queries ----

@@ -3,7 +3,7 @@ const graph_mod = @import("graph");
 const protocol = @import("protocol");
 const core = @import("core.zig");
 const scopes = @import("scopes.zig");
-const settings = @import("settings.zig");
+const types = @import("types");
 const paths = @import("paths.zig");
 const WM = core.WM;
 const Node = graph_mod.Node;
@@ -16,7 +16,8 @@ pub const Setting = union(enum) {
     preview_font: []const u8,
 };
 
-pub const Entry = struct { scope: scopes.Scope, layer: settings.Layer, setting: Setting };
+/// A setting, the path it was made within, and who made it.
+pub const Entry = struct { scope: scopes.Scope, source: types.CallbackSource, setting: Setting };
 
 /// Keep s for the current scope, and lay it over the workspaces in it now.
 pub fn add(wm: *WM, s: Setting) !void {
@@ -25,7 +26,7 @@ pub fn add(wm: *WM, s: Setting) !void {
     errdefer free(wm, owned);
     try wm.workspace_settings.append(wm.allocator, .{
         .scope = scopes.current(wm),
-        .layer = .of(wm.callback_source),
+        .source = wm.callback_source,
         .setting = owned,
     });
     apply_all(wm);
@@ -93,12 +94,13 @@ pub fn apply_to(wm: *WM, ws: *Node) void {
     if (previews) wm.repaint_preview(ws);
 }
 
-/// Forget the settings made from one layer: the config's, before it's run again.
-pub fn clear_layer(wm: *WM, layer: settings.Layer) void {
+/// Forget the settings one source made: the Lua config's before it's run
+/// again, a client's when it disconnects.
+pub fn drop_source(wm: *WM, source: types.CallbackSource) void {
     var i = wm.workspace_settings.items.len;
     while (i > 0) {
         i -= 1;
-        if (wm.workspace_settings.items[i].layer != layer) continue;
+        if (!std.meta.eql(wm.workspace_settings.items[i].source, source)) continue;
         free(wm, wm.workspace_settings.orderedRemove(i).setting);
     }
 }

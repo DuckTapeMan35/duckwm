@@ -180,6 +180,10 @@ message Find {
   string path = 1;
 }
 
+message SetScope {
+  optional string path = 1;
+}
+
 message SetPan {
   sint32 x = 1;
   sint32 y = 2;
@@ -833,6 +837,8 @@ message Command {
     One get_name = 218;
     Find find = 219;
     One get_path = 220;
+    SetScope set_scope = 221;
+    Empty get_scope = 222;
     Empty screen_width = 300;
     Empty screen_height = 301;
     Empty get_work_area = 302;

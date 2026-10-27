@@ -23,6 +23,8 @@ pub const Client = struct {
     /// This client's requests being run right now: a call made meanwhile was
     /// set off by one of them (Call.nested).
     running: u32 = 0,
+    /// The path its binds, rules and settings go into (set_scope); 0: none.
+    scope: u32 = 0,
 
     fn deinit(c: *Client, a: std.mem.Allocator) void {
         close_fd(c.fd);
@@ -293,7 +295,7 @@ fn now_ms() i64 {
     return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
 }
 
-fn find(wm: *WM, id: u32) ?*Client {
+pub fn find(wm: *WM, id: u32) ?*Client {
     for (wm.ipc_state.clients.items) |*c| if (c.id == id) return c;
     return null;
 }

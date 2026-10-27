@@ -1,6 +1,7 @@
 const std = @import("std");
 const core = @import("core.zig");
 const paths = @import("paths.zig");
+const ipc = @import("ipc.zig");
 const WM = core.WM;
 
 pub const Scope = u32;
@@ -23,12 +24,23 @@ pub fn path_of(wm: *const WM, s: Scope) []const u8 {
     return if (s == everywhere) "" else wm.scope_paths.items[s - 1];
 }
 
-/// The scope binds made right now go into: the Lua config's, inside wm.within.
-pub fn current(wm: *const WM) Scope {
+/// The scope binds, rules and settings made right now go into: the Lua
+/// config's (inside wm.within), or the calling client's (set_scope).
+pub fn current(wm: *WM) Scope {
     return switch (wm.callback_source) {
         .lua => wm.lua_scope,
-        else => everywhere,
+        .client => |id| if (ipc.find(wm, id)) |c| c.scope else everywhere,
+        .none => everywhere,
     };
+}
+
+/// Set the caller's scope. The commands file has none.
+pub fn set_current(wm: *WM, s: Scope) !void {
+    switch (wm.callback_source) {
+        .lua => wm.lua_scope = s,
+        .client => |id| (ipc.find(wm, id) orelse return error.ClientGone).scope = s,
+        .none => return error.NoScopeHere,
+    }
 }
 
 pub fn deinit(wm: *WM) void {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("types");
 const harness = @import("harness.zig");
+const wm_mod = @import("wm");
 const Harness = harness.Harness;
 
 fn overlaps(a: types.Rect, b: types.Rect) bool {
@@ -431,4 +432,51 @@ test "names: gaps and preview settings made within a path, for its workspaces" {
     h.key(types.mod.super, "g"); // gaps for everything: web's laid over again
     try std.testing.expectEqual(@as(u32, 10), g.gap_inner_h);
     try std.testing.expectEqual(@as(u32, 5), h.wm.default_gap_inner_h);
+}
+
+test "names: set_scope and get_scope, per client and for the config" {
+    var h = try Harness.init(std.testing.allocator,
+        \\assert(wm.get_scope() == nil)
+        \\wm.within("web", function()
+        \\    assert(wm.get_scope() == "web")
+        \\    wm.within("chat", function() assert(wm.get_scope() == "web/chat") end)
+        \\end)
+        \\assert(wm.get_scope() == nil)
+        \\wm.set_scope("FAKE-1")
+        \\assert(wm.get_scope() == "FAKE-1")
+        \\wm.set_scope(nil)
+        \\scope_ok = true
+    );
+    defer h.deinit();
+    const lua = h.wm.lua.?;
+    _ = lua.getGlobal("scope_ok");
+    try std.testing.expect(lua.toBoolean(-1));
+    lua.pop(1);
+
+    // A client, as ipc runs its requests: its scope is its own.
+    const wm = h.wm;
+    try wm.ipc_state.clients.append(wm.allocator, .{ .fd = -1, .id = 7 });
+    const Command = wm_mod.command.Command;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var results: [3]wm_mod.command.Value = undefined;
+    wm.callback_source = .{ .client = 7 };
+    try wm_mod.command.run(wm, &[_]Command{
+        .{ .set_scope = .{ .path = "FAKE-1" } },
+        .{ .set_gaps = .{ .inner_h = 9, .inner_v = 9, .outer_h = 9, .outer_v = 9 } },
+        .get_scope,
+    }, a, &results);
+    try std.testing.expectEqualStrings("FAKE-1", results[2].str);
+    try std.testing.expectEqual(@as(u32, 9), wm.current_graph.gap_inner_h);
+    try std.testing.expectEqual(@as(u32, 0), wm.default_gap_inner_h); // not everywhere
+
+    // The config's scope is untouched by the client's.
+    wm.callback_source = .lua;
+    try std.testing.expectEqual(@as(u32, 0), wm_mod.scopes.current(wm));
+    wm.callback_source = .none;
+
+    // Gone: its settings go with it.
+    wm.drop_client_callbacks(7);
+    try std.testing.expectEqual(@as(usize, 0), wm.workspace_settings.items.len);
 }
