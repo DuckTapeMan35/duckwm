@@ -6,6 +6,7 @@ const lifecycle = @import("lifecycle.zig");
 const settings = @import("settings.zig");
 const output = @import("output.zig");
 const groups = @import("groups.zig");
+const subscriptions = @import("subscriptions.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -47,6 +48,8 @@ pub fn commit(wm: *WM) void {
         wm.sync_on_commit = false;
         wm.backend.sync();
     }
+    // Last: subscribers hear about what's now on screen.
+    subscriptions.deliver(wm);
 }
 
 /// Ask for g's state to be pushed to the screen at the next commit.

@@ -119,13 +119,18 @@ pub const Client = struct {
         // runs the request inside that call and answers it first, so the call
         // is handled once the answer is in.
         var crossed: std.ArrayListUnmanaged(protocol.Call) = .empty;
+        // Events for subscribers wait for the response too: what they do is
+        // requests of their own, which can't go out in the middle of this one.
+        var events: std.ArrayListUnmanaged(protocol.Event) = .empty;
         const resp = while (true) {
             switch (try c.recv(arena)) {
                 .response => |r| break r,
                 .call => |call| if (call.nested) try c.handle(call) else try crossed.append(arena, call),
+                .event => |e| try events.append(arena, e),
             }
         };
         for (crossed.items) |call| try c.handle(call);
+        for (events.items) |e| try c.notify(e);
         if (resp.err) |why| {
             c.why = why;
             return error.Rejected;
@@ -148,6 +153,7 @@ pub const Client = struct {
             _ = arena.reset(.retain_capacity);
             switch (try c.recv(arena.allocator())) {
                 .call => |call| try c.handle(call),
+                .event => |e| try c.notify(e),
                 .response => return error.Protocol, // nothing was asked
             }
         }
@@ -162,6 +168,7 @@ pub const Client = struct {
             _ = arena.reset(.retain_capacity);
             switch (try c.recv(arena.allocator())) {
                 .call => |call| try c.handle(call),
+                .event => |e| try c.notify(e),
                 .response => return error.Protocol, // nothing was asked
             }
         }
@@ -203,6 +210,24 @@ pub const Client = struct {
             }
         } else ret.err = "no such callback";
         try c.send(a, .{ .ret = ret });
+    }
+
+    /// Run a subscriber's handler for one event. Nothing goes back: duckwm
+    /// isn't waiting. The commands its Reply holds run as a request of their
+    /// own; a handler error is dropped, there being no one to give it to.
+    fn notify(c: *Client, e: protocol.Event) Error!void {
+        const h = c.handlers.get(e.callback) orelse return;
+        var arena: std.heap.ArenaAllocator = .init(c.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const r = h.func(h.ctx, c, .{ .notice = e.notice }, a) catch |err| switch (err) {
+            error.Closed => return error.Closed,
+            else => return,
+        };
+        if (r.commands.len > 0) _ = c.run(a, r.commands) catch |err| switch (err) {
+            error.Closed => return error.Closed,
+            else => {},
+        };
     }
 
     // ---- frames ----
@@ -294,6 +319,10 @@ const Fake = struct {
     fn call(f: *Fake, callback: u64, args: CallArgs, nested: bool) !void {
         const body = try wire.encode_server_call(f.arena.allocator(), .{ .callback = callback, .args = args, .nested = nested });
         try f.send_frame(body);
+    }
+
+    fn event(f: *Fake, callback: u64, notice: protocol.Notice) !void {
+        try f.send_frame(try wire.encode_server_event(f.arena.allocator(), .{ .callback = callback, .notice = notice }));
     }
 };
 
@@ -415,4 +444,46 @@ test "dispatch answers what's waiting, and returns" {
     try testing.expectEqual(@as(usize, 1), p.presses);
     _ = linux.shutdown(f.fd, linux.SHUT.WR);
     try testing.expectError(error.Closed, c.dispatch());
+}
+
+/// A subscriber: counts its events, and answers a focus event with a command.
+const Watch = struct {
+    seen: usize = 0,
+    last: ?protocol.Notice = null,
+
+    fn on(w: *Watch, _: *Client, args: CallArgs, a: Allocator) anyerror!Reply {
+        w.seen += 1;
+        w.last = args.notice;
+        if (args.notice.topic != .focus) return .{};
+        return .{ .commands = try a.dupe(Command, &.{.get_zoom}) };
+    }
+};
+
+test "an event is handled once the request it arrived during is answered, and isn't answered itself" {
+    var c, var f = try pair();
+    defer teardown(&c, &f);
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var w: Watch = .{};
+    const cb = try c.register(.of(Watch, &w, Watch.on));
+
+    // An event first, then the response to the request: the event waits for it.
+    try f.event(cb.id, .{ .topic = .scene, .serial = 3, .id = null });
+    try f.respond(&.{.{ .integer = 1 }}, null);
+    _ = try c.run_one(arena.allocator(), .get_zoom);
+    try testing.expectEqual(@as(usize, 1), w.seen);
+    try testing.expectEqual(@as(u64, 3), w.last.?.serial);
+    try testing.expect((try f.recv()).request.commands[0] == .get_zoom); // only the request: no Return
+
+    // From dispatch; its reply's commands go out as a request of their own.
+    try f.event(cb.id, .{ .topic = .focus, .serial = 4, .id = 9 });
+    try f.respond(&.{.{ .number = 1.0 }}, null);
+    try c.dispatch();
+    try testing.expectEqual(@as(?u32, 9), w.last.?.id);
+    try testing.expect((try f.recv()).request.commands[0] == .get_zoom);
+
+    // One for a callback nobody registered is dropped, silently.
+    try f.event(999, .{ .topic = .names, .serial = 5, .id = 1 });
+    try c.dispatch();
+    try testing.expectEqual(@as(usize, 2), w.seen);
 }

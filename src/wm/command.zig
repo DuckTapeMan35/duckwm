@@ -36,6 +36,7 @@ const handlers = .{
     @import("commands/outputs.zig"),
     @import("commands/groups.zig"),
     @import("commands/diagram.zig"),
+    @import("commands/subscriptions.zig"),
 };
 comptime {
     for (@typeInfo(ConstraintKind).@"enum".field_names) |f_name| {
@@ -108,6 +109,7 @@ pub fn error_text(err: anyerror) []const u8 {
         error.NotAGroup => "node is not a group",
         error.NotSameGraph => "group members must be in the same workspace or group",
         error.TooDeep => "groups nest at most 15 deep",
+        error.UnknownSubscription => "no such subscription",
         else => @errorName(err),
     };
 }

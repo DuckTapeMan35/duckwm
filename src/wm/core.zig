@@ -25,6 +25,7 @@ const input_bar = @import("input_bar.zig");
 const output_mod = @import("output.zig");
 const scopes = @import("scopes.zig");
 const workspace_settings = @import("workspace_settings.zig");
+const subscriptions = @import("subscriptions.zig");
 
 const Graph = graph.Graph;
 const Node = graph.Node;
@@ -148,6 +149,12 @@ pub const WM = struct {
     /// Rules, in the order they were added.
     rules: std.ArrayListUnmanaged(callbacks.Rule) = .empty,
     next_rule_id: u32 = 1,
+    /// Callbacks told what changed after each commit (subscribe).
+    subscriptions: std.ArrayListUnmanaged(subscriptions.Subscription) = .empty,
+    next_subscription_id: u32 = 1,
+    /// What subscribers were last told: the scene serial and focused node.
+    told_serial: u64 = 0,
+    told_focus: ?u32 = null,
     /// Factory for the arranger of workspaces that don't set their own (0: none).
     default_arranger: ?types.Callback = null,
     default_arranger_name: []const u8 = "",
@@ -263,6 +270,7 @@ pub const WM = struct {
         self.keybinds = .empty;
         scopes.deinit(self);
         workspace_settings.deinit(self);
+        subscriptions.deinit(self);
         if (self.lua) |lua| lua.deinit();
         self.lua = null;
         if (self.default_arranger_name.len > 0) {

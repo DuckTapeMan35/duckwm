@@ -10,6 +10,10 @@ const WM = core.WM;
 /// A frame longer than this closes the connection: no request is legitimately this big.
 const max_frame = 16 * 1024 * 1024;
 
+/// The most output a client may leave unread before it's dropped: one that
+/// never reads its events mustn't grow duckwm's memory without end.
+const max_unread = 4 * 1024 * 1024;
+
 pub const Client = struct {
     fd: i32,
     /// Stable for the connection's life: callbacks refer to clients by it.
@@ -262,6 +266,23 @@ fn answer(wm: *WM, c: *Client, frame: []const u8) !void {
     std.mem.writeInt(u32, &len, @intCast(body.len), .little);
     try c.out.appendSlice(wm.allocator, &len);
     try c.out.appendSlice(wm.allocator, body);
+}
+
+/// Queue an event for a subscriber; poll sends it. duckwm doesn't wait for
+/// anything back. A client already gone, or too far behind, is skipped (and
+/// the latter dropped at the next poll).
+pub fn send_event(wm: *WM, client: u32, callback: u64, notice: protocol.Notice) void {
+    const c = find(wm, client) orelse return;
+    if (c.dead) return;
+    if (c.out.items.len > max_unread) {
+        std.debug.print("ipc: client {d} isn't reading its events; dropping it\n", .{client});
+        c.dead = true;
+        return;
+    }
+    var arena = std.heap.ArenaAllocator.init(wm.allocator);
+    defer arena.deinit();
+    const body = wire.encode_server_event(arena.allocator(), .{ .callback = callback, .notice = notice }) catch return;
+    send(wm, c, body) catch {};
 }
 
 /// Write as much queued output as the socket accepts. false: the client is gone.

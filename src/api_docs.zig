@@ -1485,6 +1485,33 @@ pub const entries = [_]ApiEntry{
     // =========================================================
     .{
         .category = "Rules",
+        .name = "subscribe",
+        .desc =
+        \\Be told what changed, once it's committed. topic is one of:
+        \\  'scene'   — a new scene reached the screen (get_scene has it)
+        \\  'focus'   — the focused node changed; id is the new one (nil: nothing)
+        \\  'names'   — a node was named, renamed or unnamed; id is that node
+        \\  'outputs' — a monitor came, went or was renamed (get_outputs)
+        \\fn gets (topic, serial, id): serial is the scene's at the time (get_scene). It runs
+        \\after the change is committed, not inside it, so what it does is a transaction of its
+        \\own. A socket client gets these as Events, which duckwm doesn't wait for.
+        \\Returns a handle for unsubscribe.
+        ,
+        .params = &.{
+            .{ .name = "topic", .typ = "'scene'|'focus'|'names'|'outputs'" },
+            .{ .name = "fn", .typ = "fun(topic: string, serial: integer, id: integer|nil)" },
+        },
+        .ret = "integer",
+    },
+    .{
+        .category = "Rules",
+        .name = "unsubscribe",
+        .desc = "Stop a subscription, by the handle subscribe returned.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Rules",
         .name = "add_rule",
         .desc =
         \\Register a global window rule. Rules fire for every window regardless of arranger;

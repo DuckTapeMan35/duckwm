@@ -338,6 +338,10 @@ pub const CommandId = enum(u32) {
     set_group_outline_of = 1106,
     focus_parent = 1107,
     focus_child = 1108,
+
+    // subscriptions: 1200-1299
+    subscribe = 1200,
+    unsubscribe = 1201,
 };
 
 /// One request. The payload's fields are the arguments, in order.
@@ -607,7 +611,30 @@ pub const Command = union(CommandId) {
     set_group_outline_of: struct { id: NodeId, width: ?u32, color: ?u32 }, // 1106
     focus_parent, // 1107
     focus_child, // 1108
+
+    // subscriptions
+    subscribe: struct { topic: Topic, callback: Callback }, // 1200
+    unsubscribe: struct { id: u32 }, // 1201
 };
+
+/// What a subscription (subscribe) is told about, once it's committed.
+pub const Topic = enum {
+    /// A new scene reached the screen (get_scene).
+    scene,
+    /// The focused node changed.
+    focus,
+    /// A node was named, renamed or unnamed.
+    names,
+    /// A monitor came, went or was renamed (get_outputs).
+    outputs,
+};
+
+/// What happened: the scene's serial at the time (get_scene), and the node
+/// it's about: the focused one for focus, the renamed one for names.
+pub const Notice = struct { topic: Topic, serial: u64, id: ?NodeId };
+
+/// duckwm telling a subscriber something, without waiting for an answer.
+pub const Event = struct { callback: u64, notice: Notice };
 
 /// A batch of commands, run as one transaction: all of them take effect, or none do.
 pub const Request = struct { commands: []const Command };
@@ -624,6 +651,9 @@ pub const CallArgs = union(enum) {
     factory,
     /// read_line's callback: the line that was typed.
     line: struct { text: []const u8 },
+    /// A subscription's callback. Comes in an Event, never a Call: duckwm
+    /// doesn't wait for it, and what it does is a transaction of its own.
+    notice: Notice,
 };
 
 /// duckwm calling one of the client's callbacks, inside a transaction. The

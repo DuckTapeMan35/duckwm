@@ -9,12 +9,13 @@ package duckwm.v1;
 
 message Empty {}
 
-// What duckwm sends: the answer to a Request, or a Call to one of the
-// client's callbacks.
+// What duckwm sends: the answer to a Request, a Call to one of the
+// client's callbacks, or an Event for a subscriber (not answered).
 message ServerMessage {
   oneof kind {
     Response response = 1;
     Call call = 2;
+    Event event = 3;
   }
 }
 
@@ -696,6 +697,22 @@ message SetGroupOutlineOf {
   optional uint32 color = 3;
 }
 
+enum Topic {
+  TOPIC_SCENE = 0;
+  TOPIC_FOCUS = 1;
+  TOPIC_NAMES = 2;
+  TOPIC_OUTPUTS = 3;
+}
+
+message Subscribe {
+  Topic topic = 1;
+  Callback callback = 2;
+}
+
+message Unsubscribe {
+  uint32 id = 1;
+}
+
 message Request {
   repeated Command commands = 1;
 }
@@ -758,6 +775,12 @@ message CallArgsLine {
   string text = 1;
 }
 
+message Notice {
+  Topic topic = 1;
+  uint64 serial = 2;
+  optional uint32 id = 3;
+}
+
 message CallArgs {
   oneof kind {
     Empty key = 1;
@@ -765,6 +788,7 @@ message CallArgs {
     Snapshot arranger = 3;
     Empty factory = 4;
     CallArgsLine line = 5;
+    Notice notice = 6;
   }
 }
 
@@ -772,6 +796,11 @@ message Call {
   uint64 callback = 1;
   CallArgs args = 2;
   bool nested = 3;
+}
+
+message Event {
+  uint64 callback = 1;
+  Notice notice = 2;
 }
 
 message Command {
@@ -972,5 +1001,7 @@ message Command {
     SetGroupOutlineOf set_group_outline_of = 1106;
     Empty focus_parent = 1107;
     Empty focus_child = 1108;
+    Subscribe subscribe = 1200;
+    Unsubscribe unsubscribe = 1201;
   }
 }

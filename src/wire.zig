@@ -494,10 +494,12 @@ pub fn encode_client_message(a: Allocator, m: protocol.ClientMessage) Error![]u8
     return encode_message(protocol.ClientMessage, m, a);
 }
 
-/// What duckwm sends: the answer to a request, or a call to a callback.
+/// What duckwm sends: the answer to a request, a call to a callback, or an
+/// event for a subscriber (which isn't answered).
 pub const ServerMessage = union(enum) {
     response: Response,
     call: protocol.Call,
+    event: protocol.Event,
 };
 
 /// A ServerMessage holding a Response.
@@ -514,6 +516,13 @@ pub fn encode_server_call(a: Allocator, call: protocol.Call) Error![]u8 {
     return w.out.items;
 }
 
+/// A ServerMessage holding an Event.
+pub fn encode_server_event(a: Allocator, event: protocol.Event) Error![]u8 {
+    var w: Writer = .{ .a = a };
+    try w.bytes(3, try encode_message(protocol.Event, event, a));
+    return w.out.items;
+}
+
 pub fn decode_server_message(buf: []const u8, a: Allocator) Error!ServerMessage {
     var r: Reader = .{ .buf = buf };
     var out: ?ServerMessage = null;
@@ -522,6 +531,7 @@ pub fn decode_server_message(buf: []const u8, a: Allocator) Error!ServerMessage 
         switch (num) {
             1 => out = .{ .response = try decode_response(try len_field(&r, wt), a) },
             2 => out = .{ .call = try decode_message(protocol.Call, try len_field(&r, wt), a) },
+            3 => out = .{ .event = try decode_message(protocol.Event, try len_field(&r, wt), a) },
             else => try r.skip(wt),
         }
     }
@@ -686,4 +696,18 @@ test "return with layout and state" {
     try std.testing.expectEqual(@as(u32, 0), s.container.key);
     try std.testing.expectEqual(@as(u32, 5), s.children[0].id);
     try std.testing.expectEqual(@as(u32, 1), s.children[1].key);
+}
+
+test "an event for a subscriber" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const msg = try decode_server_message(try encode_server_event(a, .{
+        .callback = 4,
+        .notice = .{ .topic = .names, .serial = 1 << 40, .id = 12 },
+    }), a);
+    try std.testing.expectEqual(@as(u64, 4), msg.event.callback);
+    try std.testing.expectEqual(protocol.Topic.names, msg.event.notice.topic);
+    try std.testing.expectEqual(@as(u64, 1 << 40), msg.event.notice.serial);
+    try std.testing.expectEqual(@as(?u32, 12), msg.event.notice.id);
 }

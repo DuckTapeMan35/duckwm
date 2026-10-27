@@ -14,6 +14,7 @@ const output = @import("output.zig");
 const groups = @import("groups.zig");
 const scopes = @import("scopes.zig");
 const workspace_settings = @import("workspace_settings.zig");
+const subscriptions = @import("subscriptions.zig");
 
 const wire = protocol.wire;
 const WM = core.WM;
@@ -63,6 +64,13 @@ fn invoke_lua(self: *WM, ref: i32, call: protocol.CallArgs, a: std.mem.Allocator
         .line => |l| blk: {
             _ = lua.pushString(l.text);
             break :blk .{ 1, 0 };
+        },
+        // (topic, serial, id)
+        .notice => |n| blk: {
+            _ = lua.pushString(@tagName(n.topic));
+            lua.pushInteger(@intCast(n.serial));
+            if (n.id) |id| lua.pushInteger(@intCast(id)) else lua.pushNil();
+            break :blk .{ 3, 0 };
         },
         // Factories are called through instantiate, which takes the result.
         .factory => unreachable,
@@ -330,6 +338,7 @@ pub fn drop_client(self: *WM, client: u32) void {
     }
     for (self.outputs.items) |o| drop_arrangers(&o.root, client);
     workspace_settings.drop_source(self, .{ .client = client });
+    subscriptions.drop(self, client);
 
     if (self.prompt_cb) |cb| if (owned_by(cb, client)) {
         self.prompt_cb = null;

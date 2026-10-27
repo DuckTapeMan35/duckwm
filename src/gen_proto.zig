@@ -94,6 +94,7 @@ const payload_types = blk: {
     // The framed messages (ServerMessage is in the header: it holds Response).
     acc = collect(protocol.ClientMessage, "ClientMessage", acc);
     acc = collect(protocol.Call, "Call", acc);
+    acc = collect(protocol.Event, "Event", acc);
     break :blk acc;
 };
 
@@ -138,12 +139,13 @@ const header =
     \\
     \\message Empty {}
     \\
-    \\// What duckwm sends: the answer to a Request, or a Call to one of the
-    \\// client's callbacks.
+    \\// What duckwm sends: the answer to a Request, a Call to one of the
+    \\// client's callbacks, or an Event for a subscriber (not answered).
     \\message ServerMessage {
     \\  oneof kind {
     \\    Response response = 1;
     \\    Call call = 2;
+    \\    Event event = 3;
     \\  }
     \\}
     \\

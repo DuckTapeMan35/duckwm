@@ -863,6 +863,24 @@ function wm.set_node_indicator(id, side) end
 ---@param id integer
 function wm.clear_node_indicator(id) end
 
+--- Be told what changed, once it's committed. topic is one of:
+---   'scene'   — a new scene reached the screen (get_scene has it)
+---   'focus'   — the focused node changed; id is the new one (nil: nothing)
+---   'names'   — a node was named, renamed or unnamed; id is that node
+---   'outputs' — a monitor came, went or was renamed (get_outputs)
+--- fn gets (topic, serial, id): serial is the scene's at the time (get_scene). It runs
+--- after the change is committed, not inside it, so what it does is a transaction of its
+--- own. A socket client gets these as Events, which duckwm doesn't wait for.
+--- Returns a handle for unsubscribe.
+---@param topic 'scene'|'focus'|'names'|'outputs'
+---@param fn fun(topic: string, serial: integer, id: integer|nil)
+---@return integer
+function wm.subscribe(topic, fn) end
+
+--- Stop a subscription, by the handle subscribe returned.
+---@param id integer
+function wm.unsubscribe(id) end
+
 --- Register a global window rule. Rules fire for every window regardless of arranger;
 --- one added inside within only for windows in its path.
 --- The function receives (event, id) where event is one of:

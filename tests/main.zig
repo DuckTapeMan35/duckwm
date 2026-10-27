@@ -548,3 +548,75 @@ test "get_layout: any workspace or group, by id, with names" {
     defer lua.pop(1);
     try std.testing.expect(lua.toBoolean(-1));
 }
+
+test "subscribe and unsubscribe; the config's go when it reloads" {
+    var h = try Harness.init(std.testing.allocator,
+        \\local a = wm.subscribe("scene", function() end)
+        \\local b = wm.subscribe("focus", function() end)
+        \\assert(a ~= b)
+        \\assert(not pcall(wm.subscribe, "nope", function() end), "not a topic")
+        \\wm.unsubscribe(a)
+        \\assert(not pcall(wm.unsubscribe, a), "already gone")
+    );
+    defer h.deinit();
+    try std.testing.expectEqual(@as(usize, 1), h.wm.subscriptions.items.len);
+    try std.testing.expectEqual(wm_mod.subscriptions.Subscription, @TypeOf(h.wm.subscriptions.items[0]));
+    wm_mod.subscriptions.drop(h.wm, null); // what a reload does first
+    try std.testing.expectEqual(@as(usize, 0), h.wm.subscriptions.items.len);
+}
+
+test "subscribers hear about scenes and focus after each commit" {
+    var h = try Harness.init(std.testing.allocator,
+        \\wm.arrange.set_default(wm.arrange.tile)
+        \\scenes, last_serial, focus_ids = 0, 0, {}
+        \\wm.subscribe("scene", function(topic, serial)
+        \\    assert(topic == "scene")
+        \\    scenes = scenes + 1
+        \\    last_serial = serial
+        \\end)
+        \\wm.subscribe("focus", function(_, _, id)
+        \\    focus_ids[#focus_ids + 1] = id or 0
+        \\    -- A transaction of its own: it can change things.
+        \\    if id then wm.set_name(id, "seen" .. id) end
+        \\end)
+    );
+    defer h.deinit();
+    const lua = h.wm.lua.?;
+    h.map(1);
+    h.map(2);
+
+    _ = lua.getGlobal("scenes");
+    try std.testing.expect(try lua.toInteger(-1) >= 2);
+    lua.pop(1);
+    _ = lua.getGlobal("last_serial");
+    try std.testing.expectEqual(@as(i64, @intCast(h.wm.scene_serial)), try lua.toInteger(-1));
+    lua.pop(1);
+
+    // Told once per change, and the subscriber's own change stuck.
+    const id2 = h.wm.window_to_node_id.get(2).?;
+    try std.testing.expectEqual(@as(?u32, id2), h.wm.told_focus);
+    const n2 = h.wm.node_registry.get(id2).?;
+    const want = try std.fmt.allocPrint(std.testing.allocator, "seen{d}", .{id2});
+    defer std.testing.allocator.free(want);
+    try std.testing.expectEqualStrings(want, n2.name);
+    const before = h.wm.told_serial;
+    h.step(); // nothing changed: nothing told
+    try std.testing.expectEqual(before, h.wm.told_serial);
+
+    // A client's subscription: an Event queued on its connection, not a call.
+    const wm = h.wm;
+    try wm.ipc_state.clients.append(wm.allocator, .{ .fd = -1, .id = 7 });
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var results: [1]wm_mod.command.Value = undefined;
+    wm.callback_source = .{ .client = 7 };
+    try wm_mod.command.run(wm, &.{.{ .subscribe = .{ .topic = .focus, .callback = .{ .id = 42 } } }}, arena.allocator(), &results);
+    wm.callback_source = .none;
+    wm.set_focus(wm.node_registry.get(wm.window_to_node_id.get(1).?).?);
+    h.step();
+    const out = wm.ipc_state.clients.items[0].out.items;
+    try std.testing.expect(out.len > 4);
+    const msg = try wm_mod.protocol.wire.decode_server_message(out[4..], arena.allocator());
+    try std.testing.expectEqual(@as(u64, 42), msg.event.callback);
+    try std.testing.expectEqual(@as(?u32, wm.window_to_node_id.get(1).?), msg.event.notice.id);
+}
