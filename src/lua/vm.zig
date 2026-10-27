@@ -66,6 +66,8 @@ fn install_arrange(lua: *Lua) void {
 
 pub fn reset_vm(wm: *WM) !*Lua {
     wm.clear_config_binds();
+    wm.lua_scope = 0;
+    wm_mod.workspace_settings.clear_layer(wm, .config);
     for (wm.rules.items) |r| wm.release_callback(r.cb);
     wm.rules.clearRetainingCapacity();
     if (wm.default_arranger) |cb| wm.release_callback(cb);

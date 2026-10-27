@@ -9,6 +9,7 @@ const modules = .{
     @import("layout.zig"),
     @import("config.zig"),
     @import("repl.zig"),
+    @import("within.zig"),
 };
 
 /// Every pub fn l_<name> in the modules above becomes wm.<name>.

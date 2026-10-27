@@ -176,6 +176,10 @@ message SetName {
   optional string name = 2;
 }
 
+message Find {
+  string path = 1;
+}
+
 message SetPan {
   sint32 x = 1;
   sint32 y = 2;
@@ -827,6 +831,8 @@ message Command {
     Empty get_all_windows = 216;
     SetName set_name = 217;
     One get_name = 218;
+    Find find = 219;
+    One get_path = 220;
     Empty screen_width = 300;
     Empty screen_height = 301;
     Empty get_work_area = 302;

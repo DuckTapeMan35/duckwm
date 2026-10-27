@@ -6,6 +6,9 @@ const animation = @import("../animation.zig");
 const input_bar = @import("../input_bar.zig");
 const util = @import("util.zig");
 const types = @import("types");
+const scopes = @import("../scopes.zig");
+const workspace_settings = @import("../workspace_settings.zig");
+
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 const Node = graph_mod.Node;
@@ -157,12 +160,23 @@ fn set_gaps_recursive(g: *Graph, gaps: Gaps) void {
 }
 
 pub fn set_gaps(wm: *WM, args: Args(.set_gaps), _: Allocator) !Value {
-    const gaps: Gaps = .{ .inner_h = args.inner_h, .inner_v = args.inner_v, .outer_h = args.outer_h, .outer_v = args.outer_v };
+    const gaps: Gaps = .{
+        .inner_h = args.inner_h,
+        .inner_v = args.inner_v,
+        .outer_h = args.outer_h,
+        .outer_v = args.outer_v,
+    };
+    // Within a path: only its workspaces, kept for ones that join it later.
+    if (scopes.current(wm) != scopes.everywhere) {
+        try workspace_settings.add(wm, .{ .gaps = gaps });
+        return .nil;
+    }
     wm.default_gap_inner_h = gaps.inner_h;
     wm.default_gap_inner_v = gaps.inner_v;
     wm.default_gap_outer_h = gaps.outer_h;
     wm.default_gap_outer_v = gaps.outer_v;
     for (wm.outputs.items) |o| set_gaps_recursive(&o.root, gaps);
+    workspace_settings.apply_all(wm); // the ones made within a path, laid over again
     wm.relayout();
     return .nil;
 }
@@ -184,6 +198,10 @@ fn repaint_previews(wm: *WM) void {
 }
 
 pub fn set_preview_colors(wm: *WM, args: Args(.set_preview_colors), _: Allocator) !Value {
+    if (scopes.current(wm) != scopes.everywhere) {
+        try workspace_settings.add(wm, .{ .preview_colors = .{ .bg = args.bg, .win_bg = args.win_bg, .border = args.border, .text = args.text } });
+        return .nil;
+    }
     wm.set_preview_colors(args.bg, args.win_bg, args.border, args.text);
     repaint_previews(wm);
     return .nil;
@@ -201,6 +219,10 @@ pub fn set_preview_colors_workspace(wm: *WM, args: Args(.set_preview_colors_work
 }
 
 pub fn set_preview_font(wm: *WM, args: Args(.set_preview_font), _: Allocator) !Value {
+    if (scopes.current(wm) != scopes.everywhere) {
+        try workspace_settings.add(wm, .{ .preview_font = args.name });
+        return .nil;
+    }
     wm.set_preview_font(args.name);
     repaint_previews(wm);
     return .nil;

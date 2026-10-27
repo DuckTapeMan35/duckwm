@@ -1,8 +1,9 @@
 const std = @import("std");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
-const util = @import("util.zig");
 const groups = @import("../groups.zig");
+const workspace_settings = @import("../workspace_settings.zig");
+const util = @import("util.zig");
 const graph_mod = @import("graph");
 const WM = core.WM;
 const Value = command.Value;
@@ -103,6 +104,8 @@ pub fn create_nested(wm: *WM) !u32 {
     sub.gap_outer_h = wm.default_gap_outer_h;
     sub.gap_outer_v = wm.default_gap_outer_v;
     n.hidden = false;
+
+    workspace_settings.apply_to(wm, n);
 
     wm.relayout();
     if (wm.focused) |f| wm.set_focus(f);
@@ -241,11 +244,15 @@ pub fn get_workspace_positions(wm: *WM, _: void, arena: Allocator) !Value {
 
 pub fn get_workspace_states(wm: *WM, _: void, arena: Allocator) !Value {
     const st = try states(wm, arena);
+    var list: NodeList = .empty;
+    defer list.deinit(wm.allocator);
+    try sorted_workspaces(wm, parent_graph(wm), &list); // the same order as states
     const out = try arena.alloc(Value, st.len);
-    for (st, out, 1..) |s, *v, pos| {
+    for (st, list.items, out, 1..) |s, n, *v, pos| {
         v.* = .{ .map = try arena.dupe(Value.Field, &.{
             .{ .key = "position", .value = .{ .integer = @intCast(pos) } },
             .{ .key = "state", .value = .{ .str = @tagName(s) } },
+            .{ .key = "id", .value = util.id_value(wm, n) },
         }) };
     }
     return .{ .list = out };

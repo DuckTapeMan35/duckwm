@@ -1,8 +1,10 @@
-pub const WM = @import("wm/core.zig").WM;
 pub const output = @import("wm/output.zig");
+pub const command = @import("wm/command.zig");
+pub const scopes = @import("wm/scopes.zig");
+pub const workspace_settings = @import("wm/workspace_settings.zig");
+pub const WM = @import("wm/core.zig").WM;
 pub const KeybindKey = @import("wm/core.zig").KeybindKey;
 pub const Keybind = @import("wm/core.zig").Keybind;
 pub const platform_id = @import("wm/backend.zig").platform_id;
 pub const reload_commands_only = @import("wm/startup.zig").reload_commands_only;
 pub const check_commands_file = @import("wm/startup.zig").check_file;
-pub const command = @import("wm/command.zig");

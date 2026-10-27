@@ -304,8 +304,8 @@ function wm.get_workspace_positions() end
 ---@return integer|nil
 function wm.get_current_workspace_position() end
 
---- Return a table of all workspaces at the current level, each with a position (1-based index) and state ('focused', 'active', or 'inactive'). All workspaces are included regardless of whether they have content.
----@return { position: integer, state: 'focused'|'active'|'inactive' }[]
+--- Return a table of all workspaces at the current level, each with a position (1-based index), state ('focused', 'active', or 'inactive') and its node id (for set_name). All workspaces are included regardless of whether they have content.
+---@return { position: integer, state: 'focused'|'active'|'inactive', id: integer }[]
 function wm.get_workspace_states() end
 
 --- Cleans up subgraphs with windows that don't have a visible preview window
@@ -424,7 +424,7 @@ function wm.set_arranger_index(index) end
 ---@return integer[]
 function wm.get_all_windows() end
 
---- Set global gap sizes in pixels. inner_h/inner_v are gaps between windows; outer_h/outer_v are gaps between windows and screen edges.
+--- Set global gap sizes in pixels. inner_h/inner_v are gaps between windows; outer_h/outer_v are gaps between windows and screen edges. Inside within, only for the workspaces in its path.
 ---@param inner_h integer
 ---@param inner_v integer
 ---@param outer_h integer
@@ -782,7 +782,7 @@ function wm.set_node_focused_border_color(id, color) end
 ---@param color integer
 function wm.set_node_unfocused_border_color(id, color) end
 
---- Set the colors used when drawing workspace preview thumbnails. Colors are 0xRRGGBB.
+--- Set the colors used when drawing workspace preview thumbnails. Colors are 0xRRGGBB. Inside within, only for the workspaces in its path.
 ---@param bg integer
 ---@param win_bg integer
 ---@param border integer
@@ -797,7 +797,7 @@ function wm.set_preview_colors(bg, win_bg, border, text) end
 ---@param text integer
 function wm.set_preview_colors_workspace(id, bg, win_bg, border, text) end
 
---- Set the Xft font name used for labels in workspace preview thumbnails (e.g. "monospace:pixelsize=10"). Falls back to a built-in font if the name can't be opened.
+--- Set the Xft font name used for labels in workspace preview thumbnails (e.g. "monospace:pixelsize=10"). Falls back to a built-in font if the name can't be opened. Inside within, only for the workspaces in its path.
 ---@param font string
 function wm.set_preview_font(font) end
 
@@ -850,7 +850,8 @@ function wm.set_node_indicator(id, side) end
 ---@param id integer
 function wm.clear_node_indicator(id) end
 
---- Register a global window rule. Rules fire for every window regardless of arranger.
+--- Register a global window rule. Rules fire for every window regardless of arranger;
+--- one added inside within only for windows in its path.
 --- The function receives (event, id) where event is one of:
 ---   'pre_map' — fires before the arranger places the window (use for float/fullscreen rules)
 ---   'map'     — fires after the arranger places the window
@@ -875,7 +876,7 @@ function wm.set_reparent_strategy(id, strategy) end
 ---@return { top: integer?, bottom: integer?, left: integer?, right: integer? }|nil
 function wm.get_node_border_side_colors(id) end
 
---- Give a node a name, for paths like 'DP-1/web/chat' (no '/' in it). nil clears it. Kept until the node is gone, across config reloads.
+--- Give a node a name, for paths like 'DP-1/web/chat' (see find). No '/' in it, and nothing else in the same named place can have it already. nil clears it. Kept until the node is gone, across config reloads.
 ---@param id integer
 ---@param name string|nil
 function wm.set_name(id, name) end
@@ -884,6 +885,21 @@ function wm.set_name(id, name) end
 ---@param id integer
 ---@return string|nil
 function wm.get_name(id) end
+
+--- Run fn, and have what it sets up apply only in path (see find): on the node whose path ends in it, or anything inside. Keybinds apply while focus is there, and win over binds made outside, the nearest match to the focus first. Rules (add_rule) only run for windows there. set_gaps, set_preview_colors and set_preview_font only apply to the workspaces there, including ones that get there later (made, named or moved), the nearest path winning; set without within, they reset every workspace and these are laid over again. The path needn't exist yet, and what was set up stays when its node is closed and made again. Nested, paths add up: within('DP-1', ...) around within('web', ...) is 'DP-1/web'.
+---@param path string
+---@param fn fun()
+function wm.within(path, fn) end
+
+--- The node at a path: 'DP-1/web/chat' is the node named 'chat', in the nearest named thing 'web', on output 'DP-1'. Unnamed nodes in between don't count, and the start can be left off ('web/chat', 'chat') while only one node matches; more than one is an error. nil if none matches, or if the path names an output.
+---@param path string
+---@return integer|nil
+function wm.find(path) end
+
+--- A node's whole path: the names of the named things it's in, outermost (its output) first, then its own if it has one. nil if none of them is named.
+---@param id integer
+---@return string|nil
+function wm.get_path(id) end
 
 --- Create an empty container node in the current graph. Containers have no X window — they exist purely to define geometry for constraint targets.
 ---@return integer

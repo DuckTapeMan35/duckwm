@@ -69,6 +69,8 @@ pub fn reload_persistent(lua: *Lua) void {
 
     wm.clear_config_binds();
 
+    wm_mod.workspace_settings.clear_layer(wm, .config);
+
     for (wm.rules.items) |r| wm.release_callback(r.cb);
     wm.rules.clearRetainingCapacity();
     wm.clear_rgb_frame_classes();

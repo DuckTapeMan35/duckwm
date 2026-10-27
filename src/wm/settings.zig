@@ -2,6 +2,7 @@ const std = @import("std");
 const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("core.zig");
+const scopes = @import("scopes.zig");
 const WM = core.WM;
 const Node = graph_mod.Node;
 
@@ -29,8 +30,14 @@ pub const Layer = enum(u2) {
     }
 };
 
-/// A keybind's key: the combo, the workspace whose arranger made it (null: global), and its layer.
-pub const BindKey = struct { combo: types.KeyCombo, owner: ?*graph_mod.Graph, layer: Layer };
+/// A keybind's key: the combo, the workspace whose arranger made it (null:
+/// global), its layer, and the path it was made within (0: none).
+pub const BindKey = struct {
+    combo: types.KeyCombo,
+    owner: ?*graph_mod.Graph,
+    layer: Layer,
+    scope: scopes.Scope = scopes.everywhere,
+};
 
 /// Release what a bind owns.
 pub fn free_keybind(wm: *WM, kb: Keybind) void {
@@ -202,6 +209,7 @@ pub fn bind(wm: *WM, mods: types.Mods, keysym: types.Keysym, action: *const fn (
             .key = .{
                 .combo = .{ .mods = mods, .keysym = keysym },
                 .owner = wm.bind_owner,
+                .scope = scopes.current(wm),
                 .layer = .config,
             },
             .action = .{ .zig = action },
@@ -215,6 +223,7 @@ pub fn bind_callback(wm: *WM, mods: types.Mods, keysym: types.Keysym, cb: types.
             .key = .{
                 .combo = .{ .mods = mods, .keysym = keysym },
                 .owner = wm.bind_owner,
+                .scope = scopes.current(wm),
                 .layer = .of(wm.callback_source),
             },
             .action = .{ .call = cb },
@@ -228,6 +237,7 @@ pub fn bind_commands(wm: *WM, combo: types.KeyCombo, encoded: []const u8) void {
             .key = .{
                 .combo = combo,
                 .owner = wm.bind_owner,
+                .scope = scopes.current(wm),
                 .layer = .of(wm.callback_source),
             },
             .action = .{
@@ -241,6 +251,7 @@ pub fn unbind(wm: *WM, combo: types.KeyCombo) void {
     wm.effect(.{ .unbind = .{
         .combo = combo,
         .owner = wm.bind_owner,
+        .scope = scopes.current(wm),
         .layer = .of(wm.callback_source),
     } });
 }

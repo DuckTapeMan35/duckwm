@@ -3,6 +3,8 @@ const graph_mod = @import("graph");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
 const util = @import("util.zig");
+const scopes = @import("../scopes.zig");
+
 const WM = core.WM;
 const Node = graph_mod.Node;
 const Value = command.Value;
@@ -202,7 +204,7 @@ pub fn get_scratchpad(wm: *WM, _: void, arena: Allocator) !Value {
 pub fn add_rule(wm: *WM, args: Args(.add_rule), _: Allocator) !Value {
     const cb = try util.callback(wm, args.callback);
     const id = wm.next_rule_id;
-    try wm.rules.append(wm.allocator, .{ .id = id, .cb = cb });
+    try wm.rules.append(wm.allocator, .{ .id = id, .cb = cb, .scope = scopes.current(wm) });
     wm.next_rule_id += 1;
     return .{ .integer = id };
 }

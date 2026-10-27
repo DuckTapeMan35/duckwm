@@ -3,6 +3,8 @@ const graph_mod = @import("graph");
 const types = @import("types");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
+const paths = @import("../paths.zig");
+const workspace_settings = @import("../workspace_settings.zig");
 const util = @import("util.zig");
 const WM = core.WM;
 const Node = graph_mod.Node;
@@ -100,9 +102,10 @@ pub fn move_window_to_node(wm: *WM, args: Args(.move_window_to_node), _: Allocat
 pub fn set_name(wm: *WM, args: Args(.set_name), _: Allocator) !Value {
     const n = wm.get_node_by_id(args.id) orelse return error.NoSuchNode;
     const name = args.name orelse "";
-    if (std.mem.indexOfScalar(u8, name, '/') != null) return error.InvalidName;
+    try paths.check_name(wm, n, name);
     const g = n.owner_graph orelse return error.NotInGraph;
     try g.replace_bytes(&n.name, name);
+    workspace_settings.apply_all(wm);
     return .nil;
 }
 
@@ -112,6 +115,19 @@ pub fn get_name(wm: *WM, args: Args(.get_name), _: Allocator) !Value {
 }
 
 // ---- queries ----
+pub fn find(wm: *WM, args: Args(.find), _: Allocator) !Value {
+    const e = try paths.find(wm, args.path) orelse return .nil;
+    return switch (e) {
+        .node => |n| util.id_value(wm, n),
+        .output => .nil, // not a node: get_outputs has them
+    };
+}
+
+pub fn get_path(wm: *WM, args: Args(.get_path), arena: Allocator) !Value {
+    const n = wm.get_node_by_id(args.id) orelse return .nil;
+    return util.text(arena, try paths.path_of(wm, .{ .node = n }, arena));
+}
+
 pub fn get_container_of(wm: *WM, args: Args(.get_container_of), _: Allocator) !Value {
     const n = wm.get_node_by_id(args.id) orelse return .nil;
     const cont = graph_mod.get_container(n) orelse return .nil;

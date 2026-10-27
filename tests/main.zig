@@ -266,3 +266,169 @@ test "names: outputs are named after their connector" {
     defer h.deinit();
     try std.testing.expectEqualStrings("FAKE-1", h.wm.output.name.slice());
 }
+
+test "names: paths find nodes through named workspaces, groups and outputs" {
+    var h = try Harness.init(std.testing.allocator,
+        \\wm.bind(wm.MOD_SUPER, "p", function()
+        \\    local ws
+        \\    for _, w in ipairs(wm.get_workspace_states()) do
+        \\        if w.state == "focused" then ws = w.id end
+        \\    end
+        \\    local w1, w2 = table.unpack(wm.get_all_windows())
+        \\    wm.set_name(ws, "web")
+        \\    wm.set_name(w1, "chat")
+        \\    -- Same place, same name: refused.
+        \\    assert(not pcall(wm.set_name, w2, "chat"))
+        \\    -- In a named group it's another place.
+        \\    local g = wm.create_group({ w2 })
+        \\    wm.set_name(g, "side")
+        \\    wm.set_name(w2, "chat")
+        \\
+        \\    assert(wm.find("web/chat") == w1)
+        \\    assert(wm.find("FAKE-1/web/chat") == w1)
+        \\    assert(wm.find("side/chat") == w2)
+        \\    assert(wm.find("FAKE-1/web/side/chat") == w2)
+        \\    assert(wm.find("web") == ws)
+        \\    assert(not pcall(wm.find, "chat"), "two of them: ambiguous")
+        \\    assert(not pcall(wm.find, "web//chat"))
+        \\    assert(wm.find("FAKE-1") == nil, "an output, not a node")
+        \\    assert(wm.find("nope") == nil)
+        \\    -- Unnamed in between doesn't count, named in between does.
+        \\    assert(wm.find("web/side") == g)
+        \\    assert(wm.find("FAKE-1/chat") == nil)
+        \\
+        \\    assert(wm.get_path(w2) == "FAKE-1/web/side/chat")
+        \\    assert(wm.get_path(ws) == "FAKE-1/web")
+        \\    wm.set_name(w1, nil)
+        \\    assert(wm.get_path(w1) == "FAKE-1/web", "unnamed: where it is")
+        \\    paths_ok = true
+        \\end)
+    );
+    defer h.deinit();
+    h.map(1);
+    h.map(2);
+    h.key(types.mod.super, "p");
+    const lua = h.wm.lua.?;
+    _ = lua.getGlobal("paths_ok");
+    defer lua.pop(1);
+    try std.testing.expect(lua.toBoolean(-1));
+}
+
+fn lua_string(h: *Harness, name: [:0]const u8) []const u8 {
+    const lua = h.wm.lua.?;
+    _ = lua.getGlobal(name);
+    defer lua.pop(1);
+    return lua.toString(-1) catch "";
+}
+
+test "names: binds made within a path apply with focus there, the nearest first" {
+    var h = try Harness.init(std.testing.allocator,
+        \\local S = wm.MOD_SUPER
+        \\local function hit(s) return function() last = s end end
+        \\wm.bind(S, "k", hit("global"))
+        \\wm.within("web", function()
+        \\    wm.bind(S, "k", hit("web"))
+        \\    wm.within("chat", function() wm.bind(S, "k", hit("web/chat")) end)
+        \\end)
+        \\wm.within("FAKE-1", function()
+        \\    wm.bind(S, "j", hit("output"))
+        \\    wm.bind(S, "k", hit("output")) -- further from the focus than web
+        \\end)
+        \\assert(not pcall(wm.within, "a//b", function() end))
+        \\-- An error inside still ends the scope.
+        \\assert(not pcall(wm.within, "x", function() error("boom") end))
+        \\wm.bind(S, "l", hit("everywhere"))
+        \\
+        \\wm.bind(S, "w", function()
+        \\    for _, w in ipairs(wm.get_workspace_states()) do
+        \\        if w.state == "focused" then wm.set_name(w.id, "web") end
+        \\    end
+        \\end)
+        \\wm.bind(S, "c", function() wm.set_name(wm.get_focused(), "chat") end)
+    );
+    defer h.deinit();
+    const S = types.mod.super;
+    try std.testing.expectEqual(@as(u32, 0), h.wm.lua_scope);
+
+    h.key(S, "k"); // nothing named yet: the output's
+    try std.testing.expectEqualStrings("output", lua_string(&h, "last"));
+    h.key(S, "l");
+    try std.testing.expectEqualStrings("everywhere", lua_string(&h, "last"));
+
+    h.map(1);
+    h.map(2);
+    h.key(S, "w"); // the workspace is web now
+    h.key(S, "k");
+    try std.testing.expectEqualStrings("web", lua_string(&h, "last"));
+    h.key(S, "c"); // and the focused window is web/chat
+    h.key(S, "k");
+    try std.testing.expectEqualStrings("web/chat", lua_string(&h, "last"));
+    h.key(S, "j"); // only the output has one
+    try std.testing.expectEqualStrings("output", lua_string(&h, "last"));
+
+    // On the other, unnamed window: web's again.
+    const n1 = h.wm.node_registry.get(h.wm.window_to_node_id.get(1).?).?;
+    const n2 = h.wm.node_registry.get(h.wm.window_to_node_id.get(2).?).?;
+    h.wm.set_focus(if (n1.name.len == 0) n1 else n2);
+    h.step();
+    h.key(S, "k");
+    try std.testing.expectEqualStrings("web", lua_string(&h, "last"));
+}
+
+test "names: rules added within a path only run for windows there" {
+    var h = try Harness.init(std.testing.allocator,
+        \\local S = wm.MOD_SUPER
+        \\web_maps, all_maps = 0, 0
+        \\wm.within("web", function()
+        \\    wm.add_rule(function(ev) if ev == "pre_map" then web_maps = web_maps + 1 end end)
+        \\end)
+        \\wm.add_rule(function(ev) if ev == "pre_map" then all_maps = all_maps + 1 end end)
+        \\wm.bind(S, "w", function()
+        \\    for _, w in ipairs(wm.get_workspace_states()) do
+        \\        if w.state == "focused" then wm.set_name(w.id, "web") end
+        \\    end
+        \\end)
+    );
+    defer h.deinit();
+    const lua = h.wm.lua.?;
+    h.map(1); // the workspace has no name yet
+    h.key(types.mod.super, "w");
+    h.map(2); // in web
+    _ = lua.getGlobal("web_maps");
+    _ = lua.getGlobal("all_maps");
+    defer lua.pop(2);
+    try std.testing.expectEqual(@as(i64, 1), try lua.toInteger(-2));
+    try std.testing.expectEqual(@as(i64, 2), try lua.toInteger(-1));
+}
+
+test "names: gaps and preview settings made within a path, for its workspaces" {
+    var h = try Harness.init(std.testing.allocator,
+        \\local S = wm.MOD_SUPER
+        \\wm.set_gaps(4, 4, 4, 4)
+        \\wm.within("FAKE-1", function() wm.set_gaps(1, 1, 1, 1) end)
+        \\wm.within("web", function()
+        \\    wm.set_gaps(10, 10, 20, 20)
+        \\    wm.set_preview_font("Mono 9")
+        \\end)
+        \\wm.bind(S, "w", function()
+        \\    for _, w in ipairs(wm.get_workspace_states()) do
+        \\        if w.state == "focused" then wm.set_name(w.id, "web") end
+        \\    end
+        \\end)
+        \\wm.bind(S, "g", function() wm.set_gaps(5, 5, 5, 5) end)
+    );
+    defer h.deinit();
+    const g = h.wm.current_graph;
+    // On FAKE-1, not in web yet.
+    try std.testing.expectEqual(@as(u32, 1), g.gap_inner_h);
+    try std.testing.expectEqual(@as(?usize, null), g.preview_font_len);
+
+    h.key(types.mod.super, "w"); // named web: web's, nearer than FAKE-1's
+    try std.testing.expectEqual(@as(u32, 10), g.gap_inner_h);
+    try std.testing.expectEqual(@as(u32, 20), g.gap_outer_v);
+    try std.testing.expectEqualStrings("Mono 9", g.preview_font_buf[0..g.preview_font_len.?]);
+
+    h.key(types.mod.super, "g"); // gaps for everything: web's laid over again
+    try std.testing.expectEqual(@as(u32, 10), g.gap_inner_h);
+    try std.testing.expectEqual(@as(u32, 5), h.wm.default_gap_inner_h);
+}

@@ -23,6 +23,8 @@ const startup = @import("startup.zig");
 const prompt = @import("prompt.zig");
 const input_bar = @import("input_bar.zig");
 const output_mod = @import("output.zig");
+const scopes = @import("scopes.zig");
+const workspace_settings = @import("workspace_settings.zig");
 
 const Graph = graph.Graph;
 const Node = graph.Node;
@@ -133,6 +135,12 @@ pub const WM = struct {
     keybinds: std.AutoHashMapUnmanaged(settings.BindKey, settings.Keybind) = .empty,
     /// While a factory runs: the workspace its binds belong to.
     bind_owner: ?*Graph = null,
+    /// Every path a bind was made within (scopes.zig), once each.
+    scope_paths: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// The Lua config's scope, inside wm.within.
+    lua_scope: u32 = 0,
+    /// Gaps and preview settings made within a path (workspace_settings.zig).
+    workspace_settings: std.ArrayListUnmanaged(workspace_settings.Entry) = .empty,
     /// Rules, in the order they were added.
     rules: std.ArrayListUnmanaged(callbacks.Rule) = .empty,
     next_rule_id: u32 = 1,
@@ -249,6 +257,8 @@ pub const WM = struct {
         while (kb_it.next()) |kb| self.free_keybind(kb.*);
         self.keybinds.deinit(self.allocator);
         self.keybinds = .empty;
+        scopes.deinit(self);
+        workspace_settings.deinit(self);
         if (self.lua) |lua| lua.deinit();
         self.lua = null;
         if (self.default_arranger_name.len > 0) {

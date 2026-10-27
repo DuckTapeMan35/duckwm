@@ -12,13 +12,15 @@ const layouts = @import("commands/layouts.zig");
 const util = @import("commands/util.zig");
 const output = @import("output.zig");
 const groups = @import("groups.zig");
+const scopes = @import("scopes.zig");
 
 const wire = protocol.wire;
 const WM = core.WM;
 const Graph = graph.Graph;
 const Callback = types.Callback;
 
-pub const Rule = struct { id: u32, cb: Callback };
+/// A rule, and the path it was added within (scopes.everywhere: none).
+pub const Rule = struct { id: u32, cb: Callback, scope: scopes.Scope = scopes.everywhere };
 
 /// What a callback handed back besides running its commands (arrangers only).
 pub const Reply = struct { layout: ?protocol.LayoutSpec = null, state: ?protocol.Value = null };
@@ -136,6 +138,11 @@ pub fn call_rules(wm: *WM, event: [:0]const u8, node_id: u32) void {
     // By index: a rule may add rules, which can move the list.
     var i: usize = 0;
     while (i < wm.rules.items.len) : (i += 1) {
+        // Checked for each rule: an earlier one may have moved or named it.
+        if (wm.rules.items[i].scope != scopes.everywhere) {
+            const n = wm.node_registry.get(node_id) orelse continue;
+            if (!scopes.contains(wm, wm.rules.items[i].scope, .{ .node = n })) continue;
+        }
         const m = wm.tx_begin();
         var arena = std.heap.ArenaAllocator.init(wm.allocator);
         defer arena.deinit();
@@ -208,10 +215,20 @@ fn snapshot(wm: *WM, g: *Graph, event: protocol.ArrangerEvent, node_id: u32, pre
     };
 }
 
-/// The bind a press runs: those of the groups the focused window is in
-/// (innermost first), then the current workspace's, then global ones; and
-/// within each, a client's over the commands file's over the config's.
+/// The bind a press runs. First those made within a path focus is in (the
+/// path matching nearest the focus first), then the rest. For each: those of
+/// the groups the focused window is in (innermost first), then the current
+/// workspace's, then global ones; and within each, a client's over the
+/// commands file's over the config's.
 fn find_bind(wm: *WM, combo: types.KeyCombo) ?Found {
+    var active: std.ArrayListUnmanaged(scopes.Scope) = .empty;
+    defer active.deinit(wm.allocator);
+    scopes.active(wm, &active) catch {};
+    for (active.items) |s| if (find_bind_in(wm, combo, s)) |f| return f;
+    return find_bind_in(wm, combo, scopes.everywhere);
+}
+
+fn find_bind_in(wm: *WM, combo: types.KeyCombo, scope: scopes.Scope) ?Found {
     var owners: [groups.max_depth + 2]?*Graph = undefined;
     var n: usize = 0;
     if (wm.focused) |f| {
@@ -231,7 +248,7 @@ fn find_bind(wm: *WM, combo: types.KeyCombo) ?Found {
     owners[n + 1] = null;
     for (owners[0 .. n + 2]) |owner| {
         for ([_]settings.Layer{ .client, .commands, .config }) |layer| {
-            if (wm.keybinds.get(.{ .combo = combo, .owner = owner, .layer = layer })) |kb|
+            if (wm.keybinds.get(.{ .combo = combo, .owner = owner, .layer = layer, .scope = scope })) |kb|
                 return .{ .kb = kb, .owner = owner };
         }
     }

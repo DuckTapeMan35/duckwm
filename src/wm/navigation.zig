@@ -6,6 +6,8 @@ const focus = @import("focus.zig");
 const registry = @import("registry.zig");
 const output = @import("output.zig");
 const groups = @import("groups.zig");
+const workspace_settings = @import("workspace_settings.zig");
+
 pub const WorkspaceSwitchMode = @import("protocol").WorkspaceSwitchMode;
 const WM = core.WM;
 const Graph = graph.Graph;
@@ -304,6 +306,7 @@ pub fn add_workspace_node(wm: *WM, parent: *graph.Graph) !*Node {
     sub.output = parent.output;
     node.floating = false;
     _ = try wm.register_node(null, node);
+    workspace_settings.apply_to(wm, node);
     return node;
 }
 
@@ -329,6 +332,7 @@ pub fn create_initial_workspace(wm: *WM) !void {
     const pw = try wm.backend.create_preview_window(wm.frame_options(ws_node));
     ws_node.preview_window = pw;
     _ = try wm.register_node(pw, ws_node);
+    workspace_settings.apply_to(wm, ws_node);
 
     // Constraint to fill root
     const g = graph.Constraint{ .grid_cell = .{

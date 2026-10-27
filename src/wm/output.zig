@@ -7,6 +7,7 @@ const registry = @import("registry.zig");
 const navigation = @import("navigation.zig");
 const focus_mod = @import("focus.zig");
 const groups = @import("groups.zig");
+const workspace_settings = @import("workspace_settings.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 
@@ -83,6 +84,8 @@ pub fn sync(wm: *WM) !void {
     }
     wm.screen_width = wm.output.rect.width;
     wm.screen_height = wm.output.rect.height;
+    // Outputs renamed (river names them late) or workspaces moved to another.
+    workspace_settings.apply_all(wm);
 }
 
 /// Free every output and its workspaces.

@@ -528,9 +528,9 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Workspaces",
         .name = "get_workspace_states",
-        .desc = "Return a table of all workspaces at the current level, each with a position (1-based index) and state ('focused', 'active', or 'inactive'). All workspaces are included regardless of whether they have content.",
+        .desc = "Return a table of all workspaces at the current level, each with a position (1-based index), state ('focused', 'active', or 'inactive') and its node id (for set_name). All workspaces are included regardless of whether they have content.",
         .params = &.{},
-        .ret = "{ position: integer, state: 'focused'|'active'|'inactive' }[]",
+        .ret = "{ position: integer, state: 'focused'|'active'|'inactive', id: integer }[]",
     },
     .{
         .category = "Workspaces",
@@ -743,7 +743,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Layout & Arrangers",
         .name = "set_gaps",
-        .desc = "Set global gap sizes in pixels. inner_h/inner_v are gaps between windows; outer_h/outer_v are gaps between windows and screen edges.",
+        .desc = "Set global gap sizes in pixels. inner_h/inner_v are gaps between windows; outer_h/outer_v are gaps between windows and screen edges. Inside within, only for the workspaces in its path.",
         .params = &.{
             .{ .name = "inner_h", .typ = "integer" },
             .{ .name = "inner_v", .typ = "integer" },
@@ -1333,7 +1333,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Appearance",
         .name = "set_preview_colors",
-        .desc = "Set the colors used when drawing workspace preview thumbnails. Colors are 0xRRGGBB.",
+        .desc = "Set the colors used when drawing workspace preview thumbnails. Colors are 0xRRGGBB. Inside within, only for the workspaces in its path.",
         .params = &.{
             .{ .name = "bg", .typ = "integer" },
             .{ .name = "win_bg", .typ = "integer" },
@@ -1358,7 +1358,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Appearance",
         .name = "set_preview_font",
-        .desc = "Set the Xft font name used for labels in workspace preview thumbnails (e.g. \"monospace:pixelsize=10\"). Falls back to a built-in font if the name can't be opened.",
+        .desc = "Set the Xft font name used for labels in workspace preview thumbnails (e.g. \"monospace:pixelsize=10\"). Falls back to a built-in font if the name can't be opened. Inside within, only for the workspaces in its path.",
         .params = &.{
             .{ .name = "font", .typ = "string" },
         },
@@ -1470,7 +1470,8 @@ pub const entries = [_]ApiEntry{
         .category = "Rules",
         .name = "add_rule",
         .desc =
-        \\Register a global window rule. Rules fire for every window regardless of arranger.
+        \\Register a global window rule. Rules fire for every window regardless of arranger;
+        \\one added inside within only for windows in its path.
         \\The function receives (event, id) where event is one of:
         \\  'pre_map' — fires before the arranger places the window (use for float/fullscreen rules)
         \\  'map'     — fires after the arranger places the window
@@ -1512,7 +1513,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Node Graph",
         .name = "set_name",
-        .desc = "Give a node a name, for paths like 'DP-1/web/chat' (no '/' in it). nil clears it. Kept until the node is gone, across config reloads.",
+        .desc = "Give a node a name, for paths like 'DP-1/web/chat' (see find). No '/' in it, and nothing else in the same named place can have it already. nil clears it. Kept until the node is gone, across config reloads.",
         .params = &.{
             .{ .name = "id", .typ = "integer" },
             .{ .name = "name", .typ = "string|nil" },
@@ -1523,6 +1524,30 @@ pub const entries = [_]ApiEntry{
         .category = "Node Graph",
         .name = "get_name",
         .desc = "Return a node's name, or nil if it has none.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "string|nil",
+    },
+    .{
+        .category = "Node Graph",
+        .name = "within",
+        .desc = "Run fn, and have what it sets up apply only in path (see find): on the node whose path ends in it, or anything inside. Keybinds apply while focus is there, and win over binds made outside, the nearest match to the focus first. Rules (add_rule) only run for windows there. set_gaps, set_preview_colors and set_preview_font only apply to the workspaces there, including ones that get there later (made, named or moved), the nearest path winning; set without within, they reset every workspace and these are laid over again. The path needn't exist yet, and what was set up stays when its node is closed and made again. Nested, paths add up: within('DP-1', ...) around within('web', ...) is 'DP-1/web'.",
+        .params = &.{
+            .{ .name = "path", .typ = "string" },
+            .{ .name = "fn", .typ = "fun()" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Node Graph",
+        .name = "find",
+        .desc = "The node at a path: 'DP-1/web/chat' is the node named 'chat', in the nearest named thing 'web', on output 'DP-1'. Unnamed nodes in between don't count, and the start can be left off ('web/chat', 'chat') while only one node matches; more than one is an error. nil if none matches, or if the path names an output.",
+        .params = &.{.{ .name = "path", .typ = "string" }},
+        .ret = "integer|nil",
+    },
+    .{
+        .category = "Node Graph",
+        .name = "get_path",
+        .desc = "A node's whole path: the names of the named things it's in, outermost (its output) first, then its own if it has one. nil if none of them is named.",
         .params = &.{.{ .name = "id", .typ = "integer" }},
         .ret = "string|nil",
     },
