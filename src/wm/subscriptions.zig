@@ -8,6 +8,15 @@ const WM = core.WM;
 
 pub const Subscription = struct { id: u32, topic: protocol.Topic, cb: types.Callback };
 
+/// A change to tell subscribers about once its transaction commits (queued as
+/// an effect, so a rolled-back one never is).
+pub const Pending = struct { topic: protocol.Topic, id: ?u32 = null };
+
+/// Queue p for the next deliver.
+pub fn queue(wm: *WM, p: Pending) void {
+    wm.effect(.{ .notice = p });
+}
+
 pub fn add(wm: *WM, topic: protocol.Topic, cb: types.Callback) !u32 {
     const id = wm.next_subscription_id;
     try wm.subscriptions.append(wm.allocator, .{ .id = id, .topic = topic, .cb = cb });
@@ -53,6 +62,12 @@ pub fn deliver(wm: *WM) void {
         wm.told_focus = focused;
         tell(wm, .focus, focused);
     }
+    // Taken whole: what subscribers queue while being told waits for the
+    // next commit, so one renaming on every rename can't spin here.
+    var batch = wm.pending_notices;
+    wm.pending_notices = .empty;
+    defer batch.deinit(wm.allocator);
+    for (batch.items) |p| tell(wm, p.topic, p.id);
 }
 
 /// Tell every subscription to topic. A Lua one runs in a transaction of its
@@ -82,4 +97,5 @@ fn tell(wm: *WM, topic: protocol.Topic, id: ?u32) void {
 
 pub fn deinit(wm: *WM) void {
     wm.subscriptions.deinit(wm.allocator);
+    wm.pending_notices.deinit(wm.allocator);
 }

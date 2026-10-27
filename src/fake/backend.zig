@@ -29,6 +29,9 @@ pub const Backend = struct {
     focused: ?types.WindowHandle = null,
     error_shown: bool = false,
 
+    /// The one output's connector name (tests rename it).
+    output_name: []const u8 = "FAKE-1",
+
     // ---- what tests use ----
     /// Queue an event for core's next next_event.
     pub fn push(self: *Backend, ev: types.Event) void {
@@ -120,7 +123,7 @@ pub const Backend = struct {
     /// One monitor, the whole screen.
     pub fn outputs(self: *Backend, buf: []types.OutputInfo) []types.OutputInfo {
         const r: types.Rect = .{ .x = 0, .y = 0, .width = self.screen.width, .height = self.screen.height };
-        buf[0] = .{ .id = 1, .rect = r, .usable = r, .name = .init("FAKE-1") };
+        buf[0] = .{ .id = 1, .rect = r, .usable = r, .name = .init(self.output_name) };
         return buf[0..1];
     }
 

@@ -8,6 +8,7 @@ const navigation = @import("navigation.zig");
 const focus_mod = @import("focus.zig");
 const groups = @import("groups.zig");
 const workspace_settings = @import("workspace_settings.zig");
+const subscriptions = @import("subscriptions.zig");
 const WM = core.WM;
 const Graph = graph_mod.Graph;
 
@@ -66,12 +67,18 @@ pub fn sync(wm: *WM) !void {
     const infos = wm.backend.outputs(&buf);
     if (infos.len == 0) return; // everything off for a moment: keep what's there
 
+    var changed = false;
     for (infos) |info| {
         if (find(wm, info.id)) |o| {
             o.rect = info.rect;
             o.usable = info.usable;
+            // river can name it after listing it
+            if (!std.mem.eql(u8, o.name.slice(), info.name.slice())) changed = true;
             o.name = info.name;
-        } else try create(wm, info);
+        } else {
+            try create(wm, info);
+            changed = true;
+        }
     }
     var i = wm.outputs.items.len;
     while (i > 0) {
@@ -80,8 +87,12 @@ pub fn sync(wm: *WM) !void {
         const listed = for (infos) |info| {
             if (info.id == o.id) break true;
         } else false;
-        if (!listed) try remove(wm, o);
+        if (!listed) {
+            try remove(wm, o);
+            changed = true;
+        }
     }
+    if (changed) subscriptions.queue(wm, .{ .topic = .outputs });
     wm.screen_width = wm.output.rect.width;
     wm.screen_height = wm.output.rect.height;
     // Outputs renamed (river names them late) or workspaces moved to another.

@@ -620,3 +620,46 @@ test "subscribers hear about scenes and focus after each commit" {
     try std.testing.expectEqual(@as(u64, 42), msg.event.callback);
     try std.testing.expectEqual(@as(?u32, wm.window_to_node_id.get(1).?), msg.event.notice.id);
 }
+
+test "subscribers hear about names once committed, and about outputs" {
+    var h = try Harness.init(std.testing.allocator,
+        \\renamed, outputs = {}, 0
+        \\wm.subscribe("names", function(_, _, id) renamed[#renamed + 1] = wm.get_name(id) or "-" end)
+        \\wm.subscribe("outputs", function() outputs = outputs + 1 end)
+        \\wm.bind(wm.MOD_SUPER, "n", function()
+        \\    wm.set_name(wm.get_focused(), "a")
+        \\    wm.set_name(wm.get_focused(), "a") -- the same again: not a change
+        \\end)
+    );
+    defer h.deinit();
+    const lua = h.wm.lua.?;
+    const wm = h.wm;
+    h.map(1);
+    h.key(types.mod.super, "n");
+
+    // A rename rolled back is never told.
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var results: [2]wm_mod.command.Value = undefined;
+    const id1 = wm.window_to_node_id.get(1).?;
+    try std.testing.expectError(error.UnknownSubscription, wm_mod.command.run(wm, &.{
+        .{ .set_name = .{ .id = id1, .name = "b" } },
+        .{ .unsubscribe = .{ .id = 999 } }, // fails: the whole batch is undone
+    }, arena.allocator(), &results));
+    h.step();
+
+    _ = lua.getGlobal("renamed");
+    try std.testing.expectEqual(@as(usize, 1), lua.lenRaw(-1));
+    _ = lua.getIndexRaw(-1, 1);
+    try std.testing.expectEqualStrings("a", try lua.toString(-1));
+    lua.pop(2);
+
+    // A monitor renamed (river names them late).
+    h.backend().output_name = "DP-1";
+    h.backend().push(.reserved_area_changed);
+    h.step();
+    try std.testing.expectEqualStrings("DP-1", wm.output.name.slice());
+    _ = lua.getGlobal("outputs");
+    defer lua.pop(1);
+    try std.testing.expectEqual(@as(i64, 1), try lua.toInteger(-1));
+}

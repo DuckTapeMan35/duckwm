@@ -155,6 +155,8 @@ pub const WM = struct {
     /// What subscribers were last told: the scene serial and focused node.
     told_serial: u64 = 0,
     told_focus: ?u32 = null,
+    /// Names and outputs changes committed since the last deliver.
+    pending_notices: std.ArrayListUnmanaged(subscriptions.Pending) = .empty,
     /// Factory for the arranger of workspaces that don't set their own (0: none).
     default_arranger: ?types.Callback = null,
     default_arranger_name: []const u8 = "",

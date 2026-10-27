@@ -6,6 +6,7 @@ const command = @import("../command.zig");
 const paths = @import("../paths.zig");
 const scopes = @import("../scopes.zig");
 const workspace_settings = @import("../workspace_settings.zig");
+const subscriptions = @import("../subscriptions.zig");
 const util = @import("util.zig");
 const WM = core.WM;
 const Node = graph_mod.Node;
@@ -105,8 +106,10 @@ pub fn set_name(wm: *WM, args: Args(.set_name), _: Allocator) !Value {
     const name = args.name orelse "";
     try paths.check_name(wm, n, name);
     const g = n.owner_graph orelse return error.NotInGraph;
+    const changed = !std.mem.eql(u8, n.name, name);
     try g.replace_bytes(&n.name, name);
-    workspace_settings.apply_all(wm);
+    workspace_settings.apply_all(wm); // workspaces may be in another path now
+    if (changed) subscriptions.queue(wm, .{ .topic = .names, .id = args.id });
     return .nil;
 }
 

@@ -5,6 +5,7 @@ const types = @import("types");
 const c = @import("libc");
 const core = @import("core.zig");
 const settings = @import("settings.zig");
+const subscriptions = @import("subscriptions.zig");
 const WM = core.WM;
 
 pub const Effect = union(enum) {
@@ -13,6 +14,8 @@ pub const Effect = union(enum) {
     bind: struct { key: settings.BindKey, action: settings.Keybind },
     unbind: settings.BindKey,
     sync_pointer_grabs,
+    /// Something for subscribers (names, outputs), told after the commit.
+    notice: subscriptions.Pending,
 };
 
 /// A transaction: the journal position plus the effect queue position.
@@ -94,6 +97,7 @@ fn run_effect(wm: *WM, e: Effect) void {
         .bind => |b| wm.put_keybind(b.key, b.action),
         .unbind => |key| wm.remove_keybind(key),
         .sync_pointer_grabs => settings.apply_pointer_grabs(wm),
+        .notice => |n| wm.pending_notices.append(wm.allocator, n) catch {},
     }
 }
 
@@ -103,7 +107,7 @@ pub fn drop_effect(wm: *WM, e: Effect) void {
         .spawn => |argv| free_argv(wm.allocator, argv),
         .bind => |b| wm.free_keybind(b.action),
         .unbind => {},
-        .close_window, .sync_pointer_grabs => {},
+        .close_window, .sync_pointer_grabs, .notice => {},
     }
 }
 
