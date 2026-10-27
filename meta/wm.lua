@@ -494,16 +494,29 @@ function wm.set_float_move_button(button) end
 ---@param button integer
 function wm.set_float_resize_button(button) end
 
---- Return the current workspace's graph as a Lua table with:
+--- What's on screen, on every output: the scene last handed to the compositor, so what
+--- a transaction changes shows once it's committed. windows is everything shown: tiled
+--- ones are drawn below floating ones (tiled false), and workspace previews are in it too,
+--- as type 'workspace'. x, y, width and height are the frame in
+--- screen coordinates, border included; clip is the part that may be drawn (a tiled
+--- window's output), nil for none. path is the node's (get_path) as names are now, nil if
+--- nothing it's in is named. serial counts scenes: a different one means something moved.
+---@return { serial: integer, windows: { id: integer, type: string, path: string|nil, x: integer, y: integer, width: integer, height: integer, border_width: integer, tiled: boolean, clip: { x: integer, y: integer, width: integer, height: integer }|nil }[], fullscreen: integer|nil, focused: integer|nil }
+function wm.get_scene() end
+
+--- Return a workspace's or group's graph (by its node id; the current workspace without one)
+--- as a Lua table with:
+---   id, path — the workspace or group itself (nil for an output's top level)
 ---   nodes    — array of all node tables
 ---   windows  — array of window/workspace node ids
 ---   focused  — id of currently focused node, or nil
 ---   root     — id of the first container that's no split's child, or nil
---- Each node table has: id, type, x, y, width, height, constraints, parent, parent_idx.
+--- Each node table has: id, type, name, x, y, width, height, constraints, parent, parent_idx.
 --- parent is the id of the container whose split holds this node, or nil.
 --- parent_idx is its 1-based position among that split's children.
----@return { nodes: table[], windows: integer[], focused: integer|nil, root: integer|nil }
-function wm.get_layout() end
+---@param id integer?
+---@return { id: integer|nil, path: string|nil, nodes: table[], windows: integer[], focused: integer|nil, root: integer|nil }
+function wm.get_layout(id) end
 
 --- Apply a layout table to the current graph. Accepts the same format returned by get_layout.
 --- Clears all constraints on nodes present in the table, then applies the constraints

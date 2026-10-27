@@ -200,6 +200,8 @@ fn apply_scene(wm: *WM) !void {
     }
     wm.backend.apply_outlines(wm.outlines.items);
     wm.backend.apply_windows(wm.scene.items, fullscreen);
+    wm.scene_fullscreen = fullscreen;
+    wm.scene_serial += 1;
 
     for (wm.outputs.items) |o| repaint_previews(wm, output.visible(wm, o));
 }

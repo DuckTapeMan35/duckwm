@@ -91,6 +91,10 @@ pub const WM = struct {
     // ---- commit ----
     /// The scene from the last commit: the desired state of every visible window.
     scene: std.ArrayListUnmanaged(types.WindowState) = .empty,
+    /// How many scenes have gone to the backend: get_scene's serial.
+    scene_serial: u64 = 0,
+    /// The fullscreen window of the last scene, if any.
+    scene_fullscreen: ?types.WindowHandle = null,
     /// Recompute and apply the scene at the next commit.
     scene_dirty: bool = false,
     /// Group outlines to draw, rebuilt with the scene.

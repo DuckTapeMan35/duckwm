@@ -548,6 +548,10 @@ message Eval {
   string source = 1;
 }
 
+message GetLayout {
+  optional uint32 id = 1;
+}
+
 message Ref {
   oneof kind {
     uint32 id = 1;
@@ -944,7 +948,7 @@ message Command {
     ExecOnce exec_once = 803;
     Empty reload_config = 804;
     Eval eval = 805;
-    Empty get_layout = 900;
+    GetLayout get_layout = 900;
     SetLayout set_layout = 901;
     Empty print_graph = 902;
     SetArranger set_arranger = 903;
@@ -954,6 +958,7 @@ message Command {
     Empty get_arranger_index = 907;
     SetArrangerIndex set_arranger_index = 908;
     PrintGraphPretty print_graph_pretty = 909;
+    Empty get_scene = 910;
     Empty get_outputs = 1000;
     FocusOutput focus_output = 1001;
     SendToOutput send_to_output = 1002;

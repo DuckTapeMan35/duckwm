@@ -480,3 +480,71 @@ test "names: set_scope and get_scope, per client and for the config" {
     wm.drop_client_callbacks(7);
     try std.testing.expectEqual(@as(usize, 0), wm.workspace_settings.items.len);
 }
+
+test "get_scene: what's on screen, with each window's path" {
+    var h = try Harness.init(std.testing.allocator,
+        \\wm.arrange.set_default(wm.arrange.tile)
+        \\wm.bind(wm.MOD_SUPER, "s", function()
+        \\    local s = wm.get_scene()
+        \\    scene_serial = s.serial
+        \\    scene_count = #s.windows
+        \\    local w = s.windows[1]
+        \\    assert(w.type == "window" and w.width > 0 and w.tiled and w.clip, "a tiled window")
+        \\    assert(s.focused ~= nil and s.fullscreen == nil)
+        \\    wm.set_name(w.id, "term")
+        \\    -- Paths are the names now: a transaction sees its own.
+        \\    assert(wm.get_scene().windows[1].path == "FAKE-1/term")
+        \\    assert(wm.get_scene().serial == s.serial, "no new scene inside a transaction")
+        \\end)
+        \\wm.bind(wm.MOD_SUPER, "p", function()
+        \\    scene_path = wm.get_scene().windows[1].path
+        \\end)
+    );
+    defer h.deinit();
+    const lua = h.wm.lua.?;
+    h.map(1);
+    h.map(2);
+    h.key(types.mod.super, "s");
+    _ = lua.getGlobal("scene_count");
+    try std.testing.expectEqual(@as(i64, 2), try lua.toInteger(-1));
+    lua.pop(1);
+    _ = lua.getGlobal("scene_serial");
+    const serial = try lua.toInteger(-1);
+    lua.pop(1);
+    try std.testing.expect(serial > 0);
+    try std.testing.expect(h.wm.scene_serial >= @as(u64, @intCast(serial)));
+
+    h.key(types.mod.super, "p");
+    try std.testing.expectEqualStrings("FAKE-1/term", lua_string(&h, "scene_path"));
+}
+
+test "get_layout: any workspace or group, by id, with names" {
+    var h = try Harness.init(std.testing.allocator,
+        \\wm.arrange.set_default(wm.arrange.tile)
+        \\wm.bind(wm.MOD_SUPER, "l", function()
+        \\    local w1, w2 = table.unpack(wm.get_all_windows())
+        \\    local g = wm.create_group({ w2 })
+        \\    wm.set_name(g, "side")
+        \\    wm.set_name(w2, "chat")
+        \\
+        \\    local here = wm.get_layout()
+        \\    assert(here.id ~= nil, "the workspace's own id")
+        \\    local inner = wm.get_layout(g)
+        \\    assert(inner.id == g and inner.path == "FAKE-1/side")
+        \\    assert(#inner.windows == 1 and inner.windows[1] == w2)
+        \\    assert(inner.by_id[w2].name == "chat")
+        \\    -- The workspace, by its id, is the same as the current one.
+        \\    assert(#wm.get_layout(here.id).nodes == #here.nodes)
+        \\    assert(not pcall(wm.get_layout, w1), "a window has no layout")
+        \\    layout_ok = true
+        \\end)
+    );
+    defer h.deinit();
+    h.map(1);
+    h.map(2);
+    h.key(types.mod.super, "l");
+    const lua = h.wm.lua.?;
+    _ = lua.getGlobal("layout_ok");
+    defer lua.pop(1);
+    try std.testing.expect(lua.toBoolean(-1));
+}

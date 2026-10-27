@@ -1,6 +1,7 @@
 const std = @import("std");
 const core = @import("../core.zig");
 const command = @import("../command.zig");
+const paths = @import("../paths.zig");
 const graph_mod = @import("graph");
 const util = @import("util.zig");
 const protocol = @import("protocol");
@@ -244,11 +245,10 @@ fn constraint_value(wm: *WM, a: std.mem.Allocator, con: Constraint) !Value {
     } };
 }
 
-/// The current workspace's tiled layout: nodes (with constraints, parent
-/// and position within it), windows, focused and root.
-pub fn describe(wm: *WM, a: std.mem.Allocator) !Value {
-    const g = wm.current_graph;
-
+/// g's tiled layout, as get_layout returns it: the workspace or group itself
+/// (id, path), nodes (with constraints, parent and position within it),
+/// windows, focused and root.
+pub fn describe(wm: *WM, g: *Graph, a: std.mem.Allocator) !Value {
     const Parent = struct { node: *Node, idx: u32 };
     var parents: std.AutoHashMapUnmanaged(*Node, Parent) = .empty;
     for (g.nodes.items) |n| {
@@ -275,6 +275,7 @@ pub fn describe(wm: *WM, a: std.mem.Allocator) !Value {
         try nodes.append(a, .{ .map = try a.dupe(Value.Field, &.{
             .{ .key = "id", .value = .{ .integer = id } },
             .{ .key = "type", .value = .{ .str = util.type_name(n) } },
+            .{ .key = "name", .value = try util.text(a, n.name) },
             .{ .key = "x", .value = .{ .integer = n.x } },
             .{ .key = "y", .value = .{ .integer = n.y } },
             .{ .key = "width", .value = .{ .integer = n.width } },
@@ -287,7 +288,15 @@ pub fn describe(wm: *WM, a: std.mem.Allocator) !Value {
         if (root == .nil and n.content == .empty and p == null) root = .{ .integer = id };
     }
 
+    // The workspace or group itself, when it's a node (not an output's root).
+    const self_id: Value = if (g.parent_node) |pn| id_of(wm, pn) else .nil;
+    const self_path: Value = if (g.parent_node) |pn|
+        try util.text(a, try paths.path_of(wm, .{ .node = pn }, a))
+    else
+        .nil;
     return .{ .map = try a.dupe(Value.Field, &.{
+        .{ .key = "id", .value = self_id },
+        .{ .key = "path", .value = self_path },
         .{ .key = "nodes", .value = .{ .list = nodes.items } },
         .{ .key = "windows", .value = .{ .list = windows.items } },
         .{ .key = "focused", .value = if (wm.focused) |f| id_of(wm, f) else .nil },
@@ -499,13 +508,58 @@ pub fn print(wm: *WM, a: std.mem.Allocator) ![]const u8 {
     return buf.items;
 }
 
-pub fn get_layout(wm: *WM, _: void, arena: Allocator) !Value {
-    return describe(wm, arena);
+pub fn get_layout(wm: *WM, args: Args(.get_layout), arena: Allocator) !Value {
+    const g = if (args.id) |id| blk: {
+        const n = wm.get_node_by_id(id) orelse return error.NoSuchNode;
+        break :blk n.inner() orelse return error.NotAWorkspace;
+    } else wm.current_graph;
+    return describe(wm, g, arena);
 }
 
 pub fn set_layout(wm: *WM, args: Args(.set_layout), arena: Allocator) !Value {
     try apply(wm, wm.current_graph, args.layout, arena, .partial);
     return .nil;
+}
+
+/// What's on screen: the scene last handed to the backend, as the compositor
+/// draws it. Changes inside a transaction show once it's committed.
+pub fn get_scene(wm: *WM, _: void, arena: Allocator) !Value {
+    var windows: std.ArrayListUnmanaged(Value) = try .initCapacity(arena, wm.scene.items.len);
+    for (wm.scene.items) |w| {
+        const id = wm.window_to_node_id.get(w.handle) orelse continue;
+        const n = wm.get_node_by_id(id) orelse continue;
+        windows.appendAssumeCapacity(.{ .map = try arena.dupe(Value.Field, &.{
+            .{ .key = "id", .value = .{ .integer = id } },
+            .{ .key = "type", .value = .{ .str = util.type_name(n) } },
+            .{ .key = "path", .value = try util.text(arena, try paths.path_of(wm, .{ .node = n }, arena)) },
+            .{ .key = "x", .value = .{ .integer = w.frame.x } },
+            .{ .key = "y", .value = .{ .integer = w.frame.y } },
+            .{ .key = "width", .value = .{ .integer = w.frame.width } },
+            .{ .key = "height", .value = .{ .integer = w.frame.height } },
+            .{ .key = "border_width", .value = .{ .integer = w.border_width } },
+            .{ .key = "tiled", .value = .{ .boolean = w.tiled } },
+            .{ .key = "clip", .value = if (w.clip) |c| try rect_value(arena, c) else .nil },
+        }) });
+    }
+    const fullscreen: Value = if (wm.scene_fullscreen) |h|
+        (if (wm.window_to_node_id.get(h)) |id| .{ .integer = id } else .nil)
+    else
+        .nil;
+    return .{ .map = try arena.dupe(Value.Field, &.{
+        .{ .key = "serial", .value = .{ .integer = @intCast(wm.scene_serial) } },
+        .{ .key = "windows", .value = .{ .list = windows.items } },
+        .{ .key = "fullscreen", .value = fullscreen },
+        .{ .key = "focused", .value = if (wm.focused) |f| id_of(wm, f) else .nil },
+    }) };
+}
+
+fn rect_value(arena: Allocator, r: @import("types").Rect) !Value {
+    return .{ .map = try arena.dupe(Value.Field, &.{
+        .{ .key = "x", .value = .{ .integer = r.x } },
+        .{ .key = "y", .value = .{ .integer = r.y } },
+        .{ .key = "width", .value = .{ .integer = r.width } },
+        .{ .key = "height", .value = .{ .integer = r.height } },
+    }) };
 }
 
 pub fn print_graph(wm: *WM, _: void, arena: Allocator) !Value {

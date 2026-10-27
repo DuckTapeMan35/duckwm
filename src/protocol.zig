@@ -320,6 +320,7 @@ pub const CommandId = enum(u32) {
     get_arranger_index = 907,
     set_arranger_index = 908,
     print_graph_pretty = 909,
+    get_scene = 910,
 
     // outputs: 1000-1099
     get_outputs = 1000,
@@ -342,269 +343,270 @@ pub const CommandId = enum(u32) {
 /// One request. The payload's fields are the arguments, in order.
 pub const Command = union(CommandId) {
     // focus
-    focus_left,
-    focus_right,
-    focus_up,
-    focus_down,
-    focus: struct { id: NodeId },
-    get_focused,
+    focus_left, // 1
+    focus_right, // 2
+    focus_up, // 3
+    focus_down, // 4
+    focus: struct { id: NodeId }, // 5
+    get_focused, // 6
 
     // exchange
-    exchange_left,
-    exchange_right,
-    exchange_up,
-    exchange_down,
+    exchange_left, // 7
+    exchange_right, // 8
+    exchange_up, // 9
+    exchange_down, // 10
 
     // window state
-    kill_client,
-    toggle_floating,
-    toggle_fullscreen,
+    kill_client, // 11
+    toggle_floating, // 12
+    toggle_fullscreen, // 13
 
     // constraints between two nodes
-    left_of: Pair,
-    right_of: Pair,
-    above: Pair,
-    below: Pair,
-    align_left: Pair,
-    align_top: Pair,
-    align_right: Pair,
-    align_bottom: Pair,
-    equal_width: Pair,
-    equal_height: Pair,
+    left_of: Pair, // 100
+    right_of: Pair, // 101
+    above: Pair, // 102
+    below: Pair, // 103
+    align_left: Pair, // 104
+    align_top: Pair, // 105
+    align_right: Pair, // 106
+    align_bottom: Pair, // 107
+    equal_width: Pair, // 108
+    equal_height: Pair, // 109
 
     // the same for floats: placed next to b first, then solved right away
-    float_left_of: Pair,
-    float_right_of: Pair,
-    float_above: Pair,
-    float_below: Pair,
-    float_align_left: Pair,
-    float_align_top: Pair,
-    float_align_right: Pair,
-    float_align_bottom: Pair,
-    float_equal_width: Pair,
-    float_equal_height: Pair,
-    float_clear_constraints: One,
+    float_left_of: Pair, // 110
+    float_right_of: Pair, // 111
+    float_above: Pair, // 112
+    float_below: Pair, // 113
+    float_align_left: Pair, // 114
+    float_align_top: Pair, // 115
+    float_align_right: Pair, // 116
+    float_align_bottom: Pair, // 117
+    float_equal_width: Pair, // 118
+    float_equal_height: Pair, // 119
+    float_clear_constraints: One, // 120
 
     // fixed values
-    fixed_width: struct { id: NodeId, value: u32 },
-    fixed_height: struct { id: NodeId, value: u32 },
-    fixed_x: struct { id: NodeId, value: i32 },
-    fixed_y: struct { id: NodeId, value: i32 },
-    fixed_ratio: struct { id: NodeId, ratio: f64 },
+    fixed_width: struct { id: NodeId, value: u32 }, // 121
+    fixed_height: struct { id: NodeId, value: u32 }, // 122
+    fixed_x: struct { id: NodeId, value: i32 }, // 123
+    fixed_y: struct { id: NodeId, value: i32 }, // 124
+    fixed_ratio: struct { id: NodeId, ratio: f64 }, // 125
 
     // containers
-    grid_cell: struct { id: NodeId, col: u32, row: u32, cols: u32, rows: u32, container: NodeId },
-    grid_cell_abs: struct { id: NodeId, x: i32, y: i32, w: u32, h: u32, container: NodeId },
-    split: struct { container: NodeId, axis: Axis, ratios: []const f64, children: []const NodeId },
+    grid_cell: struct { id: NodeId, col: u32, row: u32, cols: u32, rows: u32, container: NodeId }, // 126
+    grid_cell_abs: struct { id: NodeId, x: i32, y: i32, w: u32, h: u32, container: NodeId }, // 127
+    split: struct { container: NodeId, axis: Axis, ratios: []const f64, children: []const NodeId }, // 128
 
     // removal
-    clear_constraints: One,
-    remove_constraint: struct { id: NodeId, kind: ConstraintKind },
+    clear_constraints: One, // 129
+    remove_constraint: struct { id: NodeId, kind: ConstraintKind }, // 130
 
     // nodes
-    create_root_node,
-    create_empty_node,
-    create_container,
-    destroy_container: One,
-    remove_node: One,
-    reparent: struct { child: NodeId, parent: NodeId },
-    set_reparent_strategy: struct { id: NodeId, strategy: ?ReparentStrategy },
-    unregister_node: One,
-    set_node_empty: One,
-    set_node_window: struct { id: NodeId, window: WindowHandle },
-    move_window_to_node: struct { src: NodeId, dst: NodeId },
+    create_root_node, // 200
+    create_empty_node, // 201
+    create_container, // 202
+    destroy_container: One, // 203
+    remove_node: One, // 204
+    reparent: struct { child: NodeId, parent: NodeId }, // 205
+    set_reparent_strategy: struct { id: NodeId, strategy: ?ReparentStrategy }, // 206
+    unregister_node: One, // 207
+    set_node_empty: One, // 208
+    set_node_window: struct { id: NodeId, window: WindowHandle }, // 209
+    move_window_to_node: struct { src: NodeId, dst: NodeId }, //210
 
     // node queries
-    get_container_of: One,
-    get_node_type: One,
-    get_node_geometry: One,
-    get_node_info: One,
-    get_split_ratios: One,
-    get_all_windows,
-    set_name: struct { id: NodeId, name: ?[]const u8 },
-    get_name: One,
-    find: struct { path: []const u8 },
-    get_path: One,
-    set_scope: struct { path: ?[]const u8 },
-    get_scope,
+    get_container_of: One, // 211
+    get_node_type: One, // 212
+    get_node_geometry: One, // 213
+    get_node_info: One, // 214
+    get_split_ratios: One, // 215
+    get_all_windows, // 216
+    set_name: struct { id: NodeId, name: ?[]const u8 }, // 217
+    get_name: One, // 218
+    find: struct { path: []const u8 }, // 219
+    get_path: One, // 220
+    set_scope: struct { path: ?[]const u8 }, // 221
+    get_scope, // 222
 
     // screen and work area
-    screen_width,
-    screen_height,
-    get_work_area,
+    screen_width, // 300
+    screen_height, // 301
+    get_work_area, // 302
 
     // pan and virtual size (current workspace)
-    set_pan: struct { x: i32, y: i32 },
-    pan_by: struct { dx: i32, dy: i32 },
-    get_pan,
-    set_virtual_size: struct { width: u32, height: u32 },
-    set_pan_disabled: struct { disabled: bool },
-    set_lock_horizontal_resize: struct { locked: bool },
-    set_lock_vertical_resize: struct { locked: bool },
+    set_pan: struct { x: i32, y: i32 }, // 303
+    pan_by: struct { dx: i32, dy: i32 }, // 304
+    get_pan, // 305
+    set_virtual_size: struct { width: u32, height: u32 }, // 306
+    set_pan_disabled: struct { disabled: bool }, // 307
+    set_lock_horizontal_resize: struct { locked: bool }, // 308
+    set_lock_vertical_resize: struct { locked: bool }, // 309
 
     // resizing
-    resize_edge: struct { id: NodeId, direction: Dir, delta: i32 },
-    resize_corner: struct { id: NodeId, dx: i32, dy: i32 },
-    resize_focused_edge: struct { direction: Dir, delta: i32 },
-    resize_focused_corner: struct { dx: i32, dy: i32 },
+    resize_edge: struct { id: NodeId, direction: Dir, delta: i32 }, // 310
+    resize_corner: struct { id: NodeId, dx: i32, dy: i32 }, // 311
+    resize_focused_edge: struct { direction: Dir, delta: i32 }, // 312
+    resize_focused_corner: struct { dx: i32, dy: i32 }, // 313
 
     /// zoom
-    set_zoom: struct { zoom: f64 },
-    get_zoom,
+    set_zoom: struct { zoom: f64 }, // 314
+    get_zoom, // 315
 
     // window info
-    get_window_class: One,
-    get_window_name: One,
-    get_window_pid: One,
+    get_window_class: One, // 400
+    get_window_name: One, // 401
+    get_window_pid: One, // 402
 
     // window state
-    set_floating: struct { id: NodeId, floating: bool },
-    set_fullscreen: struct { id: NodeId, fullscreen: bool },
-    get_urgent: One,
-    set_urgent: struct { id: NodeId, urgent: bool },
-    hide_window: One,
-    show_window: One,
+    set_floating: struct { id: NodeId, floating: bool }, // 403
+    set_fullscreen: struct { id: NodeId, fullscreen: bool }, // 404
+    get_urgent: One, // 405
+    set_urgent: struct { id: NodeId, urgent: bool }, // 406
+    hide_window: One, // 407
+    show_window: One, // 408
 
     // swallowing
-    register_swallow: struct { terminal: []const u8, child: []const u8 },
-    unregister_swallow: struct { terminal: []const u8, child: []const u8 },
+    register_swallow: struct { terminal: []const u8, child: []const u8 }, // 409
+    unregister_swallow: struct { terminal: []const u8, child: []const u8 }, // 410
 
     // scratchpad
-    scratchpad_toggle: One,
-    scratchpad_show: One,
-    scratchpad_hide: One,
-    get_scratchpad,
+    scratchpad_toggle: One, // 411
+    scratchpad_show: One, // 412
+    scratchpad_hide: One, // 413
+    get_scratchpad, // 414
 
     // rules
-    add_rule: struct { callback: Callback },
-    remove_rule: struct { id: u32 },
+    add_rule: struct { callback: Callback }, // 415
+    remove_rule: struct { id: u32 }, // 416
 
     // pointer bindings
-    set_resize_modifier: struct { mods: Mods },
-    set_float_modifier: struct { mods: Mods },
-    set_pan_modifier: struct { mods: Mods },
-    set_pan_button: struct { button: Button },
-    set_float_move_button: struct { button: Button },
-    set_float_resize_button: struct { button: Button },
+    set_resize_modifier: struct { mods: Mods }, // 500
+    set_float_modifier: struct { mods: Mods }, // 501
+    set_pan_modifier: struct { mods: Mods }, // 502
+    set_pan_button: struct { button: Button }, // 503
+    set_float_move_button: struct { button: Button }, // 504
+    set_float_resize_button: struct { button: Button }, // 505
 
     // focus behavior
-    set_click_to_focus: struct { enabled: bool },
-    set_focus_follows_mouse: struct { enabled: bool },
+    set_click_to_focus: struct { enabled: bool }, // 506
+    set_focus_follows_mouse: struct { enabled: bool }, // 507
 
     // cursor
-    get_cursor_pos,
-    get_cursor_relative_to_focused,
-    warp_cursor: struct { x: i32, y: i32 },
-    warp_cursor_to_node: One,
-    get_mouse_node,
-    set_cursor_theme: struct { theme: []const u8, size: u32 },
+    get_cursor_pos, // 508
+    get_cursor_relative_to_focused, // 509
+    warp_cursor: struct { x: i32, y: i32 }, // 510
+    warp_cursor_to_node: One, // 511
+    get_mouse_node, // 512
+    set_cursor_theme: struct { theme: []const u8, size: u32 }, // 513
 
     // input
-    set_keyboard_layout: struct { layout: []const u8, variant: ?[]const u8, options: ?[]const u8, model: ?[]const u8 },
-    set_keyboard_layout_index: struct { index: u32 },
-    bind_commands: struct { mods: Mods, key: []const u8, commands: []const Command },
-    unbind: struct { mods: Mods, key: []const u8 },
-    bind: struct { mods: Mods, key: []const u8, callback: Callback },
-    get_keybinds,
-    read_line: struct { prompt: []const u8, callback: Callback, initial: ?[]const u8 },
-    set_prompt_keys: struct { keys: PromptKeys },
+    set_keyboard_layout: struct { layout: []const u8, variant: ?[]const u8, options: ?[]const u8, model: ?[]const u8 }, // 514
+    set_keyboard_layout_index: struct { index: u32 }, // 515
+    bind_commands: struct { mods: Mods, key: []const u8, commands: []const Command }, // 516
+    unbind: struct { mods: Mods, key: []const u8 }, // 517
+    bind: struct { mods: Mods, key: []const u8, callback: Callback }, // 518
+    get_keybinds, // 519
+    read_line: struct { prompt: []const u8, callback: Callback, initial: ?[]const u8 }, // 520
+    set_prompt_keys: struct { keys: PromptKeys }, // 521
 
     // border colors and width
-    set_default_focused_border_color: struct { color: u32 },
-    set_default_unfocused_border_color: struct { color: u32 },
-    set_default_urgent_border_color: struct { color: u32 },
-    set_border_width: struct { width: u32 },
-    set_node_focused_border_color: struct { id: NodeId, color: u32 },
-    set_node_unfocused_border_color: struct { id: NodeId, color: u32 },
-    clear_node_focused_border_color: One,
-    clear_node_unfocused_border_color: One,
-    set_node_border_side_color: struct { id: NodeId, side: Side, color: u32 },
-    clear_node_border_side_colors: One,
-    get_node_border_side_colors: One,
-    set_border_side_colors_focused_only: struct { enabled: bool },
+    set_default_focused_border_color: struct { color: u32 }, // 600
+    set_default_unfocused_border_color: struct { color: u32 }, // 601
+    set_default_urgent_border_color: struct { color: u32 }, // 602
+    set_border_width: struct { width: u32 }, // 603
+    set_node_focused_border_color: struct { id: NodeId, color: u32 }, // 604
+    set_node_unfocused_border_color: struct { id: NodeId, color: u32 }, // 605
+    clear_node_focused_border_color: One, // 606
+    clear_node_unfocused_border_color: One, // 607
+    set_node_border_side_color: struct { id: NodeId, side: Side, color: u32 }, // 608
+    clear_node_border_side_colors: One, // 609
+    get_node_border_side_colors: One, // 610
+    set_border_side_colors_focused_only: struct { enabled: bool }, // 611
 
     // gaps
-    set_gaps: struct { inner_h: u32, inner_v: u32, outer_h: u32, outer_v: u32 },
-    set_gaps_workspace: struct { id: NodeId, inner_h: u32, inner_v: u32, outer_h: u32, outer_v: u32 },
+    set_gaps: struct { inner_h: u32, inner_v: u32, outer_h: u32, outer_v: u32 }, // 612
+    set_gaps_workspace: struct { id: NodeId, inner_h: u32, inner_v: u32, outer_h: u32, outer_v: u32 }, // 613
 
     // previews
-    set_preview_colors: struct { bg: u32, win_bg: u32, border: u32, text: u32 },
-    set_preview_colors_workspace: struct { id: NodeId, bg: u32, win_bg: u32, border: u32, text: u32 },
-    set_preview_font: struct { name: []const u8 },
-    set_preview_font_workspace: struct { id: NodeId, name: []const u8 },
-    set_preview_max_icon_size: struct { size: u32 },
+    set_preview_colors: struct { bg: u32, win_bg: u32, border: u32, text: u32 }, // 614
+    set_preview_colors_workspace: struct { id: NodeId, bg: u32, win_bg: u32, border: u32, text: u32 }, // 615
+    set_preview_font: struct { name: []const u8 }, // 616
+    set_preview_font_workspace: struct { id: NodeId, name: []const u8 }, // 617
+    set_preview_max_icon_size: struct { size: u32 }, // 618
 
     // frames
-    set_argb_frames: struct { enabled: bool },
-    force_rgb_frames: struct { class_name: []const u8 },
-    set_indicator_color: struct { color: u32 },
-    set_node_indicator: struct { id: NodeId, side: Side },
-    clear_node_indicator: One,
+    set_argb_frames: struct { enabled: bool }, // 619
+    force_rgb_frames: struct { class_name: []const u8 }, // 620
+    set_indicator_color: struct { color: u32 }, // 621
+    set_node_indicator: struct { id: NodeId, side: Side }, // 622
+    clear_node_indicator: One, // 623
     // animation: null curve is ease_out; duration 0 turns animation off
-    set_animation: struct { duration_ms: u32, curve: ?Curve },
+    set_animation: struct { duration_ms: u32, curve: ?Curve }, // 624
     /// Text in the input bar for timeout_ms (0: 3s).
-    message: struct { text: []const u8, timeout_ms: u32 },
+    message: struct { text: []const u8, timeout_ms: u32 }, // 625
 
     // workspaces
-    switch_to_workspace: struct { index: u32 },
-    send_to_workspace: struct { id: NodeId, index: u32 },
-    enter_workspace_by_id: One,
-    create_nested_workspace,
-    enter_nested,
-    enter_nested_by_id: One,
-    leave_nested,
-    set_workspace_switch_mode: struct { mode: WorkspaceSwitchMode },
-    set_autoclean: struct { enabled: bool },
-    cleanup_left_behind,
+    switch_to_workspace: struct { index: u32 }, // 700
+    send_to_workspace: struct { id: NodeId, index: u32 }, // 701
+    enter_workspace_by_id: One, // 702
+    create_nested_workspace, // 703
+    enter_nested, // 704
+    enter_nested_by_id: One, // 705
+    leave_nested, // 706
+    set_workspace_switch_mode: struct { mode: WorkspaceSwitchMode }, // 707
+    set_autoclean: struct { enabled: bool }, // 708
+    cleanup_left_behind, // 709
 
     // workspace queries
-    get_workspace: struct { index: u32 },
-    get_workspace_positions,
-    get_workspace_states,
-    get_current_workspace_position,
-    get_workspaces_at_level,
-    get_current_workspace,
-    get_current_level,
-    get_node_level: One,
+    get_workspace: struct { index: u32 }, // 710
+    get_workspace_positions, // 711
+    get_workspace_states, // 712
+    get_current_workspace_position, // 713
+    get_workspaces_at_level, // 714
+    get_current_workspace, // 715
+    get_current_level, // 716
+    get_node_level: One, // 717
 
     // processes and environment
-    spawn: struct { argv: []const []const u8 },
-    setenv: struct { key: []const u8, value: []const u8 },
-    quit,
-    exec_once: struct { argv: []const []const u8 },
-    reload_config,
-    eval: struct { source: []const u8 },
+    spawn: struct { argv: []const []const u8 }, // 800
+    setenv: struct { key: []const u8, value: []const u8 }, // 801
+    quit, // 802
+    exec_once: struct { argv: []const []const u8 }, // 803
+    reload_config, // 804
+    eval: struct { source: []const u8 }, // 805
 
     // layouts
-    get_layout,
-    set_layout: struct { layout: LayoutSpec },
-    print_graph,
+    get_layout: struct { id: ?NodeId }, // 900
+    set_layout: struct { layout: LayoutSpec }, // 901
+    print_graph, // 902
 
     // arrangers
-    set_arranger: struct { factory: Callback, name: ?[]const u8 },
-    register_arranger: struct { id: NodeId, factory: Callback, name: ?[]const u8 },
-    set_default_arranger: struct { factory: Callback, name: ?[]const u8 },
-    get_arranger_name,
-    get_arranger_index,
-    set_arranger_index: struct { index: i32 },
-    print_graph_pretty: struct { cols: ?u32, rows: ?u32 },
+    set_arranger: struct { factory: Callback, name: ?[]const u8 }, // 903
+    register_arranger: struct { id: NodeId, factory: Callback, name: ?[]const u8 }, // 904
+    set_default_arranger: struct { factory: Callback, name: ?[]const u8 }, // 905
+    get_arranger_name, // 906
+    get_arranger_index, // 907
+    set_arranger_index: struct { index: i32 }, // 908
+    print_graph_pretty: struct { cols: ?u32, rows: ?u32 }, //909
+    get_scene, // 910
 
     // outputs
-    get_outputs,
-    focus_output: struct { dir: Dir },
-    send_to_output: struct { id: NodeId, dir: Dir },
-    get_output_states,
+    get_outputs, // 1000
+    focus_output: struct { dir: Dir }, // 1001
+    send_to_output: struct { id: NodeId, dir: Dir }, // 1002
+    get_output_states, // 1003
 
     // groups
-    create_group: struct { ids: ?[]const NodeId },
-    ungroup: One,
-    move_to_group: struct { id: NodeId, group: ?NodeId },
-    get_group: One,
-    get_group_members: One,
-    set_group_outline: struct { width: u32, color: u32 },
-    set_group_outline_of: struct { id: NodeId, width: ?u32, color: ?u32 },
-    focus_parent,
-    focus_child,
+    create_group: struct { ids: ?[]const NodeId }, // 1100
+    ungroup: One, // 1101
+    move_to_group: struct { id: NodeId, group: ?NodeId }, // 1102
+    get_group: One, // 1103
+    get_group_members: One, // 1104
+    set_group_outline: struct { width: u32, color: u32 }, // 1105
+    set_group_outline_of: struct { id: NodeId, width: ?u32, color: ?u32 }, // 1106
+    focus_parent, // 1107
+    focus_child, // 1108
 };
 
 /// A batch of commands, run as one transaction: all of them take effect, or none do.
