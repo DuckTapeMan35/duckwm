@@ -7,6 +7,8 @@ const wl = wayland.client.wl;
 const wayluck = wayland.client.wayluck;
 
 const Output = @import("outputs.zig").Output;
+const Binding = @import("keys.zig").Binding;
+const ButtonBinding = @import("pointer.zig").Binding;
 const Window = windows.Window;
 
 pub const State = struct {
@@ -25,8 +27,26 @@ pub const State = struct {
     /// Announced by wayluck in this dispatch, not yet to core.
     fresh: std.ArrayListUnmanaged(*Window) = .empty,
     next_handle: types.WindowHandle = 1,
-    /// What core has asked for this turn, committed by flush_output.
-    tx: ?*wayluck.WmTransactionV1 = null,
+    /// The keys core grabbed.
+    bindings: std.ArrayListUnmanaged(*Binding) = .empty,
+    /// The buttons core grabbed.
+    buttons: std.ArrayListUnmanaged(*ButtonBinding) = .empty,
+    pointer_pos: types.Point = .{ .x = 0, .y = 0 },
+    /// The output it's on (duckwm's id); 0: not known yet.
+    pointer_output: u32 = 0,
+    /// The window it's over.
+    hovered: ?types.WindowHandle = null,
+    /// A drag is on: it's core's (capture_pointer).
+    captured: bool = false,
+    click_to_focus: bool = false,
+    /// The windows to show, as core last gave them.
+    scene: std.ArrayListUnmanaged(types.WindowState) = .empty,
+    fullscreen: ?types.WindowHandle = null,
+    /// The scene, a raise or a border changed since the last commit.
+    dirty: bool = false,
+    /// Focus to give, if core changed it.
+    focus: ?struct { to: ?types.WindowHandle } = null,
+    raise_clock: u64 = 0,
     /// Previews get handles far from the ones windows get.
     next_preview: types.WindowHandle = 1 << 32,
 

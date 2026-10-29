@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
+const pointer = @import("pointer.zig");
 const windows = @import("windows.zig");
 const outputs_ = @import("outputs.zig");
 const keys = @import("keys.zig");
@@ -54,6 +55,11 @@ pub const Backend = struct {
         }
         s.windows.deinit(s.allocator);
         s.fresh.deinit(s.allocator);
+        s.scene.deinit(s.allocator);
+        keys.ungrab_all(s);
+        s.bindings.deinit(s.allocator);
+        pointer.ungrab_all(s);
+        s.buttons.deinit(s.allocator);
         s.events.deinit(s.allocator);
         if (s.manager) |m| m.destroy();
         s.display.disconnect();
@@ -164,10 +170,10 @@ pub const Backend = struct {
         return .{};
     }
 
+    /// What its client asked for before core knew it.
     pub fn window_hints(self: *const Backend, h: types.WindowHandle) types.InitialHints {
-        _ = self;
-        _ = h;
-        return .{};
+        const w = self.state.windows.get(h) orelse return .{};
+        return .{ .fullscreen = w.wants_fullscreen };
     }
 
     pub fn frame_window(self: *Backend, h: types.WindowHandle, opts: types.FrameOptions) !void {
@@ -194,8 +200,7 @@ pub const Backend = struct {
     }
 
     pub fn apply_windows(self: *Backend, states: []const types.WindowState, fullscreen: ?types.WindowHandle) void {
-        _ = fullscreen;
-        windows.apply(self.state, states);
+        windows.apply(self.state, states, fullscreen);
     }
 
     pub fn apply_outlines(self: *Backend, list: []const types.Outline) void {
@@ -208,16 +213,12 @@ pub const Backend = struct {
     }
 
     pub fn raise_window(self: *Backend, h: types.WindowHandle) void {
-        _ = self;
-        _ = h;
+        windows.raise(self.state, h);
     }
 
     pub fn draw_borders(self: *Backend, h: types.WindowHandle, colors: types.BorderColors, width: u32, size: ?types.Size) void {
-        _ = self;
-        _ = h;
-        _ = colors;
-        _ = width;
         _ = size;
+        windows.border(self.state, h, colors, width);
     }
 
     pub fn set_input_focus(self: *Backend, h: ?types.WindowHandle, publish: bool) bool {
@@ -286,40 +287,38 @@ pub const Backend = struct {
     }
 
     pub fn grab_key(self: *const Backend, k: types.KeyCombo) void {
-        _ = self;
-        _ = k;
+        keys.grab(self.state, k);
     }
 
     pub fn ungrab_all_keys(self: *const Backend) void {
-        _ = self;
+        keys.ungrab_all(self.state);
     }
 
     pub fn set_pointer_grabs(self: *Backend, grabs: []const types.PointerGrab) void {
-        _ = self;
-        _ = grabs;
+        pointer.set_grabs(self.state, grabs);
     }
 
     pub fn set_click_to_focus(self: *Backend, enabled: bool) void {
-        _ = self;
-        _ = enabled;
+        self.state.click_to_focus = enabled;
     }
 
+    /// A drag starts: motion reaches core as pointer_motion until release.
     pub fn capture_pointer(self: *const Backend) void {
-        _ = self;
+        pointer.capture(self.state);
     }
 
     pub fn release_pointer(self: *const Backend) void {
-        _ = self;
+        pointer.release(self.state);
     }
 
     pub fn pointer_position(self: *const Backend) types.Point {
-        _ = self;
-        return .{ .x = 0, .y = 0 };
+        return self.state.pointer_pos;
     }
 
     pub fn warp_pointer(self: *const Backend, p: types.Point) void {
-        _ = self;
-        _ = p;
+        const s = self.state;
+        s.pointer_pos = p;
+        if (s.manager) |m| m.warpPointer(p.x, p.y);
     }
 
     pub fn set_cursor_theme(self: *const Backend, theme: []const u8, size: u32) void {
@@ -329,14 +328,11 @@ pub const Backend = struct {
     }
 
     pub fn set_keymap(self: *Backend, km: types.Keymap) bool {
-        _ = self;
-        _ = km;
-        return true;
+        return keys.set_keymap(self.state, km);
     }
 
     pub fn set_layout_index(self: *Backend, index: u32) void {
-        _ = self;
-        _ = index;
+        keys.set_layout(self.state, index);
     }
 
     pub fn set_animation(self: *Backend, a: types.Animation) void {
@@ -363,5 +359,6 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
         .output => |e| outputs_.add(s, e.id),
         .window => |e| windows.add(s, e.id),
         .ready => s.ready = true,
+        .pointer_position => |e| pointer.moved(s, .{ .x = e.x, .y = e.y }),
     }
 }

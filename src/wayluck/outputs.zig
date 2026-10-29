@@ -11,6 +11,8 @@ pub const Output = struct {
     obj: *wayluck.WmOutputV1,
     name: types.OutputInfo.Name = .{},
     rect: types.Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+    /// What bars and panels leave of it (null: all of it).
+    usable: ?types.Rect = null,
 };
 
 /// wayluck announced an output; its name and geometry follow, then done.
@@ -27,6 +29,12 @@ fn listener(obj: *wayluck.WmOutputV1, event: wayluck.WmOutputV1.Event, o: *Outpu
     switch (event) {
         .name => |e| o.name = .init(std.mem.span(e.name)),
         .geometry => |e| o.rect = .{
+            .x = e.x,
+            .y = e.y,
+            .width = @intCast(@max(e.width, 0)),
+            .height = @intCast(@max(e.height, 0)),
+        },
+        .usable => |e| o.usable = .{
             .x = e.x,
             .y = e.y,
             .width = @intCast(@max(e.width, 0)),
@@ -50,7 +58,12 @@ fn listener(obj: *wayluck.WmOutputV1, event: wayluck.WmOutputV1.Event, o: *Outpu
 pub fn list(s: *State, buf: []types.OutputInfo) []types.OutputInfo {
     const n = @min(buf.len, s.outputs.items.len);
     for (s.outputs.items[0..n], buf[0..n]) |o, *info| {
-        info.* = .{ .id = o.id, .rect = o.rect, .usable = o.rect, .name = o.name };
+        info.* = .{
+            .id = o.id,
+            .rect = o.rect,
+            .usable = o.usable orelse o.rect,
+            .name = o.name,
+        };
     }
     return buf[0..n];
 }
