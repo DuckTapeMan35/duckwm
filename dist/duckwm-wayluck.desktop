@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=duckwm (wayluck)
+Comment=duckwm running on the wayluck Wayland compositor
+Exec=wayluck --drm -c duckwm
+Type=Application
+DesktopNames=wayluck

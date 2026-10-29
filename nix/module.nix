@@ -8,10 +8,14 @@
 let
   cfg = config.programs.duckwm;
   hasX11 = lib.elem "x11" cfg.platforms;
+  hasWayluck = lib.elem "wayluck" cfg.platforms;
   hasRiver = lib.elem "river" cfg.platforms;
-  packages = lib.optional hasX11 cfg.package ++ lib.optional hasRiver cfg.riverPackage;
-  # config.lua, docs, stubs and the schema are identical in both; take them from either.
-  shared = if hasX11 then cfg.package else cfg.riverPackage;
+  packages =
+    lib.optional hasX11 cfg.package
+    ++ lib.optional hasRiver cfg.riverPackage
+    ++ lib.optional hasWayluck cfg.wayluckPackage;
+  # config.lua, docs, stubs and the schema are identical in all; take them from any.
+  shared = lib.head packages;
 
   # quack repl with line editing and history.
   repl = pkgs.writeShellApplication {
@@ -73,13 +77,19 @@ let
     lib.optional (commands != [ ]) "--commands ${commandsFile}" ++ lib.optional (!cfg.lua) "--no-lua"
   );
 
+  keyboardEnv = lib.optionalString (cfg.keyboard.layout != null) ''
+    export XKB_DEFAULT_LAYOUT=${lib.escapeShellArg cfg.keyboard.layout}
+    export XKB_DEFAULT_VARIANT=${lib.escapeShellArg cfg.keyboard.variant}
+  '';
+
   # One path, no quoting: display managers differ in how they split Exec lines.
   riverSession = pkgs.writeShellScript "duckwm-river-session" ''
-    ${lib.optionalString (cfg.keyboard.layout != null) ''
-      export XKB_DEFAULT_LAYOUT=${lib.escapeShellArg cfg.keyboard.layout}
-      export XKB_DEFAULT_VARIANT=${lib.escapeShellArg cfg.keyboard.variant}
-    ''}
+    ${keyboardEnv}
     exec ${lib.getExe pkgs.river} -c "${lib.getExe cfg.riverPackage} ${flags}"
+  '';
+  wayluckSession = pkgs.writeShellScript "duckwm-wayluck-session" ''
+    ${keyboardEnv}
+    exec ${lib.getExe cfg.wayluckPackage.wayluck} --drm -c "${lib.getExe cfg.wayluckPackage} ${flags}"
   '';
 
   # The package's session entry, with the flags added to its Exec line.
@@ -98,7 +108,8 @@ let
       packages
     else
       lib.optional hasX11 (session cfg.package "xsessions" "${lib.getExe cfg.package} ${flags}")
-      ++ lib.optional hasRiver (session cfg.riverPackage "wayland-sessions" "${riverSession}");
+      ++ lib.optional hasRiver (session cfg.riverPackage "wayland-sessions" "${riverSession}")
+      ++ lib.optional hasWayluck (session cfg.wayluckPackage "wayland-sessions" "${wayluckSession}");
 
   # One command: the command name as the key, its fields as an attribute set.
   commandType = lib.types.attrsOf lib.types.anything;
@@ -126,6 +137,7 @@ in
         lib.types.enum [
           "x11"
           "river"
+          "wayluck"
         ]
       );
       default = [ "x11" ];
@@ -148,6 +160,12 @@ in
       default = pkgs.callPackage ./package.nix { platform = "river"; };
       defaultText = lib.literalExpression "duckwm.packages.\${system}.duckwm-river";
       description = "The river duckwm package.";
+    };
+
+    wayluckPackage = lib.mkOption {
+      type = lib.types.package;
+      defaultText = lib.literalExpression "duckwm.packages.\${system}.duckwm-wayluck";
+      description = "The wayluck duckwm package (set by the duckwm flake's module: wayluck isn't in nixpkgs).";
     };
 
     lua = lib.mkOption {
@@ -232,6 +250,13 @@ in
 
       (lib.mkIf hasRiver {
         environment.systemPackages = [ pkgs.river ];
+      })
+
+      (lib.mkIf hasWayluck {
+        environment.systemPackages = [ cfg.wayluckPackage.wayluck ];
+      })
+
+      (lib.mkIf (hasRiver || hasWayluck) {
         hardware.graphics.enable = lib.mkDefault true;
         security.polkit.enable = lib.mkDefault true;
       })
