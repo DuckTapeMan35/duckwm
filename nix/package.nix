@@ -67,6 +67,7 @@ stdenv.mkDerivation {
     else if isWayluck then
       [
         wayland
+        wayland-protocols
         libxkbcommon
       ]
     else

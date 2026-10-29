@@ -35,7 +35,28 @@
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
-        "nixpkgs-unstable": "nixpkgs-unstable"
+        "nixpkgs-unstable": "nixpkgs-unstable",
+        "wayluck": "wayluck"
+      }
+    },
+    "wayluck": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793293869,
+        "narHash": "sha256-883/dP4tgB+ufVSCBsn3v4jP+PUeTdyuJHBcv9DWo0E=",
+        "owner": "DuckTapeMan35",
+        "repo": "wayluck",
+        "rev": "6f7139ce3e25f51c8e751b29fb6c7781c5a3127b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "DuckTapeMan35",
+        "repo": "wayluck",
+        "type": "github"
       }
     }
   },
