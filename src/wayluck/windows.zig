@@ -17,6 +17,11 @@ pub const Window = struct {
     /// Its client asked to be fullscreen before core knew it: core reads
     /// it in window_hints when it maps it.
     wants_fullscreen: bool = false,
+    /// The window it belongs to (a dialog's main window): it floats.
+    parent: ?types.WindowHandle = null,
+    /// Its client's smallest and largest size (0: no limit).
+    min: types.Size = .{ .width = 0, .height = 0 },
+    max: types.Size = .{ .width = 0, .height = 0 },
 };
 
 /// A size for core until the client has one (it's used if the window floats).
@@ -27,12 +32,13 @@ const all_edges: u32 = 1 | 2 | 4 | 8;
 
 const null_colors: types.BorderColors = .{ .top = 0, .bottom = 0, .left = 0, .right = 0 };
 
-/// wayluck announced a window. Its names follow in the same burst, so core
-/// hears of it at the end of the dispatch (announce_fresh), names and all.
-pub fn add(s: *State, obj: *wayluck.WmWindowV1) void {
+/// wayluck announced a window, with its id: the window's handle, so wayluck's
+/// log, core and quack all call it the same. What its client set up follows
+/// in the same burst, so core hears of it at the end of the dispatch
+/// (announce_fresh), names and all.
+pub fn add(s: *State, obj: *wayluck.WmWindowV1, id: u32) void {
     const w = s.allocator.create(Window) catch return obj.destroy();
-    w.* = .{ .state = s, .obj = obj, .handle = s.next_handle };
-    s.next_handle += 1;
+    w.* = .{ .state = s, .obj = obj, .handle = id };
     s.windows.put(s.allocator, w.handle, w) catch {
         s.allocator.destroy(w);
         return obj.destroy();
@@ -45,7 +51,11 @@ pub fn add(s: *State, obj: *wayluck.WmWindowV1) void {
 pub fn announce_fresh(s: *State) void {
     for (s.fresh.items) |w| {
         w.announced = true;
-        s.push(.{ .map_request = .{ .window = w.handle, .size = default_size, .traits = .{} } });
+        s.push(.{ .map_request = .{
+            .window = w.handle,
+            .size = initial_size(w),
+            .traits = traits_of(w),
+        } });
     }
     s.fresh.clearRetainingCapacity();
 }
@@ -70,6 +80,11 @@ fn listener(obj: *wayluck.WmWindowV1, event: wayluck.WmWindowV1.Event, w: *Windo
         .pointer_leave => pointer.left(s, w.handle),
         .fullscreen_request => fullscreen_request(s, w, .add),
         .unfullscreen_request => fullscreen_request(s, w, .remove),
+        .parent => |e| w.parent = if (e.parent) |p| window_of(p).handle else null,
+        .size_hints => |e| {
+            w.min = .{ .width = nonneg(e.min_width), .height = nonneg(e.min_height) };
+            w.max = .{ .width = nonneg(e.max_width), .height = nonneg(e.max_height) };
+        },
         .closed => {
             if (w.announced) {
                 s.push(.{ .window_gone = w.handle });
@@ -83,6 +98,50 @@ fn listener(obj: *wayluck.WmWindowV1, event: wayluck.WmWindowV1.Event, w: *Windo
             s.allocator.destroy(w);
         },
     }
+}
+
+/// The handle of the window wayluck's object stands for.
+fn handle_of(s: *State, obj: *wayluck.WmWindowV1) ?types.WindowHandle {
+    var it = s.windows.valueIterator();
+    while (it.next()) |w| if (w.*.obj == obj) return w.*.handle;
+    return null;
+}
+
+/// The window behind wayluck's object: add() gives every window object its
+/// *Window as listener data, and the two live and die together (and an
+/// event never hands over an object already destroyed: libwayland makes it
+/// null).
+fn window_of(obj: *wayluck.WmWindowV1) *Window {
+    return @ptrCast(@alignCast(obj.getUserData().?));
+}
+
+fn nonneg(v: i32) u32 {
+    return @intCast(@max(v, 0));
+}
+
+// ---- what core is told ----
+/// A window of one size (the same smallest and largest): it floats at it.
+pub fn fixed_size(w: *const Window) ?types.Size {
+    if (w.min.width == 0 or w.min.height == 0) return null;
+    if (w.min.width != w.max.width or w.min.height != w.max.height) return null;
+    return w.min;
+}
+
+/// Its size if it floats, until its client has drawn one.
+fn initial_size(w: *const Window) types.Size {
+    if (fixed_size(w)) |size| return size;
+    return .{
+        .width = @max(w.min.width, default_size.width),
+        .height = @max(w.min.height, default_size.height),
+    };
+}
+
+/// A window with a parent (a dialog) floats, over it.
+pub fn traits_of(w: *const Window) types.WindowTraits {
+    return .{
+        .kind = if (w.parent != null) .floating else .normal,
+        .transient_for = w.parent,
+    };
 }
 
 /// A client asked to be fullscreen (add) or to stop (remove): core decides,

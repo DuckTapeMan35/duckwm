@@ -124,10 +124,16 @@
 
     <event name="window">
       <description summary="a new window">
-        A toplevel that wants to be shown. Until a transaction places it,
-        it isn't.
+        A toplevel that wants to be shown, announced at its client's first
+        commit: its title, app_id, parent, size_hints and a
+        fullscreen_request, as far as its client set them up, follow at
+        once. Until a transaction places it, it isn't shown.
+
+        Its id is wayluck's name for it, in its log too: it stays the same
+        for the window's life and isn't reused.
       </description>
-      <arg name="id" type="new_id" interface="wayluck_wm_window_v1"/>
+      <arg name="window" type="new_id" interface="wayluck_wm_window_v1"/>
+      <arg name="id" type="uint" summary="wayluck's id for it"/>
     </event>
 
     <event name="ready">
@@ -232,6 +238,27 @@
     <event name="unfullscreen_request">
       <description summary="its client asked to stop being fullscreen"/>
     </event>
+
+    <event name="parent">
+      <description summary="the window it belongs to">
+        A dialog's main window, say (null: none). Sent with the window, and
+        again when its client changes it.
+      </description>
+      <arg name="parent" type="object" interface="wayluck_wm_window_v1" allow-null="true"/>
+    </event>
+
+    <event name="size_hints">
+      <description summary="the sizes its client can work with">
+        Its client's smallest and largest size (0: no limit). The same
+        smallest and largest: a window of one size, like a dialog or a
+        splash screen. Sent with the window, and again when they change.
+      </description>
+      <arg name="min_width" type="int"/>
+      <arg name="min_height" type="int"/>
+      <arg name="max_width" type="int"/>
+      <arg name="max_height" type="int"/>
+    </event>
+
   </interface>
 
   <interface name="wayluck_wm_key_binding_v1" version="1">

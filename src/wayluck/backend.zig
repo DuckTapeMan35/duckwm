@@ -165,15 +165,17 @@ pub const Backend = struct {
     }
 
     pub fn window_traits(self: *const Backend, h: types.WindowHandle) types.WindowTraits {
-        _ = self;
-        _ = h;
-        return .{};
+        const w = self.state.windows.get(h) orelse return .{};
+        return windows.traits_of(w);
     }
 
     /// What its client asked for before core knew it.
     pub fn window_hints(self: *const Backend, h: types.WindowHandle) types.InitialHints {
         const w = self.state.windows.get(h) orelse return .{};
-        return .{ .fullscreen = w.wants_fullscreen };
+        return .{
+            .fullscreen = w.wants_fullscreen,
+            .fixed_size = windows.fixed_size(w),
+        };
     }
 
     pub fn frame_window(self: *Backend, h: types.WindowHandle, opts: types.FrameOptions) !void {
@@ -357,7 +359,7 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
     switch (event) {
         .unavailable => s.unavailable = true,
         .output => |e| outputs_.add(s, e.id),
-        .window => |e| windows.add(s, e.id),
+        .window => |e| windows.add(s, e.window, e.id),
         .ready => s.ready = true,
         .pointer_position => |e| pointer.moved(s, .{ .x = e.x, .y = e.y }),
     }

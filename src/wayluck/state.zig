@@ -26,7 +26,6 @@ pub const State = struct {
     windows: std.AutoHashMapUnmanaged(types.WindowHandle, *Window) = .empty,
     /// Announced by wayluck in this dispatch, not yet to core.
     fresh: std.ArrayListUnmanaged(*Window) = .empty,
-    next_handle: types.WindowHandle = 1,
     /// The keys core grabbed.
     bindings: std.ArrayListUnmanaged(*Binding) = .empty,
     /// The buttons core grabbed.
