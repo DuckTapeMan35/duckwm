@@ -1,11 +1,12 @@
+const libc = @import("libc");
 const std = @import("std");
 const linux = std.os.linux;
-const POLL = std.posix.POLL;
 const protocol = @import("protocol");
 const wire = protocol.wire;
 const core = @import("core.zig");
 const command = @import("command.zig");
 const WM = core.WM;
+const POLL = std.posix.POLL;
 
 /// A frame longer than this closes the connection: no request is legitimately this big.
 const max_frame = 16 * 1024 * 1024;
@@ -57,7 +58,12 @@ fn delete_socket(path: []const u8) void {
     _ = linux.unlink(&buf);
 }
 
+/// $DUCKWM_SOCKET if it's set; else $XDG_RUNTIME_DIR/duckwm.sock, or
+/// /tmp/duckwm-<uid>.sock.
 pub fn get_path(allocator: std.mem.Allocator) ![]u8 {
+    if (std.c.getenv("DUCKWM_SOCKET")) |p| if (p[0] != 0) {
+        return allocator.dupe(u8, std.mem.span(p));
+    };
     if (std.c.getenv("XDG_RUNTIME_DIR")) |dir| {
         return std.fmt.allocPrint(allocator, "{s}/duckwm.sock", .{std.mem.span(dir)});
     }
@@ -85,6 +91,12 @@ pub fn init(wm: *WM) !void {
 
     wm.ipc_state.fd = fd;
     std.debug.print("IPC socket at {s}\n", .{path});
+
+    // Everything duckwm starts (the config, apps) reaches this duckwm, even
+    // with another one running (nested in wayluck, say).
+    const path_z = try wm.allocator.dupeSentinel(u8, path, 0);
+    defer wm.allocator.free(path_z);
+    _ = libc.setenv("DUCKWM_SOCKET", path_z.ptr, 1);
 }
 
 pub fn deinit(wm: *WM) void {

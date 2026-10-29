@@ -39,6 +39,8 @@ pub fn setup_lua(wm: *WM, lua: *Lua) void {
     lua.setField(-2, "PLATFORM_X11");
     lua.pushInteger(types.platform.river);
     lua.setField(-2, "PLATFORM_RIVER");
+    lua.pushInteger(types.platform.wayluck);
+    lua.setField(-2, "PLATFORM_WAYLUCK");
     lua.pushInteger(wm_mod.platform_id);
     lua.setField(-2, "PLATFORM");
     for (registrations.all) |reg| {

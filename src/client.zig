@@ -58,8 +58,12 @@ pub const Handler = struct {
     }
 };
 
-/// `$XDG_RUNTIME_DIR/duckwm.sock`, or `/tmp/duckwm-<uid>.sock`, like duckwm.
+/// `$DUCKWM_SOCKET` if it's set; else `$XDG_RUNTIME_DIR/duckwm.sock`, or
+/// `/tmp/duckwm-<uid>.sock`, like duckwm.
 pub fn socket_path(a: Allocator) Allocator.Error![]u8 {
+    if (std.c.getenv("DUCKWM_SOCKET")) |p| if (p[0] != 0) {
+        return a.dupe(u8, std.mem.span(p));
+    };
     if (std.c.getenv("XDG_RUNTIME_DIR")) |dir| {
         return std.fmt.allocPrint(a, "{s}/duckwm.sock", .{std.mem.span(dir)});
     }

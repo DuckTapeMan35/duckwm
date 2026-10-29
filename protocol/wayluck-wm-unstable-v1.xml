@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="wayluck_wm_unstable_v1">
+  <copyright>
+    SPDX-License-Identifier: GPL-3.0-or-later
+  </copyright>
+
+  <description summary="a window manager placing windows for wayluck">
+    The contract between wayluck and the window manager. The window manager
+    owns placement: where each window goes, what's shown and what isn't.
+    wayluck owns clients, buffers and pixels, and applies what it's told.
+
+    Unstable: changed in place, without version bumps, until it's frozen as
+    wayluck_wm_v1. A window manager and a wayluck from different commits may
+    not understand each other.
+  </description>
+
+  <interface name="wayluck_wm_manager_v1" version="1">
+    <description summary="the window manager's connection to wayluck">
+      Bound by the one window manager. On binding, wayluck sends an output
+      event for every output and a window event for every window, then
+      ready. After that, it sends them as they appear.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop managing">
+        Windows keep their places until another window manager binds.
+      </description>
+    </request>
+
+    <request name="transaction">
+      <description summary="start a transaction">
+        Changes made through it are applied together on commit, or not at all.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_transaction_v1"/>
+    </request>
+
+    <enum name="modifiers" bitfield="true">
+      <description summary="modifier keys, as X numbers them"/>
+      <entry name="shift" value="1"/>
+      <entry name="ctrl" value="4"/>
+      <entry name="mod1" value="8" summary="alt"/>
+      <entry name="mod3" value="32"/>
+      <entry name="mod4" value="64" summary="super"/>
+      <entry name="mod5" value="128" summary="alt gr, usually"/>
+    </enum>
+
+    <request name="bind_key">
+      <description summary="take a key combination from clients">
+        While the binding exists, pressing keysym with exactly these
+        modifiers (Caps Lock and Num Lock aside) goes to the window manager
+        as pressed, and not to the focused client. A keysym matches the key
+        as typed and as it is without modifiers, so shift+1 is bound as 1.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_key_binding_v1"/>
+      <arg name="keysym" type="uint"/>
+      <arg name="modifiers" type="uint" summary="the modifiers enum's bits"/>
+    </request>
+
+    <request name="bind_button">
+      <description summary="take a pointer button combination from clients">
+        Like bind_key, for a mouse button: pressing it with exactly these
+        modifiers goes to the window manager as pressed, and its release as
+        released (whatever the modifiers are by then), not to the client
+        under the pointer.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_button_binding_v1"/>
+      <arg name="button" type="uint" summary="its Linux code: BTN_LEFT is 0x110"/>
+      <arg name="modifiers" type="uint" summary="the modifiers enum's bits"/>
+    </request>
+
+    <request name="grab_pointer">
+      <description summary="keep the pointer from clients">
+        For a drag the window manager does itself (moving a window, say):
+        until ungrab_pointer, no client sees the pointer move or its
+        buttons. pointer_position keeps coming.
+      </description>
+    </request>
+
+    <request name="ungrab_pointer">
+      <description summary="give the pointer back to clients"/>
+    </request>
+
+    <request name="warp_pointer">
+      <description summary="move the pointer">
+        To x, y in global coordinates, as if the user had moved it there:
+        clients under it hear, and pointer_position follows. Nested in
+        another session, that session's cursor stays where it is.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </request>
+
+    <request name="set_keymap">
+      <description summary="the keyboard's layout, by XKB names">
+        As in setxkbmap: an empty string is XKB's default (layout "us").
+        Clients get the new keymap, and key bindings match keys as it
+        has them. A keymap XKB can't make is ignored. Wayluck and it's
+        wm run on the same machine, so wayluck compiles the keymap itself
+        and no file descriptor has to cross the protocol.
+      </description>
+      <arg name="model" type="string" summary="pc105, say"/>
+      <arg name="layout" type="string" summary="us,pt, say"/>
+      <arg name="variant" type="string" summary="for each layout: dvorak, say"/>
+      <arg name="options" type="string" summary="caps:escape, say"/>
+    </request>
+
+    <request name="set_layout">
+      <description summary="switch to one of the keymap's layouts">
+        By its place in set_keymap's layout list, from 0.
+      </description>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <event name="unavailable">
+      <description summary="another window manager is bound">
+        This manager does nothing; the client should destroy it.
+      </description>
+    </event>
+
+    <event name="output">
+      <description summary="a new output"/>
+      <arg name="id" type="new_id" interface="wayluck_wm_output_v1"/>
+    </event>
+
+    <event name="window">
+      <description summary="a new window">
+        A toplevel that wants to be shown. Until a transaction places it,
+        it isn't.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_window_v1"/>
+    </event>
+
+    <event name="ready">
+      <description summary="everything that existed at bind time has been sent"/>
+    </event>
+
+    <event name="pointer_position">
+      <description summary="the pointer moved here, in global coordinates"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_output_v1" version="1">
+    <description summary="a monitor"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="forget the output (after removed)"/>
+    </request>
+
+    <event name="name">
+      <description summary="its connector name, e.g. DP-1"/>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="geometry">
+      <description summary="where it is, in global coordinates"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <event name="done">
+      <description summary="the events before this one describe the output's current state"/>
+    </event>
+
+    <event name="removed">
+      <description summary="the output is gone; destroy it"/>
+    </event>
+
+    <event name="usable">
+      <description summary="the part windows may use">
+        What bars and panels (layer-shell surfaces' exclusive zones) leave
+        of the output, in global coordinates: where windows should go.
+        Sent with geometry, and again when it changes, before done.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_window_v1" version="1">
+    <description summary="a toplevel window"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="forget the window (after closed)"/>
+    </request>
+
+    <request name="close">
+      <description summary="ask the client to close it"/>
+    </request>
+
+    <event name="title">
+      <arg name="title" type="string"/>
+    </event>
+
+    <event name="app_id">
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="closed">
+      <description summary="the window is gone; destroy it">
+        It's no longer shown, and placing it does nothing.
+      </description>
+    </event>
+
+    <event name="focus_request">
+      <description summary="the user clicked it">
+        wayluck doesn't focus it: the window manager decides, with a
+        transaction's focus.
+      </description>
+    </event>
+
+    <event name="pointer_enter">
+      <description summary="the pointer is over it now"/>
+    </event>
+
+    <event name="pointer_leave">
+      <description summary="the pointer isn't over it any more"/>
+    </event>
+
+    <event name="fullscreen_request">
+      <description summary="its client asked to be fullscreen">
+        F11 in a browser, say. Nothing changes unless the window manager
+        makes it so, with a transaction's fullscreen.
+      </description>
+    </event>
+
+    <event name="unfullscreen_request">
+      <description summary="its client asked to stop being fullscreen"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_key_binding_v1" version="1">
+    <description summary="a key combination the window manager has"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="give it back to clients"/>
+    </request>
+
+    <event name="pressed">
+      <description summary="the user pressed it"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_button_binding_v1" version="1">
+    <description summary="a pointer button combination the window manager has"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="give it back to clients"/>
+    </request>
+
+    <event name="pressed">
+      <description summary="the user pressed it"/>
+    </event>
+
+    <event name="released">
+      <description summary="the user let go of the button"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_transaction_v1" version="1">
+    <description summary="changes applied together">
+      Requests made before commit are collected, not applied. After commit,
+      the transaction takes no more requests; wayluck answers with applied
+      or failed, and then it should be destroyed.
+    </description>
+
+    <enum name="error">
+      <entry name="already_committed" value="0" summary="a request after commit"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="drop it; uncommitted changes are discarded"/>
+    </request>
+
+    <request name="place">
+      <description summary="show a window at a rectangle">
+        Global coordinates. The client is asked to take that size; whatever
+        size it commits, the window is shown at x, y.
+        Stacking: the windows a transaction places go above every other
+        window, in the order they're placed, the last on top.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="hide">
+      <description summary="stop showing a window"/>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+    </request>
+
+    <request name="commit">
+      <description summary="apply everything in this transaction, together"/>
+    </request>
+
+    <request name="focus">
+      <description summary="give a window the keyboard">
+        With no window, no window has it. The focused window is drawn as active;
+        where it stacks is up to place.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1" allow-null="true"/>
+    </request>
+
+    <request name="border">
+      <description summary="draw a border around a window">
+        width pixels wide, outside the window's rectangle (place gives the
+        rectangle inside it); 0 draws none. Colours are 0xAARRGGBB, one
+        for each side. A window has no border until it's given one.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="width" type="uint"/>
+      <arg name="top" type="uint"/>
+      <arg name="right" type="uint"/>
+      <arg name="bottom" type="uint"/>
+      <arg name="left" type="uint"/>
+    </request>
+
+    <enum name="edges" bitfield="true">
+      <entry name="none" value="0"/>
+      <entry name="top" value="1"/>
+      <entry name="bottom" value="2"/>
+      <entry name="left" value="4"/>
+      <entry name="right" value="8"/>
+    </enum>
+
+    <request name="tiled">
+      <description summary="say which edges of a window are tiled">
+        The edges that meet other windows or the output's: the client is
+        told (xdg_toplevel's tiled states), and draws for it, e.g. without
+        shadows, and without rounding its size to whole character cells.
+        A window has none until it's given some.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="edges" type="uint" summary="the edges enum's bits"/>
+    </request>
+
+    <request name="fullscreen">
+      <description summary="tell a window whether it's fullscreen">
+        The client is told (xdg_toplevel's fullscreen state) and draws
+        for it, without its own chrome. Where it goes, and how big, is
+        still up to place. A window isn't fullscreen until it's told so.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="fullscreen" type="uint" summary="1: it is, 0: it isn't"/>
+    </request>
+
+    <event name="applied">
+      <description summary="the changes are on screen"/>
+    </event>
+
+    <event name="failed">
+      <description summary="nothing was applied">
+        For example, a window in it was closed first.
+      </description>
+      <arg name="reason" type="string"/>
+    </event>
+  </interface>
+</protocol>

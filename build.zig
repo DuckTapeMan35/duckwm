@@ -1,7 +1,7 @@
 const std = @import("std");
 const Scanner = @import("wayland").Scanner;
 
-const Platform = enum { x11, river };
+const Platform = enum { x11, river, wayluck };
 
 const AllocatorKind = enum { debug, smp, c };
 
@@ -117,6 +117,23 @@ pub fn build(b: *std.Build) void {
             river_mod.linkSystemLibrary("fcft", .{});
             river_mod.linkSystemLibrary("pixman-1", .{});
             break :blk river_mod;
+        },
+        .wayluck => blk: {
+            const scanner = Scanner.create(b, .{});
+            scanner.addCustomProtocol(b.path("protocol/wayluck-wm-unstable-v1.xml"));
+            scanner.generate("wayluck_wm_manager_v1", 1);
+
+            const wayluck_mod = b.createModule(.{
+                .root_source_file = b.path("src/wayluck.zig"),
+                .target = target,
+                .link_libc = true,
+            });
+            wayluck_mod.addImport("types", types_mod);
+            wayluck_mod.addImport("wayland", b.createModule(.{ .root_source_file = scanner.result }));
+            wayluck_mod.linkSystemLibrary("wayland-client", .{});
+            wayluck_mod.addImport("xkbcommon", b.dependency("xkbcommon", .{}).module("xkbcommon"));
+            wayluck_mod.linkSystemLibrary("xkbcommon", .{});
+            break :blk wayluck_mod;
         },
     };
 

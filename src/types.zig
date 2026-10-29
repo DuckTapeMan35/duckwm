@@ -11,6 +11,7 @@ pub const platform = struct {
     pub const river = 2;
     /// test backend.
     pub const fake = 3;
+    pub const wayluck = 4;
 };
 
 /// A monitor, as a backend reports it.
