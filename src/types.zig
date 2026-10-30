@@ -82,6 +82,10 @@ pub const Event = union(enum) {
     /// backends that have such a picker.
     picker_opened,
     picker_closed,
+    /// The user shared a workspace (by its WorkspaceOffer key): keep
+    /// offering it, laid out, until it's unshared.
+    workspace_shared: usize,
+    workspace_unshared: usize,
 };
 
 pub const Callback = union(enum) {

@@ -226,8 +226,23 @@
 
     <event name="picker_closed">
       <description summary="the user chose, or cancelled">
-        Offered workspaces no longer need to be kept laid out.
+        Offered workspaces no longer need to be kept laid out (except one
+        shared: share_workspace).
       </description>
+    </event>
+
+    <event name="share_workspace">
+      <description summary="the user chose to share a workspace">
+        Sent before picker_closed. wayluck made output, a virtual output
+        modelled on the monitor the workspace was offered on, showing scene
+        (the scene it was offered with), for the portal to capture. Keep the
+        workspace laid out while it's shared, and keep output showing the
+        scene it's in (if that changes: shown, or not). When capture stops
+        (capture_stopped: also sent if none starts within a few seconds),
+        destroy output: it goes.
+      </description>
+      <arg name="output" type="new_id" interface="wayluck_wm_output_v1"/>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
     </event>
   </interface>
 

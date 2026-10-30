@@ -4,6 +4,7 @@ const graph_mod = @import("graph");
 const core = @import("core.zig");
 const swallow_mod = @import("swallow.zig");
 const groups = @import("groups.zig");
+const scene = @import("scene.zig");
 
 const Graph = graph_mod.Graph;
 const WM = core.WM;
@@ -154,6 +155,10 @@ pub fn window_mapped(wm: *WM, req: types.MapRequest) !void {
         return;
     }
 
+    if (is_floating) {
+        if (wm.node_registry.get(id)) |n| wm.set_focus(n);
+    }
+
     if (node.wants_fullscreen) {
         node.wants_fullscreen = false;
         wm.focused = node;
@@ -202,9 +207,13 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
     const focused_is_dying = wm.focused == dying;
     const next_focus: ?*Node = if (focused_is_dying) pick_next_focus(wm, dying) else null;
 
+    // Off screen but shared (screen sharing): arranged too, as if shown.
+    const dying_workspace: ?*Graph = if (dying.owner_graph) |og| og.workspace() else null;
+    const elsewhere = if (dying_workspace) |ws| ws != wm.current_graph and scene.offered(wm, ws) else false;
+
     if (!dying.floating) {
         if (dying.owner_graph) |og| {
-            if (og.within(wm.current_graph)) {
+            if (og.within(wm.current_graph) or elsewhere) {
                 const prev_id: ?u32 = if (wm.focused) |f| wm.get_id_for_node(f) else null;
                 wm.call_arranger(og, .unmap, dying_id, prev_id);
             }
@@ -226,6 +235,12 @@ pub fn window_gone(wm: *WM, h: types.WindowHandle) !void {
         groups.dissolve_if_empty(wm, og);
     }
     sweep_dead_containers(wm);
+
+    if (elsewhere) {
+        sweep_graph(wm, dying_workspace.?);
+        try wm.resolve(dying_workspace.?);
+        try wm.flush(dying_workspace.?);
+    }
 
     if (wm.current_graph.nodes.items.len > 0) {
         try wm.resolve(wm.current_graph);

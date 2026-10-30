@@ -102,6 +102,11 @@ pub const WM = struct {
     outlines: std.ArrayListUnmanaged(types.Outline) = .empty,
     /// A screen-sharing picker is open: every commit offers it workspaces.
     picker_open: bool = false,
+    /// Workspaces shared (their offer keys): offered, laid out, as long as
+    /// they are.
+    shared: std.ArrayListUnmanaged(usize) = .empty,
+    /// The last commit offered something: the next says if that ended.
+    offered: bool = false,
     /// Send input focus at the next commit.
     focus_dirty: bool = false,
     /// Round-trip with the display server at the next commit.
@@ -301,6 +306,7 @@ pub const WM = struct {
         self.clear_rgb_frame_classes();
         self.rgb_frame_classes.deinit(self.allocator);
         self.outlines.deinit(self.allocator);
+        self.shared.deinit(self.allocator);
         self.scene.deinit(self.allocator);
     }
 

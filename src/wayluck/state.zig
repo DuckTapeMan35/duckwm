@@ -10,6 +10,7 @@ const Output = @import("outputs.zig").Output;
 const Binding = @import("keys.zig").Binding;
 const ButtonBinding = @import("pointer.zig").Binding;
 const Offer = @import("sharing.zig").Offer;
+const Share = @import("sharing.zig").Share;
 const Window = windows.Window;
 
 pub const State = struct {
@@ -56,6 +57,8 @@ pub const State = struct {
     offers_changed: bool = false,
     /// A picker opened: wayluck waits for offers_done.
     picking: bool = false,
+    /// Workspaces shared, each on a virtual output.
+    shares: std.ArrayListUnmanaged(*Share) = .empty,
 
     /// Events for core, oldest first.
     events: std.ArrayListUnmanaged(types.Event) = .empty,

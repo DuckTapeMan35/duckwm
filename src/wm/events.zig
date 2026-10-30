@@ -62,9 +62,21 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
             wm.picker_open = true;
             wm.scene_dirty = true;
         },
+        // The next commit offers only what's shared (or nothing).
         .picker_closed => {
             wm.picker_open = false;
-            wm.backend.offer_workspaces(&.{});
+            wm.scene_dirty = true;
+        },
+        .workspace_shared => |key| {
+            wm.shared.append(wm.allocator, key) catch {};
+            wm.scene_dirty = true;
+        },
+        .workspace_unshared => |key| {
+            for (wm.shared.items, 0..) |k, i| if (k == key) {
+                _ = wm.shared.swapRemove(i);
+                break;
+            };
+            wm.scene_dirty = true;
         },
     }
     return true;

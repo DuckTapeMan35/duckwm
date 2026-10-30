@@ -350,6 +350,11 @@ pub const Backend = struct {
         _ = index;
     }
 
+    pub fn offer_workspaces(self: *Backend, offers: []const types.WorkspaceOffer) void {
+        _ = self;
+        _ = offers;
+    }
+
     pub fn set_animation(self: *Backend, a: types.Animation) void {
         _ = self;
         _ = a;

@@ -374,5 +374,6 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
             s.push(.picker_opened);
         },
         .picker_closed => s.push(.picker_closed),
+        .share_workspace => |e| if (e.scene) |scene| sharing.share(s, e.output, scene) else e.output.destroy(),
     }
 }

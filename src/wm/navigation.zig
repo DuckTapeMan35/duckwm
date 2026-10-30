@@ -6,6 +6,7 @@ const focus = @import("focus.zig");
 const registry = @import("registry.zig");
 const output = @import("output.zig");
 const groups = @import("groups.zig");
+const scene = @import("scene.zig");
 const workspace_settings = @import("workspace_settings.zig");
 
 pub const WorkspaceSwitchMode = @import("protocol").WorkspaceSwitchMode;
@@ -189,9 +190,13 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
         wm.call_arranger(target_graph, .map, node_id, target_prev_id);
     }
 
-    // Hide frame if target is not visible
+    // Hide frame if target is not visible (shared, it's laid out off screen)
     if (!output.is_visible(wm, target_graph)) {
         if (node.window()) |h| wm.backend.hide_window(h);
+        if (scene.offered(wm, target_graph.workspace())) {
+            wm.resolve(target_graph) catch {};
+            wm.flush(target_graph) catch {};
+        }
     } else {
         wm.resolve(target_graph) catch {};
         wm.rebuild_focus_edges() catch {};

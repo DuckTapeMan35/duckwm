@@ -54,7 +54,7 @@ pub fn commit(wm: *WM) void {
 
 /// Ask for g's state to be pushed to the screen at the next commit.
 pub fn flush(wm: *WM, g: *Graph) !void {
-    if (output.is_visible(wm, g)) wm.scene_dirty = true;
+    if (output.is_visible(wm, g) or offered(wm, g.workspace())) wm.scene_dirty = true;
 }
 
 /// Recompute and push the current layout. Becomes mark_dirty once commits land.
@@ -205,7 +205,9 @@ fn apply_scene(wm: *WM) !void {
     wm.backend.apply_windows(wm.scene.items, fullscreen);
     wm.scene_fullscreen = fullscreen;
     wm.scene_serial += 1;
-    if (wm.picker_open) offer_workspaces(wm) catch |err| std.debug.print("offering workspaces: {}\n", .{err});
+    if (wm.picker_open or wm.shared.items.len > 0 or wm.offered) {
+        offer_workspaces(wm) catch |err| std.debug.print("offering workspaces: {}\n", .{err});
+    }
 
     for (wm.outputs.items) |o| repaint_previews(wm, output.visible(wm, o));
 }
@@ -456,7 +458,7 @@ fn overlaps(a: types.Rect, b: types.Rect) bool {
 // ---- screen sharing ----
 /// While a screen-sharing picker is open: every workspace with windows and
 /// no workspaces of its own, for the backend to offer, the hidden ones laid
-/// out as they would be if shown.
+/// out as they would be if shown. Shared ones, while they are.
 fn offer_workspaces(wm: *WM) !void {
     var arena = std.heap.ArenaAllocator.init(wm.allocator);
     defer arena.deinit();
@@ -481,6 +483,15 @@ fn offer_workspaces(wm: *WM) !void {
         .windows = wm.scene.items[f.from..f.to],
     };
     wm.backend.offer_workspaces(offers);
+    wm.offered = offers.len > 0;
+}
+
+/// Is workspace g offered to the backend (so changes in it are committed
+/// even off screen)?
+pub fn offered(wm: *WM, g: *Graph) bool {
+    if (wm.picker_open) return true;
+    for (wm.shared.items) |key| if (key == @intFromPtr(g)) return true;
+    return false;
 }
 
 /// A workspace to offer, and where its windows are in wm.scene.
@@ -517,7 +528,10 @@ fn find_offers(
             try find_offers(wm, a, sub, name, found);
             continue;
         }
-        if (!holds(sub, .window)) continue;
+        const shared = for (wm.shared.items) |key| {
+            if (key == @intFromPtr(sub)) break true;
+        } else false;
+        if (!shared and !(wm.picker_open and holds(sub, .window))) continue;
         const shown = output.is_visible(wm, sub);
         const from = wm.scene.items.len;
         if (!shown) try compute_scene(wm, sub);
