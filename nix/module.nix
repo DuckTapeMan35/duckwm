@@ -254,13 +254,12 @@ in
 
       (lib.mkIf hasWayluck {
         environment.systemPackages = [ cfg.wayluckPackage.wayluck ];
-        # Screen sharing asks wayluck what to share (`wayluck pick`).
         xdg.portal.wlr.settings.screencast = {
           chooser_type = lib.mkDefault "simple";
           chooser_cmd = lib.mkDefault "${lib.getExe cfg.wayluckPackage.wayluck} pick";
-          systemd.user.services.xdg-desktop-portal-wlr.environment.XDPW_PERSIST_MODE =
-            lib.mkDefault "transient";
         };
+        systemd.user.services.xdg-desktop-portal-wlr.environment.XDPW_PERSIST_MODE =
+          lib.mkDefault "transient";
       })
 
       (lib.mkIf (hasRiver || hasWayluck) {
