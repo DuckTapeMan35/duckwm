@@ -159,6 +159,27 @@
       <arg name="index" type="uint"/>
     </request>
 
+    <request name="offer_workspace">
+      <description summary="a workspace the user may share">
+        An answer to picker_opened: one workspace the picker should list,
+        under the monitor it's on (output), by name, with the windows in
+        scene (laid out in it: offered workspaces should be laid out, the
+        hidden ones too, until picker_closed). Offering a scene again
+        replaces what was said of it. Offers after offers_done count for
+        the next picker.
+      </description>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
+      <arg name="output" type="object" interface="wayluck_wm_output_v1"/>
+      <arg name="name" type="string"/>
+    </request>
+
+    <request name="offers_done">
+      <description summary="every workspace has been offered">
+        The picker may show its list. Without this, it shows it anyway
+        after a moment, with the workspaces offered by then.
+      </description>
+    </request>
+
     <event name="unavailable">
       <description summary="another window manager is bound">
         This manager does nothing; the client should destroy it.
@@ -192,6 +213,21 @@
       <description summary="the pointer moved here, in global coordinates"/>
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
+    </event>
+
+    <event name="picker_opened">
+      <description summary="the user is about to choose what to share">
+        Offer the workspaces the picker should list (offer_workspace), then
+        say so (offers_done). The picker itself is a window like any other
+        (app id wayluck.picker, of one size), announced when it maps. Not
+        sent again until picker_closed.
+      </description>
+    </event>
+
+    <event name="picker_closed">
+      <description summary="the user chose, or cancelled">
+        Offered workspaces no longer need to be kept laid out.
+      </description>
     </event>
   </interface>
 

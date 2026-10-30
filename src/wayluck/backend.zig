@@ -362,5 +362,8 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
         .window => |e| windows.add(s, e.window, e.id),
         .ready => s.ready = true,
         .pointer_position => |e| pointer.moved(s, .{ .x = e.x, .y = e.y }),
+        // No workspaces offered yet: the picker lists what's on screen.
+        .picker_opened => if (s.manager) |m| m.offersDone(),
+        .picker_closed => {},
     }
 }
