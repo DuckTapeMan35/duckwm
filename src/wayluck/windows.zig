@@ -2,6 +2,8 @@ const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
 const pointer = @import("pointer.zig");
+const outputs = @import("outputs.zig");
+
 const wayluck = wayland.client.wayluck;
 const State = @import("state.zig").State;
 
@@ -218,9 +220,13 @@ pub fn commit(s: *State) void {
 }
 
 /// Bottom to top: tiled windows in the scene's order, then floating ones
-/// by when they were raised, then the fullscreen one. Every other window
-/// is hidden.
+/// by when they were raised, then the fullscreen one. Every other window is hidden.
 fn place_all(s: *State, tx: *wayluck.WmTransactionV1) void {
+    // Each output shows its own scene, laid out for its size.
+    for (s.outputs.items) |o| if (o.scene) |scene| {
+        tx.sceneSize(scene, @intCast(o.rect.width), @intCast(o.rect.height));
+        tx.show(o.obj, scene);
+    };
     var order: std.ArrayListUnmanaged(types.WindowState) = .empty;
     defer order.deinit(s.allocator);
     for (s.scene.items) |st| {
@@ -240,13 +246,17 @@ fn place_all(s: *State, tx: *wayluck.WmTransactionV1) void {
     for (order.items) |st| {
         const w = s.windows.get(st.handle) orelse continue; // a preview
         if (!w.announced) continue;
+        // In the scene of the output it's on, relative to that output.
+        const o = outputs.of(s, st.frame) orelse continue;
+        const scene = o.scene orelse continue;
         // core's rect is the whole footprint, borders included; wayluck
         // places the content, and draws the border around it.
         const bw = st.border_width;
         tx.place(
+            scene,
             w.obj,
-            st.frame.x + @as(i32, @intCast(bw)),
-            st.frame.y + @as(i32, @intCast(bw)),
+            st.frame.x - o.rect.x + @as(i32, @intCast(bw)),
+            st.frame.y - o.rect.y + @as(i32, @intCast(bw)),
             @intCast(@max(1, st.frame.width -| 2 * bw)),
             @intCast(@max(1, st.frame.height -| 2 * bw)),
         );

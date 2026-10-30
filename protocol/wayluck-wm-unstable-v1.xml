@@ -9,6 +9,17 @@
     owns placement: where each window goes, what's shown and what isn't.
     wayluck owns clients, buffers and pixels, and applies what it's told.
 
+    Windows are placed in scenes, not on outputs. A scene is a set of
+    windows at positions relative to its own top left corner, stacked in the
+    order they were placed: a workspace, to a window manager that has them.
+    An output shows one scene (or none), drawn from the output's top left
+    corner; a scene may be shown on several outputs at once, each drawing
+    it the same way (mirroring). What isn't in a shown scene isn't drawn.
+
+    A scene is laid out once, for one size (scene_size): a window has one
+    size, whatever shows it. Showing a scene on an output of another size is
+    allowed, but then it's cut off, or doesn't fill it.
+
     Unstable: changed in place, without version bumps, until it's frozen as
     wayluck_wm_v1. A window manager and a wayluck from different commits may
     not understand each other.
@@ -33,6 +44,45 @@
       </description>
       <arg name="id" type="new_id" interface="wayluck_wm_transaction_v1"/>
     </request>
+
+    <request name="scene">
+      <description summary="make a scene">
+        Empty, and shown nowhere, until transactions place windows in it and
+        show it on outputs.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_scene_v1"/>
+    </request>
+    <request name="virtual_output">
+      <description summary="make an output with no screen behind it">
+        Clients see it as any other output (wl_output): screen sharing and
+        screenshots can capture it. Nothing else happens on it: the pointer
+        doesn't reach it.
+
+        No one looks at it, so it's only drawn when a capture asks for a
+        frame (and, for screen sharing, something in it changed): the
+        capturing client sets the frame rate. Windows in a scene shown only
+        here are paced like they would be on template (its refresh rate), or
+        at refresh with no template.
+
+        Bars, wallpapers and overlays: clients can't put their own on it
+        (wayluck closes layer surfaces made for it). With a template, it
+        draws that output's own around its scene, the same surfaces, as they
+        are there: a workspace shared from it looks as it would on it. With
+        no template, it draws none.
+
+        It isn't announced with an output event: its name, geometry, usable
+        area (all of it: bars are template's business) and done follow on
+        this object, as for any output. It goes when this object is
+        destroyed. Its geometry is somewhere no monitor is.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_output_v1"/>
+      <arg name="width" type="int" summary="in pixels"/>
+      <arg name="height" type="int" summary="in pixels"/>
+      <arg name="template" type="object" interface="wayluck_wm_output_v1" allow-null="true"
+           summary="the output it's modelled on: whose bars, wallpapers and overlays it draws, and whose refresh rate paces its windows"/>
+      <arg name="refresh" type="int" summary="in mHz: windows' pace with no template"/>
+    </request>
+
 
     <enum name="modifiers" bitfield="true">
       <description summary="modifier keys, as X numbers them"/>
@@ -94,9 +144,7 @@
       <description summary="the keyboard's layout, by XKB names">
         As in setxkbmap: an empty string is XKB's default (layout "us").
         Clients get the new keymap, and key bindings match keys as it
-        has them. A keymap XKB can't make is ignored. Wayluck and it's
-        wm run on the same machine, so wayluck compiles the keymap itself
-        and no file descriptor has to cross the protocol.
+        has them. A keymap XKB can't make is ignored.
       </description>
       <arg name="model" type="string" summary="pc105, say"/>
       <arg name="layout" type="string" summary="us,pt, say"/>
@@ -151,7 +199,9 @@
     <description summary="a monitor"/>
 
     <request name="destroy" type="destructor">
-      <description summary="forget the output (after removed)"/>
+      <description summary="forget the output (after removed)">
+        A virtual output goes with it.
+      </description>
     </request>
 
     <event name="name">
@@ -186,6 +236,39 @@
       <arg name="width" type="int"/>
       <arg name="height" type="int"/>
     </event>
+
+    <event name="capture_started">
+      <description summary="someone is capturing it">
+        A client asked for frames of it (screen sharing, recording): what
+        it shows should be kept up to date. Sent once, when the first
+        capture starts.
+      </description>
+    </event>
+
+    <event name="capture_stopped">
+      <description summary="no one is capturing it any more">
+        Every capture of it stopped: no frame asked for in the last second,
+        and none waiting for something to change. A virtual output nobody
+        captures can go.
+      </description>
+    </event>
+
+
+  </interface>
+
+  <interface name="wayluck_wm_scene_v1" version="1">
+    <description summary="windows laid out together: a workspace">
+      Windows are placed in it by transactions (place); outputs show it
+      (show). A window is in one scene at most: placing it in another moves
+      it there.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="forget the scene">
+        Its windows aren't in any scene any more (as after hide), and outputs
+        showing it show nothing.
+      </description>
+    </request>
   </interface>
 
   <interface name="wayluck_wm_window_v1" version="1">
@@ -258,7 +341,6 @@
       <arg name="max_width" type="int"/>
       <arg name="max_height" type="int"/>
     </event>
-
   </interface>
 
   <interface name="wayluck_wm_key_binding_v1" version="1">
@@ -305,12 +387,15 @@
     </request>
 
     <request name="place">
-      <description summary="show a window at a rectangle">
-        Global coordinates. The client is asked to take that size; whatever
-        size it commits, the window is shown at x, y.
-        Stacking: the windows a transaction places go above every other
-        window, in the order they're placed, the last on top.
+      <description summary="put a window in a scene, at a rectangle">
+        Coordinates relative to the scene's top left corner. The client is
+        asked to take that size; whatever size it commits, the window is
+        drawn at x, y. If it was in another scene, it leaves that one.
+
+        Stacking: the windows a transaction places in a scene go above every
+        other window in it, in the order they're placed, the last on top.
       </description>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
       <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
@@ -319,8 +404,31 @@
     </request>
 
     <request name="hide">
-      <description summary="stop showing a window"/>
+      <description summary="take a window out of its scene">
+        It isn't drawn anywhere until it's placed again.
+      </description>
       <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+    </request>
+
+    <request name="scene_size">
+      <description summary="the size a scene is laid out for">
+        Usually that of the output it's shown on. Previews scale a scene by
+        it. A scene's size is 0x0 until it's given one: then it's drawn, but
+        not scaled.
+      </description>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="show">
+      <description summary="what an output shows">
+        A scene, drawn from the output's top left corner (null: nothing, only
+        what's below windows, like wallpapers). Several outputs may show the
+        same scene. An output shows nothing until it's given a scene.
+      </description>
+      <arg name="output" type="object" interface="wayluck_wm_output_v1"/>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1" allow-null="true"/>
     </request>
 
     <request name="commit">
@@ -329,8 +437,8 @@
 
     <request name="focus">
       <description summary="give a window the keyboard">
-        With no window, no window has it. The focused window is drawn as active;
-        where it stacks is up to place.
+        With no window, no window has it. The focused window is drawn as
+        active; where it stacks is up to place.
       </description>
       <arg name="window" type="object" interface="wayluck_wm_window_v1" allow-null="true"/>
     </request>
