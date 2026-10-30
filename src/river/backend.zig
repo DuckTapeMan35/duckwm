@@ -485,4 +485,10 @@ pub const Backend = struct {
     pub fn outputs(self: *Backend, buf: []types.OutputInfo) []types.OutputInfo {
         return output.list(self.state, buf);
     }
+
+    /// No screen-sharing picker here: nothing to offer.
+    pub fn offer_workspaces(self: *Backend, offers: []const types.WorkspaceOffer) void {
+        _ = self;
+        _ = offers;
+    }
 };

@@ -3,6 +3,7 @@ const types = @import("types");
 const wayland = @import("wayland");
 const pointer = @import("pointer.zig");
 const outputs = @import("outputs.zig");
+const sharing = @import("sharing.zig");
 
 const wayluck = wayland.client.wayluck;
 const State = @import("state.zig").State;
@@ -208,7 +209,13 @@ pub fn commit(s: *State) void {
     if (!s.dirty and s.focus == null) return;
     const manager = s.manager orelse return;
     const tx = manager.transaction() catch return;
-    tx.setListener(?*anyopaque, tx_listener, null);
+    // New offers are announced once it's applied, their windows placed.
+    if (s.offers_changed) {
+        s.offers_changed = false;
+        tx.setListener(*State, offers_listener, s);
+    } else {
+        tx.setListener(?*anyopaque, tx_listener, null);
+    }
     if (s.dirty) place_all(s, tx);
     if (s.focus) |f| {
         const w: ?*Window = if (f.to) |h| s.windows.get(h) else null;
@@ -249,30 +256,44 @@ fn place_all(s: *State, tx: *wayluck.WmTransactionV1) void {
         // In the scene of the output it's on, relative to that output.
         const o = outputs.of(s, st.frame) orelse continue;
         const scene = o.scene orelse continue;
-        // core's rect is the whole footprint, borders included; wayluck
-        // places the content, and draws the border around it.
-        const bw = st.border_width;
-        tx.place(
-            scene,
-            w.obj,
-            st.frame.x - o.rect.x + @as(i32, @intCast(bw)),
-            st.frame.y - o.rect.y + @as(i32, @intCast(bw)),
-            @intCast(@max(1, st.frame.width -| 2 * bw)),
-            @intCast(@max(1, st.frame.height -| 2 * bw)),
-        );
-        // Tiled windows are told so: clients square their corners, and size
-        // themselves exactly (foot rounds a floating one to whole cells).
-        // A fullscreen one is told that instead, and drops its own chrome.
-        const fullscreen = s.fullscreen == st.handle;
-        tx.tiled(w.obj, if (st.tiled and !fullscreen) all_edges else 0);
-        tx.fullscreen(w.obj, @intFromBool(fullscreen));
-        // null: no border (fullscreen, or borders turned off).
-        if (st.borders) |b| set_border(tx, w, bw, b) else set_border(tx, w, 0, null_colors);
+        place_window(tx, scene, o, w, st, s.fullscreen == st.handle);
     }
+    // The picker's hidden workspaces, in scenes of their own.
+    sharing.place(s, tx);
     var it = s.windows.valueIterator();
     while (it.next()) |wp| {
-        if (wp.*.announced and find(s.scene.items, wp.*.handle) == null) tx.hide(wp.*.obj);
+        const h = wp.*.handle;
+        if (wp.*.announced and find(s.scene.items, h) == null and !sharing.holds(s, h)) tx.hide(wp.*.obj);
     }
+}
+
+/// Place w in scene as st says, relative to o's corner.
+pub fn place_window(
+    tx: *wayluck.WmTransactionV1,
+    scene: *wayluck.WmSceneV1,
+    o: *const outputs.Output,
+    w: *Window,
+    st: types.WindowState,
+    fullscreen: bool,
+) void {
+    // core's rect is the whole footprint, borders included; wayluck
+    // places the content, and draws the border around it.
+    const bw = st.border_width;
+    tx.place(
+        scene,
+        w.obj,
+        st.frame.x - o.rect.x + @as(i32, @intCast(bw)),
+        st.frame.y - o.rect.y + @as(i32, @intCast(bw)),
+        @intCast(@max(1, st.frame.width -| 2 * bw)),
+        @intCast(@max(1, st.frame.height -| 2 * bw)),
+    );
+    // Tiled windows are told so: clients square their corners, and size
+    // themselves exactly (foot rounds a floating one to whole cells).
+    // A fullscreen one is told that instead, and drops its own chrome.
+    tx.tiled(w.obj, if (st.tiled and !fullscreen) all_edges else 0);
+    tx.fullscreen(w.obj, @intFromBool(fullscreen));
+    // null: no border (fullscreen, or borders turned off).
+    if (st.borders) |b| set_border(tx, w, bw, b) else set_border(tx, w, 0, null_colors);
 }
 
 fn serial(s: *State, h: types.WindowHandle) u64 {
@@ -298,4 +319,10 @@ fn tx_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Even
         .failed => |e| std.debug.print("duckwm: wayluck didn't apply a transaction: {s}\n", .{e.reason}),
     }
     tx.destroy();
+}
+
+/// As tx_listener, and then wayluck hears of the workspaces it laid out.
+fn offers_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Event, s: *State) void {
+    tx_listener(tx, event, null);
+    sharing.announce(s);
 }

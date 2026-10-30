@@ -9,6 +9,7 @@ const wayluck = wayland.client.wayluck;
 const Output = @import("outputs.zig").Output;
 const Binding = @import("keys.zig").Binding;
 const ButtonBinding = @import("pointer.zig").Binding;
+const Offer = @import("sharing.zig").Offer;
 const Window = windows.Window;
 
 pub const State = struct {
@@ -48,6 +49,13 @@ pub const State = struct {
     raise_clock: u64 = 0,
     /// Previews get handles far from the ones windows get.
     next_preview: types.WindowHandle = 1 << 32,
+    // Screen sharing's picker.
+    /// The workspaces core offers it, while it's open.
+    offers: std.ArrayListUnmanaged(Offer) = .empty,
+    /// Offered since wayluck last heard: it does once the turn's transaction is applied.
+    offers_changed: bool = false,
+    /// A picker opened: wayluck waits for offers_done.
+    picking: bool = false,
 
     /// Events for core, oldest first.
     events: std.ArrayListUnmanaged(types.Event) = .empty,

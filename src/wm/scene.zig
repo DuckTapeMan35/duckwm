@@ -205,6 +205,7 @@ fn apply_scene(wm: *WM) !void {
     wm.backend.apply_windows(wm.scene.items, fullscreen);
     wm.scene_fullscreen = fullscreen;
     wm.scene_serial += 1;
+    if (wm.picker_open) offer_workspaces(wm) catch |err| std.debug.print("offering workspaces: {}\n", .{err});
 
     for (wm.outputs.items) |o| repaint_previews(wm, output.visible(wm, o));
 }
@@ -450,4 +451,83 @@ fn scaled(v: i32, z: f64) i32 {
 fn overlaps(a: types.Rect, b: types.Rect) bool {
     return a.x < b.x + @as(i32, @intCast(b.width)) and b.x < a.x + @as(i32, @intCast(a.width)) and
         a.y < b.y + @as(i32, @intCast(b.height)) and b.y < a.y + @as(i32, @intCast(a.height));
+}
+
+// ---- screen sharing ----
+/// While a screen-sharing picker is open: every workspace with windows and
+/// no workspaces of its own, for the backend to offer, the hidden ones laid
+/// out as they would be if shown.
+fn offer_workspaces(wm: *WM) !void {
+    var arena = std.heap.ArenaAllocator.init(wm.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Hidden ones' windows go after the scene in its list, and come off
+    // again once offered (as do the outlines laying them out adds).
+    const scene_len = wm.scene.items.len;
+    const outlines_len = wm.outlines.items.len;
+    defer {
+        wm.scene.shrinkRetainingCapacity(scene_len);
+        wm.outlines.shrinkRetainingCapacity(outlines_len);
+    }
+    var found: std.ArrayListUnmanaged(Found) = .empty;
+    for (wm.outputs.items) |o| try find_offers(wm, a, &o.root, "", &found);
+    // Only now: the list may have moved while it grew.
+    const offers = try a.alloc(types.WorkspaceOffer, found.items.len);
+    for (found.items, offers) |f, *offer| offer.* = .{
+        .key = @intFromPtr(f.g),
+        .output = f.g.output,
+        .name = f.name,
+        .shown = f.shown,
+        .windows = wm.scene.items[f.from..f.to],
+    };
+    wm.backend.offer_workspaces(offers);
+}
+
+/// A workspace to offer, and where its windows are in wm.scene.
+const Found = struct { g: *Graph, name: []const u8, shown: bool, from: usize, to: usize };
+
+/// The workspaces to offer in g, each named by its path from the top
+/// ("2", "2/1": their places, as switch_to_workspace counts; a named one
+/// by its name), the hidden ones laid out.
+fn find_offers(
+    wm: *WM,
+    a: std.mem.Allocator,
+    g: *Graph,
+    prefix: []const u8,
+    found: *std.ArrayListUnmanaged(Found),
+) !void {
+    var subs: std.ArrayListUnmanaged(*Node) = .empty;
+    var it = groups.Nodes.init(g);
+    while (it.next()) |n| {
+        if (n.content == .workspace and n.content.workspace != wm.scratch_graph) try subs.append(a, n);
+    }
+    // In the order switch_to_workspace counts them: by node id.
+    std.sort.heap(*Node, subs.items, wm, struct {
+        fn lt(w: *WM, x: *Node, y: *Node) bool {
+            const ix = w.get_id_for_node(x) orelse return false;
+            const iy = w.get_id_for_node(y) orelse return false;
+            return ix < iy;
+        }
+    }.lt);
+    for (subs.items, 1..) |n, place| {
+        const sub = n.content.workspace;
+        const own = if (n.name.len > 0) n.name else try std.fmt.allocPrint(a, "{d}", .{place});
+        const name = if (prefix.len == 0) own else try std.fmt.allocPrint(a, "{s}/{s}", .{ prefix, own });
+        if (holds(sub, .workspace)) {
+            try find_offers(wm, a, sub, name, found);
+            continue;
+        }
+        if (!holds(sub, .window)) continue;
+        const shown = output.is_visible(wm, sub);
+        const from = wm.scene.items.len;
+        if (!shown) try compute_scene(wm, sub);
+        try found.append(a, .{ .g = sub, .name = name, .shown = shown, .from = from, .to = wm.scene.items.len });
+    }
+}
+
+/// Does g hold a node of this kind (in it or in its groups)?
+fn holds(g: *Graph, kind: std.meta.Tag(@FieldType(Node, "content"))) bool {
+    var it = groups.Nodes.init(g);
+    while (it.next()) |n| if (n.content == kind) return true;
+    return false;
 }

@@ -58,6 +58,7 @@ comptime {
         "hide_prompt",
         "outputs",
         "keysym_name",
+        "offer_workspaces",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

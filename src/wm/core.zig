@@ -100,6 +100,8 @@ pub const WM = struct {
     scene_dirty: bool = false,
     /// Group outlines to draw, rebuilt with the scene.
     outlines: std.ArrayListUnmanaged(types.Outline) = .empty,
+    /// A screen-sharing picker is open: every commit offers it workspaces.
+    picker_open: bool = false,
     /// Send input focus at the next commit.
     focus_dirty: bool = false,
     /// Round-trip with the display server at the next commit.

@@ -74,6 +74,12 @@ pub fn list(s: *State, buf: []types.OutputInfo) []types.OutputInfo {
     return buf[0..n];
 }
 
+/// The output with this id (duckwm's).
+pub fn find(s: *State, id: u32) ?*Output {
+    for (s.outputs.items) |o| if (o.id == id) return o;
+    return null;
+}
+
 /// The output a rectangle is on (the one its centre is in), or the first.
 pub fn of(s: *State, r: types.Rect) ?*Output {
     const cx = r.x + @as(i32, @intCast(r.width / 2));

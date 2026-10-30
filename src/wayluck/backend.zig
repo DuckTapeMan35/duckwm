@@ -4,6 +4,7 @@ const wayland = @import("wayland");
 const pointer = @import("pointer.zig");
 const windows = @import("windows.zig");
 const outputs_ = @import("outputs.zig");
+const sharing = @import("sharing.zig");
 const keys = @import("keys.zig");
 
 const wl = wayland.client.wl;
@@ -56,6 +57,7 @@ pub const Backend = struct {
         s.windows.deinit(s.allocator);
         s.fresh.deinit(s.allocator);
         s.scene.deinit(s.allocator);
+        sharing.deinit(s);
         keys.ungrab_all(s);
         s.bindings.deinit(s.allocator);
         pointer.ungrab_all(s);
@@ -337,6 +339,11 @@ pub const Backend = struct {
         keys.set_layout(self.state, index);
     }
 
+    /// The picker's workspaces (sharing.zig).
+    pub fn offer_workspaces(self: *Backend, offers: []const types.WorkspaceOffer) void {
+        sharing.offer(self.state, offers);
+    }
+
     pub fn set_animation(self: *Backend, a: types.Animation) void {
         _ = self;
         _ = a;
@@ -362,8 +369,10 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
         .window => |e| windows.add(s, e.window, e.id),
         .ready => s.ready = true,
         .pointer_position => |e| pointer.moved(s, .{ .x = e.x, .y = e.y }),
-        // No workspaces offered yet: the picker lists what's on screen.
-        .picker_opened => if (s.manager) |m| m.offersDone(),
-        .picker_closed => {},
+        .picker_opened => {
+            s.picking = true;
+            s.push(.picker_opened);
+        },
+        .picker_closed => s.push(.picker_closed),
     }
 }

@@ -58,6 +58,14 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
         .pointer_enter => |h| pointer.enter(wm, h),
         .pointer_output => |id| pointer.output_entered(wm, id),
         .prompt_key => |k| input_bar.key(wm, k),
+        .picker_opened => {
+            wm.picker_open = true;
+            wm.scene_dirty = true;
+        },
+        .picker_closed => {
+            wm.picker_open = false;
+            wm.backend.offer_workspaces(&.{});
+        },
     }
     return true;
 }

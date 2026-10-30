@@ -77,6 +77,11 @@ pub const Event = union(enum) {
     pointer_output: u32,
     /// Only while the input bar holds the keyboard; binds don't fire then.
     prompt_key: PromptKey,
+    /// The user is choosing what to share (a screen-sharing picker): offer
+    /// workspaces (offer_workspaces) until picker_closed. Only from
+    /// backends that have such a picker.
+    picker_opened,
+    picker_closed,
 };
 
 pub const Callback = union(enum) {
@@ -188,6 +193,20 @@ pub const WindowTraits = struct {
     kind: WindowKind = .normal,
     transient_for: ?WindowHandle = null,
     focusable_dock: bool = false,
+};
+
+/// A workspace the user may share, for a backend's screen-sharing picker:
+/// where it is, what it's called, and its windows as they'd be laid out.
+pub const WorkspaceOffer = struct {
+    /// The same for as long as the workspace exists.
+    key: usize,
+    /// Its output (the backend's id).
+    output: u32,
+    name: []const u8,
+    /// On screen: its windows are in the scene already (windows is empty).
+    shown: bool,
+    /// Off screen: where its windows would be if it were shown.
+    windows: []const WindowState,
 };
 
 /// Desired on-screen state of one managed window, as computed by core.
