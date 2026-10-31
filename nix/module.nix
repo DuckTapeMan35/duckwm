@@ -260,6 +260,15 @@ in
         };
         systemd.user.services.xdg-desktop-portal-wlr.environment.XDPW_PERSIST_MODE =
           lib.mkDefault "transient";
+        # Workspaces are shared on a virtual output made while the chooser
+        # runs: xdpw must re-read the outputs after it exits.
+        nixpkgs.overlays = [
+          (final: prev: {
+            xdg-desktop-portal-wlr = prev.xdg-desktop-portal-wlr.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./xdpw-chooser-roundtrip.patch ];
+            });
+          })
+        ];
       })
 
       (lib.mkIf (hasRiver || hasWayluck) {
