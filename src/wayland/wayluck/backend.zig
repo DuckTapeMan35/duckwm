@@ -6,7 +6,10 @@ const windows = @import("windows.zig");
 const outputs_ = @import("outputs.zig");
 const sharing = @import("sharing.zig");
 const keys = @import("keys.zig");
+const previews = @import("previews.zig");
+const paint = @import("paint");
 
+const xdg = wayland.client.xdg;
 const wl = wayland.client.wl;
 const wayluck = wayland.client.wayluck;
 
@@ -29,6 +32,7 @@ pub const Backend = struct {
         const s = try allocator.create(State);
         errdefer allocator.destroy(s);
         s.* = .{ .allocator = allocator, .display = display, .registry = registry };
+        paint.init();
 
         registry.setListener(*State, registry_listener, s);
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
@@ -49,6 +53,7 @@ pub const Backend = struct {
             s.allocator.destroy(o);
         }
         s.outputs.deinit(s.allocator);
+        previews.destroy_all(s);
         var it = s.windows.valueIterator();
         while (it.next()) |w| {
             w.*.obj.destroy();
@@ -58,6 +63,8 @@ pub const Backend = struct {
         s.fresh.deinit(s.allocator);
         s.scene.deinit(s.allocator);
         s.outlines.deinit(s.allocator);
+        s.fonts.deinit(s.allocator);
+        paint.deinit();
         sharing.deinit(s);
         keys.ungrab_all(s);
         s.bindings.deinit(s.allocator);
@@ -65,6 +72,9 @@ pub const Backend = struct {
         s.buttons.deinit(s.allocator);
         s.events.deinit(s.allocator);
         if (s.manager) |m| m.destroy();
+        if (s.wm_base) |x| x.destroy();
+        if (s.shm) |x| x.destroy();
+        if (s.compositor) |x| x.destroy();
         s.display.disconnect();
         self.allocator.destroy(s);
     }
@@ -231,24 +241,18 @@ pub const Backend = struct {
     }
 
     // ---- WM-owned windows ----
-    /// A handle core can keep; nothing is drawn yet.
+    /// A toplevel of duckwm's own, placed as a window.
     pub fn create_preview_window(self: *Backend, opts: types.FrameOptions) !types.WindowHandle {
-        _ = opts;
-        defer self.state.next_preview += 1;
-        return self.state.next_preview;
+        _ = opts; // its border is wayluck's, from the scene
+        return previews.create(self.state);
     }
 
     pub fn destroy_preview_window(self: *Backend, h: types.WindowHandle) void {
-        _ = self;
-        _ = h;
+        previews.destroy(self.state, h);
     }
 
     pub fn draw_preview(self: *Backend, h: types.WindowHandle, size: types.Size, style: types.PreviewStyle, items: []const types.PreviewItem) void {
-        _ = self;
-        _ = h;
-        _ = size;
-        _ = style;
-        _ = items;
+        previews.set_content(self.state, h, size, style, items);
     }
 
     pub fn show_error(self: *Backend, msg: []const u8) !void {
@@ -350,12 +354,26 @@ pub const Backend = struct {
     }
 };
 
+/// wayluck checks duckwm is alive, as it does any client with toplevels.
+fn wm_base_listener(wm_base: *xdg.WmBase, event: xdg.WmBase.Event, _: ?*anyopaque) void {
+    switch (event) {
+        .ping => |e| wm_base.pong(e.serial),
+    }
+}
+
 /// Bind the manager when the registry announces it.
 fn registry_listener(registry: *wl.Registry, event: wl.Registry.Event, s: *State) void {
     switch (event) {
         .global => |g| {
             if (std.mem.orderZ(u8, g.interface, wayluck.WmManagerV1.interface.name) == .eq) {
                 s.manager = registry.bind(g.name, wayluck.WmManagerV1, @min(g.version, manager_version)) catch null;
+            } else if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
+                s.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 4)) catch null;
+            } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
+                s.shm = registry.bind(g.name, wl.Shm, 1) catch null;
+            } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
+                s.wm_base = registry.bind(g.name, xdg.WmBase, 1) catch null;
+                if (s.wm_base) |x| x.setListener(?*anyopaque, wm_base_listener, null);
             }
         },
         .global_remove => {},

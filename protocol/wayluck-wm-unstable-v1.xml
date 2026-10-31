@@ -180,6 +180,26 @@
       </description>
     </request>
 
+    <enum name="error">
+      <entry name="not_own_toplevel" value="0"
+        summary="own_window's surface isn't a toplevel of the window manager's"/>
+    </enum>
+
+    <request name="own_window">
+      <description summary="one of the window manager's own surfaces, as a window">
+        A surface of the window manager's own, with the xdg_toplevel role
+        (made before this; committed or not), to draw something of its own
+        among the windows: a preview, say. It's given a window object, as
+        the window event gives others' windows, and isn't announced with
+        one. It's placed, hidden, given a border and stacked like any other
+        (and a transaction that resizes it waits for it to redraw), but it's
+        never given the keyboard (focus on it is focus on none), and clients
+        that list windows (foreign toplevel lists, the picker) don't see it.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_window_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
     <event name="unavailable">
       <description summary="another window manager is bound">
         This manager does nothing; the client should destroy it.

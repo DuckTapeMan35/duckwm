@@ -5,6 +5,24 @@ const Platform = enum { x11, river, wayluck };
 
 const AllocatorKind = enum { debug, smp, c };
 
+/// Drawing duckwm's own surfaces, shared by the Wayland backends
+/// (src/wayland/paint.zig): built with the backend's own protocol code.
+fn paint_module(
+    b: *std.Build,
+    types_mod: *std.Build.Module,
+    wayland_mod: *std.Build.Module,
+    rc_mod: *std.Build.Module,
+) *std.Build.Module {
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/wayland/paint.zig"),
+        .link_libc = true,
+    });
+    mod.addImport("types", types_mod);
+    mod.addImport("wayland", wayland_mod);
+    mod.addImport("rc", rc_mod);
+    return mod;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -92,7 +110,7 @@ pub fn build(b: *std.Build) void {
             scanner.generate("wl_output", 4);
 
             const rc_tc = b.addTranslateC(.{
-                .root_source_file = b.path("src/river/c.h"),
+                .root_source_file = b.path("src/wayland/c.h"),
                 .target = target,
                 .optimize = optimize,
             });
@@ -104,7 +122,7 @@ pub fn build(b: *std.Build) void {
             const xkbcommon = b.dependency("xkbcommon", .{}).module("xkbcommon");
 
             const river_mod = b.createModule(.{
-                .root_source_file = b.path("src/river.zig"),
+                .root_source_file = b.path("src/wayland/river.zig"),
                 .target = target,
                 .link_libc = true,
             });
@@ -113,7 +131,9 @@ pub fn build(b: *std.Build) void {
             river_mod.addImport("xkbcommon", xkbcommon);
             river_mod.linkSystemLibrary("xkbcommon", .{});
             river_mod.linkSystemLibrary("wayland-client", .{});
-            river_mod.addImport("rc", rc_tc.createModule());
+            const rc_mod = rc_tc.createModule();
+            river_mod.addImport("rc", rc_mod);
+            river_mod.addImport("paint", paint_module(b, types_mod, wayland_mod, rc_mod));
             river_mod.linkSystemLibrary("fcft", .{});
             river_mod.linkSystemLibrary("pixman-1", .{});
             break :blk river_mod;
@@ -121,18 +141,36 @@ pub fn build(b: *std.Build) void {
         .wayluck => blk: {
             const scanner = Scanner.create(b, .{});
             scanner.addCustomProtocol(b.path("protocol/wayluck-wm-unstable-v1.xml"));
+            scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
             scanner.generate("wayluck_wm_manager_v1", 1);
+            scanner.generate("wl_compositor", 4);
+            scanner.generate("wl_shm", 1);
+            scanner.generate("xdg_wm_base", 1);
+
+            const wc_tc = b.addTranslateC(.{
+                .root_source_file = b.path("src/wayland/c.h"),
+                .target = target,
+                .optimize = optimize,
+            });
+            wc_tc.linkSystemLibrary("fcft", .{ .use_pkg_config = .force });
+            wc_tc.linkSystemLibrary("pixman-1", .{ .use_pkg_config = .force });
 
             const wayluck_mod = b.createModule(.{
-                .root_source_file = b.path("src/wayluck.zig"),
+                .root_source_file = b.path("src/wayland/wayluck.zig"),
                 .target = target,
                 .link_libc = true,
             });
             wayluck_mod.addImport("types", types_mod);
-            wayluck_mod.addImport("wayland", b.createModule(.{ .root_source_file = scanner.result }));
+            const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
+            wayluck_mod.addImport("wayland", wayland_mod);
             wayluck_mod.linkSystemLibrary("wayland-client", .{});
             wayluck_mod.addImport("xkbcommon", b.dependency("xkbcommon", .{}).module("xkbcommon"));
             wayluck_mod.linkSystemLibrary("xkbcommon", .{});
+            const wc_mod = wc_tc.createModule();
+            wayluck_mod.addImport("wc", wc_mod);
+            wayluck_mod.addImport("paint", paint_module(b, types_mod, wayland_mod, wc_mod));
+            wayluck_mod.linkSystemLibrary("fcft", .{});
+            wayluck_mod.linkSystemLibrary("pixman-1", .{});
             break :blk wayluck_mod;
         },
     };

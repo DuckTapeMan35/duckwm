@@ -1,8 +1,6 @@
 const std = @import("std");
 const types = @import("types");
-const wayland = @import("wayland");
-const wl = wayland.client.wl;
-const river = wayland.client.river;
+const wl = @import("wayland").client.wl;
 const c = @import("rc");
 
 pub const Font = c.struct_fcft_font;
@@ -47,8 +45,7 @@ pub const Fonts = struct {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Drawing
+// ---- Drawing ----
 fn pixman_color(rgb: u32) c.pixman_color_t {
     return .{
         .red = @intCast(((rgb >> 16) & 0xff) * 257),
@@ -211,92 +208,49 @@ pub fn paint_prompt(cv: Canvas, p: *const PromptContent) void {
     }
 }
 
-// ---- Shell surfaces ----
-pub const ShellSurface = struct {
-    surface: *wl.Surface,
-    shell: *river.ShellSurfaceV1,
-    node: *river.NodeV1,
-    mapped: bool = false,
-    pos: ?types.Point = null,
+// ---- Buffers ----
+/// A fresh w×h buffer painted with paint(canvas, ctx), for a surface to
+/// attach; it's destroyed when the compositor releases it.
+pub fn buffer(
+    shm: *wl.Shm,
+    w: u32,
+    h: u32,
+    ctx: anytype,
+    comptime paint: fn (Canvas, @TypeOf(ctx)) void,
+) !*wl.Buffer {
+    const stride = w * 4;
+    const len: usize = @as(usize, stride) * h;
 
-    pub fn create(wm: *river.WindowManagerV1, compositor: *wl.Compositor) !ShellSurface {
-        const surface = try compositor.createSurface();
-        errdefer surface.destroy();
-        const shell = try wm.getShellSurface(surface);
-        errdefer shell.destroy();
-        const node = try shell.getNode();
-        return .{ .surface = surface, .shell = shell, .node = node };
-    }
+    const fd = c.memfd_create("duckwm-surface", c.MFD_CLOEXEC);
+    if (fd < 0) return error.ShmFailed;
+    defer _ = c.close(fd);
+    if (c.ftruncate(fd, @intCast(len)) != 0) return error.ShmFailed;
 
-    pub fn destroy(self: *ShellSurface) void {
-        self.node.destroy();
-        self.shell.destroy();
-        self.surface.destroy();
-    }
+    const mem = c.mmap(null, len, c.PROT_READ | c.PROT_WRITE, c.MAP_SHARED, fd, 0);
+    if (mem == null or @intFromPtr(mem) == std.math.maxInt(usize)) return error.ShmFailed;
+    defer _ = c.munmap(mem, len);
 
-    /// Put its node at p, telling river only when that's a change.
-    pub fn place(self: *ShellSurface, p: types.Point) void {
-        if (self.pos) |cur| if (cur.x == p.x and cur.y == p.y) return;
-        self.node.setPosition(p.x, p.y);
-        self.pos = p;
-    }
+    const image = c.pixman_image_create_bits_no_clear(
+        c.PIXMAN_a8r8g8b8,
+        @intCast(w),
+        @intCast(h),
+        @ptrCast(@alignCast(mem)),
+        @intCast(stride),
+    ) orelse return error.PixmanFailed;
+    defer _ = c.pixman_image_unref(image);
+    paint(.{ .image = image, .width = @intCast(w), .height = @intCast(h) }, ctx);
 
-    pub fn unmap(self: *ShellSurface) void {
-        if (!self.mapped) return;
-        self.surface.attach(null, 0, 0);
-        self.surface.commit();
-        self.mapped = false;
-    }
+    // The pool and fd can go right away: the buffer keeps the memory alive
+    // on the compositor's side.
+    const pool = try shm.createPool(fd, @intCast(len));
+    defer pool.destroy();
+    const buf = try pool.createBuffer(0, @intCast(w), @intCast(h), @intCast(stride), .argb8888);
+    buf.setListener(?*anyopaque, buffer_listener, null);
+    return buf;
+}
 
-    /// Paint a fresh w×h buffer with paint(canvas, ctx) and commit it.
-    /// Each draw gets its own buffer, destroyed when river releases it.
-    pub fn draw(
-        self: *ShellSurface,
-        shm: *wl.Shm,
-        w: u32,
-        h: u32,
-        ctx: anytype,
-        comptime paint: fn (Canvas, @TypeOf(ctx)) void,
-    ) !void {
-        if (w == 0 or h == 0) return;
-        const stride = w * 4;
-        const len: usize = @as(usize, stride) * h;
-
-        const fd = c.memfd_create("duckwm-surface", c.MFD_CLOEXEC);
-        if (fd < 0) return error.ShmFailed;
-        defer _ = c.close(fd);
-        if (c.ftruncate(fd, @intCast(len)) != 0) return error.ShmFailed;
-
-        const mem = c.mmap(null, len, c.PROT_READ | c.PROT_WRITE, c.MAP_SHARED, fd, 0);
-        if (mem == null or @intFromPtr(mem) == std.math.maxInt(usize)) return error.ShmFailed;
-        defer _ = c.munmap(mem, len);
-
-        const image = c.pixman_image_create_bits_no_clear(
-            c.PIXMAN_a8r8g8b8,
-            @intCast(w),
-            @intCast(h),
-            @ptrCast(@alignCast(mem)),
-            @intCast(stride),
-        ) orelse return error.PixmanFailed;
-        defer _ = c.pixman_image_unref(image);
-        paint(.{ .image = image, .width = @intCast(w), .height = @intCast(h) }, ctx);
-
-        // The pool and fd can go right away: the buffer keeps the memory alive
-        // on river's side.
-        const pool = try shm.createPool(fd, @intCast(len));
-        defer pool.destroy();
-        const buffer = try pool.createBuffer(0, @intCast(w), @intCast(h), @intCast(stride), .argb8888);
-        buffer.setListener(?*anyopaque, buffer_listener, null);
-
-        self.surface.attach(buffer, 0, 0);
-        self.surface.damageBuffer(0, 0, @intCast(w), @intCast(h));
-        self.surface.commit();
-        self.mapped = true;
-    }
-};
-
-fn buffer_listener(buffer: *wl.Buffer, event: wl.Buffer.Event, _: ?*anyopaque) void {
+fn buffer_listener(buf: *wl.Buffer, event: wl.Buffer.Event, _: ?*anyopaque) void {
     switch (event) {
-        .release => buffer.destroy(),
+        .release => buf.destroy(),
     }
 }

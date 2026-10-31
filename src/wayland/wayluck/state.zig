@@ -2,6 +2,8 @@ const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
 const windows = @import("windows.zig");
+const Preview = @import("previews.zig").Preview;
+const paint = @import("paint");
 
 const wl = wayland.client.wl;
 const wayluck = wayland.client.wayluck;
@@ -18,6 +20,12 @@ pub const State = struct {
     display: *wl.Display,
     registry: *wl.Registry,
     manager: ?*wayluck.WmManagerV1 = null,
+    // For previews, duckwm's own toplevels (previews.zig).
+    compositor: ?*wl.Compositor = null,
+    shm: ?*wl.Shm = null,
+    wm_base: ?*wayland.client.xdg.WmBase = null,
+    previews: std.AutoHashMapUnmanaged(types.WindowHandle, *Preview) = .empty,
+    fonts: paint.Fonts = .{},
     /// Another window manager is bound: this one does nothing.
     unavailable: bool = false,
     /// wayluck has sent everything that existed when we bound.
