@@ -765,6 +765,10 @@ function wm.float_clear_constraints(id) end
 ---@param width integer
 function wm.set_border_width(width) end
 
+--- Round windows' corners, and their borders with them, by radius pixels (0: square). Fullscreen windows stay square. Only on wayluck: other backends ignore it.
+---@param radius integer
+function wm.set_corner_radius(radius) end
+
 --- Set the default border color for focused windows (0xRRGGBB).
 ---@param color integer
 function wm.set_default_focused_border_color(color) end

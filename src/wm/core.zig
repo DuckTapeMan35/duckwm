@@ -118,6 +118,7 @@ pub const WM = struct {
 
     // ---- appearance ----
     border_width: i32 = 2,
+    corner_radius: u32 = 0,
     default_border_color_focused: u32 = 0x5294e2,
     default_border_color_unfocused: u32 = 0x333333,
     default_border_color_urgent: u32 = 0xe53935,

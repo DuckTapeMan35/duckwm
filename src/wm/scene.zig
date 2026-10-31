@@ -268,6 +268,7 @@ fn compute_nodes(
                     .handle = win,
                     .frame = r,
                     .border_width = if (is_fullscreen) 0 else bw,
+                    .corner_radius = if (is_fullscreen) 0 else wm.corner_radius,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     // Stacking: inside a floating group it floats with the group.
                     .tiled = !node.floating and !in_float,
@@ -284,6 +285,7 @@ fn compute_nodes(
                     .handle = node.preview_window.?,
                     .frame = r,
                     .border_width = bw,
+                    .corner_radius = wm.corner_radius,
                     .borders = if (wants_borders(wm, node)) border_colors(wm, node) else null,
                     .tiled = !node.floating and !in_float,
                     .interactive = in_drag or (node.floating and wm.float_moving and wm.float_move_window == node.preview_window.?),

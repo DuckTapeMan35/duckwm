@@ -499,6 +499,9 @@
         width pixels wide, outside the window's rectangle (place gives the
         rectangle inside it); 0 draws none. Colours are 0xAARRGGBB, one
         for each side. A window has no border until it's given one.
+
+        The rectangle's corners are rounded radius pixels (what the client
+        draws there is cut off), and the border's follow them; 0: square.
       </description>
       <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
       <arg name="width" type="uint"/>
@@ -506,6 +509,7 @@
       <arg name="right" type="uint"/>
       <arg name="bottom" type="uint"/>
       <arg name="left" type="uint"/>
+      <arg name="radius" type="uint"/>
     </request>
 
     <enum name="edges" bitfield="true">

@@ -229,6 +229,8 @@ pub const WindowState = struct {
     interactive: bool = false,
     /// Tiled: its output's rectangle; whatever lies outside isn't drawn.
     clip: ?Rect = null,
+    /// How round its corners are, in pixels; 0 when fullscreen.
+    corner_radius: u32 = 0,
 };
 
 pub const InitialHints = struct {

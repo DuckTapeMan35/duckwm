@@ -506,6 +506,10 @@ message Message {
   uint32 timeout_ms = 2;
 }
 
+message SetCornerRadius {
+  uint32 radius = 1;
+}
+
 message SwitchToWorkspace {
   uint32 index = 1;
 }
@@ -953,6 +957,7 @@ message Command {
     One clear_node_indicator = 623;
     SetAnimation set_animation = 624;
     Message message = 625;
+    SetCornerRadius set_corner_radius = 626;
     SwitchToWorkspace switch_to_workspace = 700;
     SendToWorkspace send_to_workspace = 701;
     One enter_workspace_by_id = 702;

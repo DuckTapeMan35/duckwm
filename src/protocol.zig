@@ -280,6 +280,7 @@ pub const CommandId = enum(u32) {
     clear_node_indicator = 623,
     set_animation = 624,
     message = 625,
+    set_corner_radius = 626,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -549,6 +550,7 @@ pub const Command = union(CommandId) {
     set_animation: struct { duration_ms: u32, curve: ?Curve }, // 624
     /// Text in the input bar for timeout_ms (0: 3s).
     message: struct { text: []const u8, timeout_ms: u32 }, // 625
+    set_corner_radius: struct { radius: u32 }, // 626
 
     // workspaces
     switch_to_workspace: struct { index: u32 }, // 700

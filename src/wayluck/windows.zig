@@ -293,7 +293,19 @@ pub fn place_window(
     tx.tiled(w.obj, if (st.tiled and !fullscreen) all_edges else 0);
     tx.fullscreen(w.obj, @intFromBool(fullscreen));
     // null: no border (fullscreen, or borders turned off).
-    if (st.borders) |b| set_border(tx, w, bw, b) else set_border(tx, w, 0, null_colors);
+    if (st.borders) |b| set_border(
+        tx,
+        w,
+        bw,
+        b,
+        st.corner_radius,
+    ) else set_border(
+        tx,
+        w,
+        0,
+        null_colors,
+        st.corner_radius,
+    );
 }
 
 fn serial(s: *State, h: types.WindowHandle) u64 {
@@ -301,9 +313,9 @@ fn serial(s: *State, h: types.WindowHandle) u64 {
 }
 
 /// duckwm's colours are 0xRRGGBB; wayluck's have alpha too, opaque here.
-fn set_border(tx: *wayluck.WmTransactionV1, w: *Window, width: u32, b: types.BorderColors) void {
+fn set_border(tx: *wayluck.WmTransactionV1, w: *Window, width: u32, b: types.BorderColors, radius: u32) void {
     const opaque_ = 0xff000000;
-    tx.border(w.obj, width, b.top | opaque_, b.right | opaque_, b.bottom | opaque_, b.left | opaque_);
+    tx.border(w.obj, width, b.top | opaque_, b.right | opaque_, b.bottom | opaque_, b.left | opaque_, radius);
 }
 
 fn find(states: []const types.WindowState, h: types.WindowHandle) ?types.WindowState {

@@ -1300,6 +1300,13 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Appearance",
+        .name = "set_corner_radius",
+        .desc = "Round windows' corners, and their borders with them, by radius pixels (0: square). Fullscreen windows stay square. Only on wayluck: other backends ignore it.",
+        .params = &.{.{ .name = "radius", .typ = "integer" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
         .name = "set_default_focused_border_color",
         .desc = "Set the default border color for focused windows (0xRRGGBB).",
         .params = &.{.{ .name = "color", .typ = "integer" }},
