@@ -512,6 +512,38 @@
       <arg name="radius" type="uint"/>
     </request>
 
+    <request name="outlines">
+      <description summary="a scene's outlines, from now on">
+        A scene's outlines (a group's, say) are those the outline requests
+        after this one, in this transaction, add to it: none, if none do. A
+        scene has none until it's given some.
+      </description>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
+    </request>
+
+    <request name="outline">
+      <description summary="draw an outline on a scene">
+        A line line_width pixels wide along the inside of a rectangle (in the
+        scene), in colour 0xAARRGGBB, below the scene's windows. Its corners
+        are rounded as a border's: radius pixels on its inside, radius plus
+        line_width outside; 0, square. Only what's inside the clip rectangle
+        is drawn. Added to those an outlines request before it, in this
+        transaction, started with.
+      </description>
+      <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="clip_x" type="int"/>
+      <arg name="clip_y" type="int"/>
+      <arg name="clip_width" type="int"/>
+      <arg name="clip_height" type="int"/>
+      <arg name="line_width" type="uint"/>
+      <arg name="color" type="uint"/>
+      <arg name="radius" type="uint"/>
+    </request>
+
     <enum name="edges" bitfield="true">
       <entry name="none" value="0"/>
       <entry name="top" value="1"/>

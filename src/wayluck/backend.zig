@@ -57,6 +57,7 @@ pub const Backend = struct {
         s.windows.deinit(s.allocator);
         s.fresh.deinit(s.allocator);
         s.scene.deinit(s.allocator);
+        s.outlines.deinit(s.allocator);
         sharing.deinit(s);
         keys.ungrab_all(s);
         s.bindings.deinit(s.allocator);
@@ -208,8 +209,7 @@ pub const Backend = struct {
     }
 
     pub fn apply_outlines(self: *Backend, list: []const types.Outline) void {
-        _ = self;
-        _ = list;
+        windows.outlines(self.state, list);
     }
 
     pub fn hide_window(self: *Backend, h: types.WindowHandle) void {

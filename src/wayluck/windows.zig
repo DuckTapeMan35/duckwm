@@ -170,6 +170,13 @@ pub fn apply(s: *State, states: []const types.WindowState, fullscreen: ?types.Wi
     s.dirty = true;
 }
 
+/// The group outlines to draw from now on.
+pub fn outlines(s: *State, list: []const types.Outline) void {
+    s.outlines.clearRetainingCapacity();
+    s.outlines.appendSlice(s.allocator, list) catch {};
+    s.dirty = true;
+}
+
 /// Hide one window.
 pub fn hide(s: *State, h: types.WindowHandle) void {
     for (s.scene.items, 0..) |st, i| if (st.handle == h) {
@@ -233,6 +240,7 @@ fn place_all(s: *State, tx: *wayluck.WmTransactionV1) void {
     for (s.outputs.items) |o| if (o.scene) |scene| {
         tx.sceneSize(scene, @intCast(o.rect.width), @intCast(o.rect.height));
         tx.show(o.obj, scene);
+        place_outlines(s, tx, o, scene);
     };
     var order: std.ArrayListUnmanaged(types.WindowState) = .empty;
     defer order.deinit(s.allocator);
@@ -306,6 +314,30 @@ pub fn place_window(
         null_colors,
         st.corner_radius,
     );
+}
+
+/// The outlines on o, in its scene, relative to its corner (all of them:
+/// the transaction says every outline the scene has).
+fn place_outlines(s: *State, tx: *wayluck.WmTransactionV1, o: *const outputs.Output, scene: *wayluck.WmSceneV1) void {
+    tx.outlines(scene);
+    for (s.outlines.items) |ol| {
+        if (outputs.of(s, ol.rect) != o) continue;
+        const opaque_ = 0xff000000;
+        tx.outline(
+            scene,
+            ol.rect.x - o.rect.x,
+            ol.rect.y - o.rect.y,
+            @intCast(ol.rect.width),
+            @intCast(ol.rect.height),
+            ol.clip.x - o.rect.x,
+            ol.clip.y - o.rect.y,
+            @intCast(ol.clip.width),
+            @intCast(ol.clip.height),
+            ol.width,
+            ol.color | opaque_,
+            ol.corner_radius,
+        );
+    }
 }
 
 fn serial(s: *State, h: types.WindowHandle) u64 {

@@ -356,6 +356,8 @@ pub const Outline = struct {
     clip: Rect,
     width: u32,
     color: u32,
+    /// Its corners rounded as a window's border's (radius on its inside).
+    corner_radius: u32 = 0,
 };
 
 pub const WindowKind = enum { normal, floating, dock };

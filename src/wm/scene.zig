@@ -304,6 +304,7 @@ fn compute_nodes(
                     .clip = inner_clip,
                     .width = ol.width,
                     .color = ol.color,
+                    .corner_radius = if (wm.corner_radius > 0) wm.corner_radius + bw else 0,
                 });
                 // Being dragged: everything in it moves with the pointer, unanimated.
                 const dragged = in_drag or (node.floating and wm.float_moving and

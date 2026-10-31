@@ -42,6 +42,8 @@ pub const State = struct {
     click_to_focus: bool = false,
     /// The windows to show, as core last gave them.
     scene: std.ArrayListUnmanaged(types.WindowState) = .empty,
+    /// The group outlines to draw, as core last gave them.
+    outlines: std.ArrayListUnmanaged(types.Outline) = .empty,
     fullscreen: ?types.WindowHandle = null,
     /// The scene, a raise or a border changed since the last commit.
     dirty: bool = false,
