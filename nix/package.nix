@@ -69,6 +69,8 @@ stdenv.mkDerivation {
         wayland
         wayland-protocols
         libxkbcommon
+        fcft
+        pixman
       ]
     else
       [
