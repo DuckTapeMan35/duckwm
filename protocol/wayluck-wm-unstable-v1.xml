@@ -214,7 +214,8 @@
     <event name="window">
       <description summary="a new window">
         A toplevel that wants to be shown, announced at its client's first
-        commit: its title, app_id, parent, size_hints and a
+        commit (an X window: once Xwayland has given it a surface):
+        its title, app_id, parent, size_hints and a
         fullscreen_request, as far as its client set them up, follow at
         once. Until a transaction places it, it isn't shown.
 
