@@ -52,7 +52,6 @@ pub fn enter_workspace(wm: *WM, node: *Node) !void {
     try stack_push(wm, old);
 
     // switch
-    try stack_push(wm, old);
     wm.journal.set(wm, "current_graph", new);
     wm.journal.set(wm, "visible_graph", new);
 
