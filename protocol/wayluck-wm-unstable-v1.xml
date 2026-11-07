@@ -239,9 +239,8 @@
     <event name="picker_opened">
       <description summary="the user is about to choose what to share">
         Offer the workspaces the picker should list (offer_workspace), then
-        say so (offers_done). The picker itself is a window like any other
-        (app id wayluck.picker, of one size), announced when it maps. Not
-        sent again until picker_closed.
+        say so (offers_done). Wayluck draws the picker itself, over a
+        monitor: it's no window. Not sent again until picker_closed.
       </description>
     </event>
 

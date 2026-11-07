@@ -46,11 +46,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1794091770,
-        "narHash": "sha256-AzU6iMJjnLdbpN94OGg4Ay/EmYnfPtW92s57dboQYRg=",
+        "lastModified": 1794094172,
+        "narHash": "sha256-HljopR0bb5L8AGBEkj2kKamOkp7VJOYs6DKBImJUp0U=",
         "owner": "DuckTapeMan35",
         "repo": "wayluck",
-        "rev": "149058394496d83a470b492a8b8ad793678e4858",
+        "rev": "1966acafb28ac465295925435b32ec3878b448b4",
         "type": "github"
       },
       "original": {
