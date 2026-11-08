@@ -510,6 +510,15 @@ message SetCornerRadius {
   uint32 radius = 1;
 }
 
+message SetShadow {
+  uint32 blur = 1;
+  sint32 spread = 2;
+  sint32 x = 3;
+  sint32 y = 4;
+  uint32 color = 5;
+  uint32 unfocused_color = 6;
+}
+
 message SwitchToWorkspace {
   uint32 index = 1;
 }
@@ -958,6 +967,7 @@ message Command {
     SetAnimation set_animation = 624;
     Message message = 625;
     SetCornerRadius set_corner_radius = 626;
+    SetShadow set_shadow = 627;
     SwitchToWorkspace switch_to_workspace = 700;
     SendToWorkspace send_to_workspace = 701;
     One enter_workspace_by_id = 702;

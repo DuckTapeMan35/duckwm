@@ -231,6 +231,18 @@ pub const WindowState = struct {
     clip: ?Rect = null,
     /// How round its corners are, in pixels; 0 when fullscreen.
     corner_radius: u32 = 0,
+    /// The shadow below it: none (no alpha) when fullscreen.
+    shadow: Shadow = .{},
+};
+
+/// A blur of a window's shape, below it: blur pixels each way, grown by
+/// spread on each side, moved by x, y. color is 0xAARRGGBB: no alpha, none.
+pub const Shadow = struct {
+    blur: u32 = 0,
+    spread: i32 = 0,
+    x: i32 = 0,
+    y: i32 = 0,
+    color: u32 = 0,
 };
 
 pub const InitialHints = struct {

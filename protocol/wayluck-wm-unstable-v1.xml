@@ -575,6 +575,23 @@
       <arg name="radius" type="uint"/>
     </request>
 
+    <request name="shadow">
+      <description summary="draw a shadow below a window">
+        The shape of the window and its border (with their rounded
+        corners), grown by spread pixels on each side (negative: shrunk),
+        moved by x, y, and blurred about blur pixels each way, in colour
+        0xAARRGGBB. It's not drawn under the window itself, so a translucent
+        window doesn't show it through. A colour with no alpha draws none; a
+        window has none until it's given one.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="blur" type="uint"/>
+      <arg name="spread" type="int"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="color" type="uint"/>
+    </request>
+
     <request name="outlines">
       <description summary="a scene's outlines, from now on">
         A scene's outlines (a group's, say) are those the outline requests

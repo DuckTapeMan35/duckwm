@@ -769,6 +769,15 @@ function wm.set_border_width(width) end
 ---@param radius integer
 function wm.set_corner_radius(radius) end
 
+--- Draw a shadow below windows: their shape (border included) grown by spread pixels each side, moved by x, y, and blurred blur pixels each way. Colors are 0xAARRGGBB, for the focused window and the others; no alpha draws none (the default). Fullscreen windows have none. Only on wayluck: other backends ignore it.
+---@param blur integer
+---@param spread integer
+---@param x integer
+---@param y integer
+---@param color integer
+---@param unfocused_color integer
+function wm.set_shadow(blur, spread, x, y, color, unfocused_color) end
+
 --- Set the default border color for focused windows (0xRRGGBB).
 ---@param color integer
 function wm.set_default_focused_border_color(color) end
@@ -849,7 +858,7 @@ function wm.clear_node_focused_border_color(id) end
 ---@param id integer
 function wm.clear_node_unfocused_border_color(id) end
 
---- Set animation duration and curve (currently river only)
+--- Set animation duration and curve (river and wayluck)
 ---@param duration_ms integer
 ---@param curve string|number[]|fun(t: number): number
 function wm.set_animation(duration_ms, curve) end

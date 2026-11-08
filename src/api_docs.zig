@@ -1307,6 +1307,20 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Appearance",
+        .name = "set_shadow",
+        .desc = "Draw a shadow below windows: their shape (border included) grown by spread pixels each side, moved by x, y, and blurred blur pixels each way. Colors are 0xAARRGGBB, for the focused window and the others; no alpha draws none (the default). Fullscreen windows have none. Only on wayluck: other backends ignore it.",
+        .params = &.{
+            .{ .name = "blur", .typ = "integer" },
+            .{ .name = "spread", .typ = "integer" },
+            .{ .name = "x", .typ = "integer" },
+            .{ .name = "y", .typ = "integer" },
+            .{ .name = "color", .typ = "integer" },
+            .{ .name = "unfocused_color", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
         .name = "set_default_focused_border_color",
         .desc = "Set the default border color for focused windows (0xRRGGBB).",
         .params = &.{.{ .name = "color", .typ = "integer" }},

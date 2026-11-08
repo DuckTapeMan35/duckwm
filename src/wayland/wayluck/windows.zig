@@ -37,6 +37,7 @@ pub const Sent = struct {
     tiled: ?u32 = null,
     fullscreen: ?bool = null,
     border: ?Border = null,
+    shadow: ?types.Shadow = null,
 };
 
 const Border = struct { width: u32, colors: types.BorderColors, radius: u32 };
@@ -398,6 +399,9 @@ fn place_window(
         .{ .width = 0, .colors = null_colors, .radius = st.corner_radius };
     if (w.sent.border == null or !std.meta.eql(w.sent.border.?, b)) set_border(tx, w, b);
     w.sent.border = b;
+    const sh = st.shadow;
+    if (w.sent.shadow == null or !std.meta.eql(w.sent.shadow.?, sh)) tx.shadow(w.obj, sh.blur, sh.spread, sh.x, sh.y, sh.color);
+    w.sent.shadow = sh;
 }
 
 /// scene is going: wayluck takes its windows out of it.

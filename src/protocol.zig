@@ -281,6 +281,7 @@ pub const CommandId = enum(u32) {
     set_animation = 624,
     message = 625,
     set_corner_radius = 626,
+    set_shadow = 627,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -551,6 +552,7 @@ pub const Command = union(CommandId) {
     /// Text in the input bar for timeout_ms (0: 3s).
     message: struct { text: []const u8, timeout_ms: u32 }, // 625
     set_corner_radius: struct { radius: u32 }, // 626
+    set_shadow: struct { blur: u32, spread: i32, x: i32, y: i32, color: u32, unfocused_color: u32 }, // 627
 
     // workspaces
     switch_to_workspace: struct { index: u32 }, // 700

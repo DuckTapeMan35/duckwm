@@ -59,6 +59,13 @@ pub fn set_corner_radius(wm: *WM, args: Args(.set_corner_radius), _: Allocator) 
     return .nil;
 }
 
+pub fn set_shadow(wm: *WM, args: Args(.set_shadow), _: Allocator) !Value {
+    wm.shadow = .{ .blur = args.blur, .spread = args.spread, .x = args.x, .y = args.y, .color = args.color };
+    wm.shadow_unfocused_color = args.unfocused_color;
+    try repaint(wm);
+    return .nil;
+}
+
 // ---- per-node colors ----
 pub fn set_node_focused_border_color(wm: *WM, args: Args(.set_node_focused_border_color), _: Allocator) !Value {
     wm.journal.set(try util.node(wm, args.id), "border_color_focused", args.color);
