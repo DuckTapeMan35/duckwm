@@ -80,7 +80,10 @@ fn take(s: *State, key: usize) ?Offer {
 
 /// Free what an offer holds; its scene too, unless kept.
 fn free(s: *State, x: Offer, keep_scene: bool) void {
-    if (!keep_scene) if (x.scene) |scene| scene.destroy();
+    if (!keep_scene) if (x.scene) |scene| {
+        windows.forget_scene(s, scene);
+        scene.destroy();
+    };
     s.allocator.free(x.name);
     s.allocator.free(x.windows);
 }
@@ -128,10 +131,7 @@ pub fn place(s: *State, tx: *wayluck.WmTransactionV1) void {
         const scene = x.scene orelse continue;
         const o = outputs.find(s, x.output) orelse continue;
         tx.sceneSize(scene, @intCast(o.rect.width), @intCast(o.rect.height));
-        for (x.windows) |st| {
-            const w = s.windows.get(st.handle) orelse continue;
-            if (w.announced) windows.place_window(tx, scene, o, w, st, false);
-        }
+        windows.place_scene(s, tx, scene, o, x.windows, null);
     }
     for (s.shares.items) |sh| {
         const x = for (s.offers.items) |x| {

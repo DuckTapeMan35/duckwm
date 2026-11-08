@@ -1,7 +1,10 @@
 const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
+const windows = @import("windows.zig");
+
 const wayluck = wayland.client.wayluck;
+
 const State = @import("state.zig").State;
 
 pub const Output = struct {
@@ -15,6 +18,18 @@ pub const Output = struct {
     usable: ?types.Rect = null,
     /// The scene it shows: its windows, placed relative to its corner.
     scene: ?*wayluck.WmSceneV1 = null,
+    /// What wayluck was last told of it: a transaction says only what changed.
+    sent: Sent = .{},
+};
+
+/// null: not told yet.
+pub const Sent = struct {
+    /// Its scene's size.
+    size: ?types.Size = null,
+    /// It shows its scene.
+    shown: bool = false,
+    /// A hash of its scene's outlines.
+    outlines: ?u64 = null,
 };
 
 /// wayluck announced an output; its name and geometry follow, then done.
@@ -52,7 +67,10 @@ fn listener(obj: *wayluck.WmOutputV1, event: wayluck.WmOutputV1.Event, o: *Outpu
                 _ = s.outputs.orderedRemove(i);
                 break;
             };
-            if (o.scene) |scene| scene.destroy();
+            if (o.scene) |scene| {
+                windows.forget_scene(s, scene);
+                scene.destroy();
+            }
             obj.destroy();
             s.allocator.destroy(o);
             s.push(.reserved_area_changed);

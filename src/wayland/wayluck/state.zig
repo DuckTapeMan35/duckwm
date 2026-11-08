@@ -58,6 +58,8 @@ pub const State = struct {
     /// Focus to give, if core changed it.
     focus: ?struct { to: ?types.WindowHandle } = null,
     raise_clock: u64 = 0,
+    /// Counts places sent: a scene stacks its windows by when.
+    place_clock: u64 = 0,
     /// Previews get handles far from the ones windows get.
     next_preview: types.WindowHandle = 1 << 32,
     // Screen sharing's picker.

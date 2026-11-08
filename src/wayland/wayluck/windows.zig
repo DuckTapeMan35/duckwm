@@ -26,7 +26,24 @@ pub const Window = struct {
     /// Its client's smallest and largest size (0: no limit).
     min: types.Size = .{ .width = 0, .height = 0 },
     max: types.Size = .{ .width = 0, .height = 0 },
+    /// What wayluck was last told about it: a transaction says only what changed.
+    sent: Sent = .{},
 };
+
+/// null: not told yet. A window hidden keeps all but where it was.
+pub const Sent = struct {
+    /// Its scene and place's rectangle there (null: in none).
+    at: ?At = null,
+    tiled: ?u32 = null,
+    fullscreen: ?bool = null,
+    border: ?Border = null,
+};
+
+const Border = struct { width: u32, colors: types.BorderColors, radius: u32 };
+
+/// order: when it was placed (State.place_clock); a scene stacks its
+/// windows by it, the last placed on top.
+const At = struct { scene: *wayluck.WmSceneV1, rect: types.Rect, order: u64 };
 
 /// A size for core until the client has one (it's used if the window floats).
 const default_size: types.Size = .{ .width = 640, .height = 480 };
@@ -222,7 +239,7 @@ pub fn commit(s: *State) void {
         s.offers_changed = false;
         tx.setListener(*State, offers_listener, s);
     } else {
-        tx.setListener(?*anyopaque, tx_listener, null);
+        tx.setListener(*State, tx_listener, s);
     }
     // While core has the pointer (moving, resizing), every window it
     // places follows it at once.
@@ -242,15 +259,22 @@ pub fn commit(s: *State) void {
 fn place_all(s: *State, tx: *wayluck.WmTransactionV1) void {
     // Each output shows its own scene, laid out for its size.
     for (s.outputs.items) |o| if (o.scene) |scene| {
-        tx.sceneSize(scene, @intCast(o.rect.width), @intCast(o.rect.height));
-        tx.show(o.obj, scene);
+        const size: types.Size = .{ .width = o.rect.width, .height = o.rect.height };
+        if (o.sent.size == null or !std.meta.eql(o.sent.size.?, size)) {
+            tx.sceneSize(scene, @intCast(size.width), @intCast(size.height));
+        }
+        o.sent.size = size;
+        if (!o.sent.shown) tx.show(o.obj, scene);
+        o.sent.shown = true;
         place_outlines(s, tx, o, scene);
     };
+
     var order: std.ArrayListUnmanaged(types.WindowState) = .empty;
     defer order.deinit(s.allocator);
     for (s.scene.items) |st| {
         if (st.tiled and st.handle != s.fullscreen) order.append(s.allocator, st) catch return;
     }
+
     const floating_from = order.items.len;
     for (s.scene.items) |st| {
         if (!st.tiled and st.handle != s.fullscreen) order.append(s.allocator, st) catch return;
@@ -262,64 +286,128 @@ fn place_all(s: *State, tx: *wayluck.WmTransactionV1) void {
     }.lt);
     if (s.fullscreen) |h| if (find(s.scene.items, h)) |st| order.append(s.allocator, st) catch return;
 
-    for (order.items) |st| {
-        const w = s.windows.get(st.handle) orelse continue; // a preview
-        if (!w.announced) continue;
-        // In the scene of the output it's on, relative to that output.
-        const o = outputs.of(s, st.frame) orelse continue;
-        const scene = o.scene orelse continue;
-        place_window(tx, scene, o, w, st, s.fullscreen == st.handle);
-    }
+    // Each window in the scene of the output it's on.
+    var on: std.ArrayListUnmanaged(types.WindowState) = .empty;
+    defer on.deinit(s.allocator);
+    for (s.outputs.items) |o| if (o.scene) |scene| {
+        on.clearRetainingCapacity();
+        for (order.items) |st| {
+            if (outputs.of(s, st.frame) == o) on.append(s.allocator, st) catch return;
+        }
+        place_scene(s, tx, scene, o, on.items, s.fullscreen);
+    };
+
     // The picker's hidden workspaces, in scenes of their own.
     sharing.place(s, tx);
     var it = s.windows.valueIterator();
     while (it.next()) |wp| {
+        if (wp.*.sent.at == null) continue; // in no scene already
         const h = wp.*.handle;
-        if (wp.*.announced and find(s.scene.items, h) == null and !sharing.holds(s, h)) tx.hide(wp.*.obj);
+        if (find(s.scene.items, h) == null and !sharing.holds(s, h)) {
+            tx.hide(wp.*.obj);
+            wp.*.sent.at = null;
+        }
     }
 }
 
-/// Place w in scene as st says, relative to o's corner.
-pub fn place_window(
+/// Show states in scene, bottom to top, relative to o's corner. Placing a
+/// window puts it on top, so the windows below the lowest one that moved
+/// (or isn't where it stacks) aren't placed again; it and all above it are.
+pub fn place_scene(
+    s: *State,
     tx: *wayluck.WmTransactionV1,
     scene: *wayluck.WmSceneV1,
     o: *const outputs.Output,
+    states: []const types.WindowState,
+    fullscreen: ?types.WindowHandle,
+) void {
+    // Those of them wayluck has there, as it stacks them.
+    var now: std.ArrayListUnmanaged(*Window) = .empty;
+    defer now.deinit(s.allocator);
+    var it = s.windows.valueIterator();
+    while (it.next()) |wp| {
+        const at = wp.*.sent.at orelse continue;
+        if (at.scene == scene and find(states, wp.*.handle) != null) now.append(s.allocator, wp.*) catch return;
+    }
+    std.mem.sort(*Window, now.items, {}, struct {
+        fn lt(_: void, a: *Window, b: *Window) bool {
+            return a.sent.at.?.order < b.sent.at.?.order;
+        }
+    }.lt);
+
+    var i: usize = 0;
+    var restack = false;
+    for (states) |st| {
+        const w = s.windows.get(st.handle) orelse continue; // a preview
+        if (!w.announced) continue;
+        const rect = rect_in(o, st);
+        if (!restack) {
+            restack = i >= now.items.len or now.items[i] != w or !std.meta.eql(w.sent.at.?.rect, rect);
+            i += 1;
+        }
+        place_window(s, tx, scene, w, rect, st, fullscreen == st.handle, restack);
+    }
+}
+
+/// Where st puts its window, relative to o's corner: core's rect is the
+/// whole footprint, borders included; wayluck places the content, and
+/// draws the border around it.
+fn rect_in(o: *const outputs.Output, st: types.WindowState) types.Rect {
+    const bw = st.border_width;
+    return .{
+        .x = st.frame.x - o.rect.x + @as(i32, @intCast(bw)),
+        .y = st.frame.y - o.rect.y + @as(i32, @intCast(bw)),
+        .width = @max(1, st.frame.width -| 2 * bw),
+        .height = @max(1, st.frame.height -| 2 * bw),
+    };
+}
+
+/// w as st says, at rect in scene; placed there (on top) if restack.
+fn place_window(
+    s: *State,
+    tx: *wayluck.WmTransactionV1,
+    scene: *wayluck.WmSceneV1,
     w: *Window,
+    rect: types.Rect,
     st: types.WindowState,
     fullscreen: bool,
+    restack: bool,
 ) void {
-    // core's rect is the whole footprint, borders included; wayluck
-    // places the content, and draws the border around it.
+    if (restack) {
+        tx.place(scene, w.obj, rect.x, rect.y, @intCast(rect.width), @intCast(rect.height));
+        // Being dragged: it follows the pointer, not animated.
+        if (st.interactive) tx.instant(w.obj);
+        s.place_clock += 1;
+        w.sent.at = .{ .scene = scene, .rect = rect, .order = s.place_clock };
+    }
     const bw = st.border_width;
-    tx.place(
-        scene,
-        w.obj,
-        st.frame.x - o.rect.x + @as(i32, @intCast(bw)),
-        st.frame.y - o.rect.y + @as(i32, @intCast(bw)),
-        @intCast(@max(1, st.frame.width -| 2 * bw)),
-        @intCast(@max(1, st.frame.height -| 2 * bw)),
-    );
-    // Being dragged: it follows the pointer, not animated.
-    if (st.interactive) tx.instant(w.obj);
+
     // Tiled windows are told so: clients square their corners, and size
     // themselves exactly (foot rounds a floating one to whole cells).
     // A fullscreen one is told that instead, and drops its own chrome.
-    tx.tiled(w.obj, if (st.tiled and !fullscreen) all_edges else 0);
-    tx.fullscreen(w.obj, @intFromBool(fullscreen));
+    const edges: u32 = if (st.tiled and !fullscreen) all_edges else 0;
+    if (w.sent.tiled != edges) tx.tiled(w.obj, edges);
+    w.sent.tiled = edges;
+    if (w.sent.fullscreen != fullscreen) tx.fullscreen(w.obj, @intFromBool(fullscreen));
+    w.sent.fullscreen = fullscreen;
+
     // null: no border (fullscreen, or borders turned off).
-    if (st.borders) |b| set_border(
-        tx,
-        w,
-        bw,
-        b,
-        st.corner_radius,
-    ) else set_border(
-        tx,
-        w,
-        0,
-        null_colors,
-        st.corner_radius,
-    );
+    const b: Border = if (st.borders) |colors|
+        .{ .width = bw, .colors = colors, .radius = st.corner_radius }
+    else
+        .{ .width = 0, .colors = null_colors, .radius = st.corner_radius };
+    if (w.sent.border == null or !std.meta.eql(w.sent.border.?, b)) set_border(tx, w, b);
+    w.sent.border = b;
+}
+
+/// scene is going: wayluck takes its windows out of it.
+pub fn forget_scene(s: *State, scene: *wayluck.WmSceneV1) void {
+    var it = s.windows.valueIterator();
+    while (it.next()) |wp| {
+        if (wp.*.sent.at) |at| {
+            if (at.scene == scene) wp.*.sent.at = null;
+        }
+    }
 }
 
 // ---- moving ----
@@ -339,7 +427,21 @@ pub fn set_animation(s: *State, a: types.Animation) void {
 
 /// The outlines on o, in its scene, relative to its corner (all of them:
 /// the transaction says every outline the scene has).
-fn place_outlines(s: *State, tx: *wayluck.WmTransactionV1, o: *const outputs.Output, scene: *wayluck.WmSceneV1) void {
+fn place_outlines(s: *State, tx: *wayluck.WmTransactionV1, o: *outputs.Output, scene: *wayluck.WmSceneV1) void {
+    // The same as last time: nothing to say.
+    var hash = std.hash.Wyhash.init(0);
+    hash.update(std.mem.asBytes(&o.rect));
+    for (s.outlines.items) |ol| {
+        if (outputs.of(s, ol.rect) != o) continue;
+        hash.update(std.mem.asBytes(&ol.rect));
+        hash.update(std.mem.asBytes(&ol.clip));
+        hash.update(std.mem.asBytes(&ol.width));
+        hash.update(std.mem.asBytes(&ol.color));
+        hash.update(std.mem.asBytes(&ol.corner_radius));
+    }
+    const sum = hash.final();
+    if (o.sent.outlines == sum) return;
+    o.sent.outlines = sum;
     tx.outlines(scene);
     for (s.outlines.items) |ol| {
         if (outputs.of(s, ol.rect) != o) continue;
@@ -366,9 +468,10 @@ fn serial(s: *State, h: types.WindowHandle) u64 {
 }
 
 /// duckwm's colours are 0xRRGGBB; wayluck's have alpha too, opaque here.
-fn set_border(tx: *wayluck.WmTransactionV1, w: *Window, width: u32, b: types.BorderColors, radius: u32) void {
+fn set_border(tx: *wayluck.WmTransactionV1, w: *Window, b: Border) void {
     const opaque_ = 0xff000000;
-    tx.border(w.obj, width, b.top | opaque_, b.right | opaque_, b.bottom | opaque_, b.left | opaque_, radius);
+    const c = b.colors;
+    tx.border(w.obj, b.width, c.top | opaque_, c.right | opaque_, c.bottom | opaque_, c.left | opaque_, b.radius);
 }
 
 fn find(states: []const types.WindowState, h: types.WindowHandle) ?types.WindowState {
@@ -377,17 +480,24 @@ fn find(states: []const types.WindowState, h: types.WindowHandle) ?types.WindowS
 }
 
 /// A transaction is done with once wayluck answers.
-fn tx_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Event, _: ?*anyopaque) void {
+fn tx_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Event, s: *State) void {
     switch (event) {
         .applied => {},
-        // A window closed before wayluck got it, say: the next scene fixes it.
-        .failed => |e| std.debug.print("duckwm: wayluck didn't apply a transaction: {s}\n", .{e.reason}),
+        // A window closed before wayluck got it, say: none of it was
+        // applied, so the next transaction says everything again.
+        .failed => |e| {
+            std.debug.print("duckwm: wayluck didn't apply a transaction: {s}\n", .{e.reason});
+            var it = s.windows.valueIterator();
+            while (it.next()) |w| w.*.sent = .{};
+            for (s.outputs.items) |o| o.sent = .{};
+            s.dirty = true;
+        },
     }
     tx.destroy();
 }
 
 /// As tx_listener, and then wayluck hears of the workspaces it laid out.
 fn offers_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Event, s: *State) void {
-    tx_listener(tx, event, null);
+    tx_listener(tx, event, s);
     sharing.announce(s);
 }
