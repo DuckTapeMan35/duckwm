@@ -519,6 +519,36 @@ message SetShadow {
   uint32 unfocused_color = 6;
 }
 
+message SetBlur {
+  uint32 passes = 1;
+  double offset = 2;
+}
+
+enum Blur {
+  BLUR_CLIENT = 0;
+  BLUR_ON = 1;
+  BLUR_OFF = 2;
+}
+
+message SetDefaultBlur {
+  Blur blur = 1;
+}
+
+message SetNodeBlur {
+  uint32 id = 1;
+  Blur blur = 2;
+}
+
+message SetNodeShadow {
+  uint32 id = 1;
+  uint32 blur = 2;
+  sint32 spread = 3;
+  sint32 x = 4;
+  sint32 y = 5;
+  uint32 color = 6;
+  uint32 unfocused_color = 7;
+}
+
 message SwitchToWorkspace {
   uint32 index = 1;
 }
@@ -968,6 +998,12 @@ message Command {
     Message message = 625;
     SetCornerRadius set_corner_radius = 626;
     SetShadow set_shadow = 627;
+    SetBlur set_blur = 628;
+    SetDefaultBlur set_default_blur = 629;
+    SetNodeBlur set_node_blur = 630;
+    One clear_node_blur = 631;
+    SetNodeShadow set_node_shadow = 632;
+    One clear_node_shadow = 633;
     SwitchToWorkspace switch_to_workspace = 700;
     SendToWorkspace send_to_workspace = 701;
     One enter_workspace_by_id = 702;

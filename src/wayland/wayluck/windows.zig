@@ -38,6 +38,7 @@ pub const Sent = struct {
     fullscreen: ?bool = null,
     border: ?Border = null,
     shadow: ?types.Shadow = null,
+    blur: ?types.Blur = null,
 };
 
 const Border = struct { width: u32, colors: types.BorderColors, radius: u32 };
@@ -402,6 +403,12 @@ fn place_window(
     const sh = st.shadow;
     if (w.sent.shadow == null or !std.meta.eql(w.sent.shadow.?, sh)) tx.shadow(w.obj, sh.blur, sh.spread, sh.x, sh.y, sh.color);
     w.sent.shadow = sh;
+    if (w.sent.blur != st.blur) tx.blur(w.obj, switch (st.blur) {
+        .client => .client,
+        .on => .on,
+        .off => .off,
+    });
+    w.sent.blur = st.blur;
 }
 
 /// scene is going: wayluck takes its windows out of it.
@@ -414,7 +421,13 @@ pub fn forget_scene(s: *State, scene: *wayluck.WmSceneV1) void {
     }
 }
 
-// ---- moving ----
+/// How strongly what's behind windows is blurred: halved passes times and
+/// doubled back, sampled offset pixels apart.
+pub fn set_blur(s: *State, passes: u32, offset: f32) void {
+    const manager = s.manager orelse return;
+    manager.setBlur(passes, wayland.client.wl.Fixed.fromDouble(offset));
+}
+
 /// How windows move to where they're placed: wayluck draws them on their
 /// way there, over a.duration_ms, along a's curve (core's table, at evenly
 /// spaced times, sent as it is). A duration of 0: they don't move.

@@ -119,9 +119,10 @@ pub const WM = struct {
     // ---- appearance ----
     border_width: i32 = 2,
     corner_radius: u32 = 0,
-    /// Below focused windows; unfocused ones get it in shadow_unfocused_color.
-    shadow: types.Shadow = .{},
-    shadow_unfocused_color: u32 = 0,
+    /// Below windows, unless their node has its own.
+    shadow: types.ShadowSetting = .{},
+    /// Where windows are blurred behind, unless their node says otherwise.
+    default_blur: types.Blur = .client,
     default_border_color_focused: u32 = 0x5294e2,
     default_border_color_unfocused: u32 = 0x333333,
     default_border_color_urgent: u32 = 0xe53935,

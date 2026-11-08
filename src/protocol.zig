@@ -83,6 +83,9 @@ pub const Dir = enum { left, right, up, down };
 
 pub const Side = enum { top, bottom, left, right };
 
+/// Where to blur behind a window: where its client asks, behind all of it, or nowhere.
+pub const Blur = enum { client, on, off };
+
 pub const Gaps = struct { inner_h: u32, inner_v: u32, outer_h: u32, outer_v: u32 };
 
 /// A function the client keeps and duckwm calls back: a Lua function when
@@ -282,6 +285,12 @@ pub const CommandId = enum(u32) {
     message = 625,
     set_corner_radius = 626,
     set_shadow = 627,
+    set_blur = 628,
+    set_default_blur = 629,
+    set_node_blur = 630,
+    clear_node_blur = 631,
+    set_node_shadow = 632,
+    clear_node_shadow = 633,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -553,6 +562,12 @@ pub const Command = union(CommandId) {
     message: struct { text: []const u8, timeout_ms: u32 }, // 625
     set_corner_radius: struct { radius: u32 }, // 626
     set_shadow: struct { blur: u32, spread: i32, x: i32, y: i32, color: u32, unfocused_color: u32 }, // 627
+    set_blur: struct { passes: u32, offset: f64 }, // 628
+    set_default_blur: struct { blur: Blur }, // 629
+    set_node_blur: struct { id: NodeId, blur: Blur }, // 630
+    clear_node_blur: One, // 631
+    set_node_shadow: struct { id: NodeId, blur: u32, spread: i32, x: i32, y: i32, color: u32, unfocused_color: u32 }, // 632
+    clear_node_shadow: One, // 633
 
     // workspaces
     switch_to_workspace: struct { index: u32 }, // 700

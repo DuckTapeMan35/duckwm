@@ -359,4 +359,10 @@ pub const Backend = struct {
         _ = self;
         _ = a;
     }
+
+    pub fn set_blur(self: *Backend, passes: u32, offset: f32) void {
+        _ = self;
+        _ = passes;
+        _ = offset;
+    }
 };

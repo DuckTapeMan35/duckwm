@@ -15,6 +15,7 @@ pub const Pair = protocol.Pair;
 pub const Axis = protocol.Axis;
 pub const Dir = protocol.Dir;
 pub const Side = protocol.Side;
+pub const Blur = protocol.Blur;
 pub const Gaps = protocol.Gaps;
 pub const ReparentStrategy = protocol.ReparentStrategy;
 pub const ConstraintKind = protocol.ConstraintKind;

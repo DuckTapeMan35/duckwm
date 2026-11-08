@@ -60,8 +60,57 @@ pub fn set_corner_radius(wm: *WM, args: Args(.set_corner_radius), _: Allocator) 
 }
 
 pub fn set_shadow(wm: *WM, args: Args(.set_shadow), _: Allocator) !Value {
-    wm.shadow = .{ .blur = args.blur, .spread = args.spread, .x = args.x, .y = args.y, .color = args.color };
-    wm.shadow_unfocused_color = args.unfocused_color;
+    wm.shadow = .{
+        .shadow = .{ .blur = args.blur, .spread = args.spread, .x = args.x, .y = args.y, .color = args.color },
+        .unfocused_color = args.unfocused_color,
+    };
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_node_shadow(wm: *WM, args: Args(.set_node_shadow), _: Allocator) !Value {
+    wm.journal.set_shadow(try util.node(wm, args.id), .{
+        .shadow = .{ .blur = args.blur, .spread = args.spread, .x = args.x, .y = args.y, .color = args.color },
+        .unfocused_color = args.unfocused_color,
+    });
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn clear_node_shadow(wm: *WM, args: Args(.clear_node_shadow), _: Allocator) !Value {
+    wm.journal.set_shadow(try util.node(wm, args.id), null);
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_blur(wm: *WM, args: Args(.set_blur), _: Allocator) !Value {
+    if (args.passes < 1 or args.passes > 8 or !(args.offset > 0))
+        return error.InvalidArgument;
+    wm.backend.set_blur(args.passes, @floatCast(args.offset));
+    try repaint(wm);
+    return .nil;
+}
+
+fn blur_of(b: command.Blur) types.Blur {
+    return switch (b) {
+        inline else => |x| @field(types.Blur, @tagName(x)),
+    };
+}
+
+pub fn set_default_blur(wm: *WM, args: Args(.set_default_blur), _: Allocator) !Value {
+    wm.default_blur = blur_of(args.blur);
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_node_blur(wm: *WM, args: Args(.set_node_blur), _: Allocator) !Value {
+    wm.journal.set(try util.node(wm, args.id), "blur", blur_of(args.blur));
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn clear_node_blur(wm: *WM, args: Args(.clear_node_blur), _: Allocator) !Value {
+    wm.journal.set(try util.node(wm, args.id), "blur", null);
     try repaint(wm);
     return .nil;
 }

@@ -1321,6 +1321,28 @@ pub const entries = [_]ApiEntry{
     },
     .{
         .category = "Appearance",
+        .name = "set_node_shadow",
+        .desc = "A node's own shadow, instead of set_shadow's: the same arguments, for its window focused (color) and not (unfocused_color). For rules: a window without one, say (no alpha).",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "blur", .typ = "integer" },
+            .{ .name = "spread", .typ = "integer" },
+            .{ .name = "x", .typ = "integer" },
+            .{ .name = "y", .typ = "integer" },
+            .{ .name = "color", .typ = "integer" },
+            .{ .name = "unfocused_color", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "clear_node_shadow",
+        .desc = "A node's shadow as set_shadow says again.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
         .name = "set_default_focused_border_color",
         .desc = "Set the default border color for focused windows (0xRRGGBB).",
         .params = &.{.{ .name = "color", .typ = "integer" }},
@@ -1498,6 +1520,40 @@ pub const entries = [_]ApiEntry{
         .params = &.{
             .{ .name = "id", .typ = "integer" },
         },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "set_blur",
+        .desc = "How strongly what's behind blurred windows is blurred: halved passes times (1 to 8) and doubled back, sampled offset pixels apart (above 0). More passes reach farther (about offset times 2^passes pixels); a bigger offset is smoother. Until it's set: 3 passes, offset 2. Only on wayluck: other backends ignore it.",
+        .params = &.{
+            .{ .name = "passes", .typ = "integer" },
+            .{ .name = "offset", .typ = "number" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "set_default_blur",
+        .desc = "Where windows are blurred behind, unless set_node_blur says otherwise: 'client' where the client asks (ext-background-effect; the default), 'on' behind all of the window, 'off' nowhere. Fullscreen windows never are. Seen where a window is translucent. Only on wayluck.",
+        .params = &.{.{ .name = "blur", .typ = "'client'|'on'|'off'" }},
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "set_node_blur",
+        .desc = "Where a node's window is blurred behind, instead of set_default_blur's: 'client', 'on' or 'off'.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "blur", .typ = "'client'|'on'|'off'" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "clear_node_blur",
+        .desc = "A node's window blurred behind as set_default_blur says again.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
         .ret = "nil",
     },
 

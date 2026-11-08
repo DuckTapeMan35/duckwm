@@ -52,6 +52,7 @@ comptime {
         "set_keymap",
         "set_layout_index",
         "set_animation",
+        "set_blur",
         "poll_timeout",
         "show_prompt",
         "show_message",

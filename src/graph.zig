@@ -113,6 +113,10 @@ pub const Node = struct {
     border_color_right: ?u32 = null,
     /// The border side drawn in the WM's indicator color, if any.
     indicator_side: ?types.Side = null,
+    /// Where to blur behind it, if not the WM's default.
+    blur: ?types.Blur = null,
+    /// Its shadow, if not the WM's (too big for a field entry: set_shadow).
+    shadow: ?types.ShadowSetting = null,
 
     on_remove: ?ReparentStrategy = null,
     dead: bool = false,
@@ -197,6 +201,7 @@ pub const Journal = struct {
         node_attached: struct { graph: *Graph, node: *Node },
         /// An owned byte buffer replaced (an arranger's state): the old one, freed at commit.
         bytes_replaced: struct { slot: *[]const u8, old: []const u8 },
+        shadow_replaced: struct { node: *Node, old: ?types.ShadowSetting },
     };
 
     pub fn init(allocator: std.mem.Allocator) Journal {
@@ -223,6 +228,12 @@ pub const Journal = struct {
         self.entries.append(self.allocator, e) catch {
             self.incomplete = true;
         };
+    }
+
+    /// A node's own shadow (null: the WM's).
+    pub fn set_shadow(self: *Journal, node: *Node, value: ?types.ShadowSetting) void {
+        if (self.active()) self.push(.{ .shadow_replaced = .{ .node = node, .old = node.shadow } });
+        node.shadow = value;
     }
 
     pub fn begin(self: *Journal) Mark {
@@ -305,6 +316,7 @@ pub const Journal = struct {
                 allocator.free(b.slot.*);
                 b.slot.* = b.old;
             },
+            .shadow_replaced => |r| r.node.shadow = r.old,
         }
     }
 

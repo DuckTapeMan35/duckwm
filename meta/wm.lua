@@ -778,6 +778,20 @@ function wm.set_corner_radius(radius) end
 ---@param unfocused_color integer
 function wm.set_shadow(blur, spread, x, y, color, unfocused_color) end
 
+--- A node's own shadow, instead of set_shadow's: the same arguments, for its window focused (color) and not (unfocused_color). For rules: a window without one, say (no alpha).
+---@param id integer
+---@param blur integer
+---@param spread integer
+---@param x integer
+---@param y integer
+---@param color integer
+---@param unfocused_color integer
+function wm.set_node_shadow(id, blur, spread, x, y, color, unfocused_color) end
+
+--- A node's shadow as set_shadow says again.
+---@param id integer
+function wm.clear_node_shadow(id) end
+
 --- Set the default border color for focused windows (0xRRGGBB).
 ---@param color integer
 function wm.set_default_focused_border_color(color) end
@@ -875,6 +889,24 @@ function wm.set_node_indicator(id, side) end
 --- Remove a node's indicator.
 ---@param id integer
 function wm.clear_node_indicator(id) end
+
+--- How strongly what's behind blurred windows is blurred: halved passes times (1 to 8) and doubled back, sampled offset pixels apart (above 0). More passes reach farther (about offset times 2^passes pixels); a bigger offset is smoother. Until it's set: 3 passes, offset 2. Only on wayluck: other backends ignore it.
+---@param passes integer
+---@param offset number
+function wm.set_blur(passes, offset) end
+
+--- Where windows are blurred behind, unless set_node_blur says otherwise: 'client' where the client asks (ext-background-effect; the default), 'on' behind all of the window, 'off' nowhere. Fullscreen windows never are. Seen where a window is translucent. Only on wayluck.
+---@param blur 'client'|'on'|'off'
+function wm.set_default_blur(blur) end
+
+--- Where a node's window is blurred behind, instead of set_default_blur's: 'client', 'on' or 'off'.
+---@param id integer
+---@param blur 'client'|'on'|'off'
+function wm.set_node_blur(id, blur) end
+
+--- A node's window blurred behind as set_default_blur says again.
+---@param id integer
+function wm.clear_node_blur(id) end
 
 --- Be told what changed, once it's committed. topic is one of:
 ---   'scene'   — a new scene reached the screen (get_scene has it)

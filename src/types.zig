@@ -233,6 +233,8 @@ pub const WindowState = struct {
     corner_radius: u32 = 0,
     /// The shadow below it: none (no alpha) when fullscreen.
     shadow: Shadow = .{},
+    /// Where what's behind it is blurred: nowhere when fullscreen.
+    blur: Blur = .client,
 };
 
 /// A blur of a window's shape, below it: blur pixels each way, grown by
@@ -243,6 +245,12 @@ pub const Shadow = struct {
     x: i32 = 0,
     y: i32 = 0,
     color: u32 = 0,
+};
+
+/// A shadow as it's set: the focused window's, and the colour of the others'.
+pub const ShadowSetting = struct {
+    shadow: Shadow = .{},
+    unfocused_color: u32 = 0,
 };
 
 pub const InitialHints = struct {
@@ -381,3 +389,6 @@ pub const Point = struct { x: i32, y: i32 };
 pub const BorderColors = struct { top: u32, bottom: u32, left: u32, right: u32 };
 
 pub const Side = enum { top, bottom, left, right };
+
+/// Where to blur behind a window: where its client asks, behind all of it, or nowhere.
+pub const Blur = enum { client, on, off };

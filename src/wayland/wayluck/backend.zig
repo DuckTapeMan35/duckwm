@@ -351,6 +351,10 @@ pub const Backend = struct {
     pub fn set_animation(self: *Backend, a: types.Animation) void {
         windows.set_animation(self.state, a);
     }
+
+    pub fn set_blur(self: *Backend, passes: u32, offset: f32) void {
+        windows.set_blur(self.state, passes, offset);
+    }
 };
 
 /// wayluck checks duckwm is alive, as it does any client with toplevels.

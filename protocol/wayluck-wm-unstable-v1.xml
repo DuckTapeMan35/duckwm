@@ -83,7 +83,6 @@
       <arg name="refresh" type="int" summary="in mHz: windows' pace with no template"/>
     </request>
 
-
     <enum name="modifiers" bitfield="true">
       <description summary="modifier keys, as X numbers them"/>
       <entry name="shift" value="1"/>
@@ -206,11 +205,26 @@
       <arg name="curve" type="array" summary="32-bit floats"/>
     </request>
 
+    <request name="set_blur">
+      <description summary="how strongly what's behind windows is blurred">
+        For every window blurred behind (the transaction's blur), until
+        it's set again. What's below it is halved passes times, then
+        doubled back as many, sampled offset pixels apart each time: more
+        passes reach farther (about offset times 2^passes pixels), a bigger
+        offset is smoother. 1 to 8 passes, offset above 0 (invalid_blur
+        otherwise). Until it's set: 3 passes, offset 2.
+      </description>
+      <arg name="passes" type="uint"/>
+      <arg name="offset" type="fixed"/>
+    </request>
+
     <enum name="error">
       <entry name="not_own_toplevel" value="0"
         summary="own_window's surface isn't a toplevel of the window manager's"/>
       <entry name="invalid_curve" value="1"
         summary="an animation's curve isn't 2 to 1024 floats, all numbers"/>
+      <entry name="invalid_blur" value="2"
+        summary="set_blur's passes aren't 1 to 8, or its offset isn't above 0"/>
     </enum>
 
     <request name="own_window">
@@ -677,6 +691,23 @@
       <arg name="y" type="int"/>
       <arg name="width" type="int"/>
       <arg name="height" type="int"/>
+    </request>
+
+    <enum name="blur">
+      <entry name="client" value="0"
+        summary="where its client asks (ext_background_effect_v1), if it does"/>
+      <entry name="off" value="1" summary="nowhere, whatever its client asks"/>
+      <entry name="on" value="2" summary="behind all of it"/>
+    </enum>
+
+    <request name="blur">
+      <description summary="blur what's behind a window">
+        What's below the window, blurred as set_blur says, drawn behind it
+        (inside its rounded corners): seen where the window is
+        translucent. Until it's told: client.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="blur" type="uint" enum="blur"/>
     </request>
 
     <event name="applied">
