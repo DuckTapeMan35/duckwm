@@ -12,6 +12,13 @@ fn overlaps(a: types.Rect, b: types.Rect) bool {
     return a.x < bx1 and b.x < ax1 and a.y < by1 and b.y < ay1;
 }
 
+fn frame_of(b: anytype, handle: types.WindowHandle) ?types.Rect {
+    for (b.scene.items) |st| {
+        if (st.handle == handle) return st.frame;
+    }
+    return null;
+}
+
 test "three windows tile without overlapping, and focus moves left" {
     var h = try Harness.init(std.testing.allocator, harness.default_config);
     defer h.deinit();
@@ -662,4 +669,38 @@ test "subscribers hear about names once committed, and about outputs" {
     _ = lua.getGlobal("outputs");
     defer lua.pop(1);
     try std.testing.expectEqual(@as(i64, 1), try lua.toInteger(-1));
+}
+
+test "a group keeps its place after a resize by hand away from it" {
+    var h = try Harness.init(std.testing.allocator, harness.default_config);
+    defer h.deinit();
+    const M = types.mod.super;
+    const S = types.mod.shift;
+    const C = types.mod.ctrl;
+    // pinwheel: one row of columns
+    for (0..5) |_| h.key(M | S, "n");
+    h.map(1);
+    h.map(2);
+    h.key(M | C, "g");
+    // back on 1, so 3 and 4 open outside the group
+    h.wm.set_focus(h.wm.node_registry.get(h.wm.window_to_node_id.get(1).?).?);
+    h.step();
+    h.map(3);
+    h.map(4);
+    const b = h.backend();
+    const before = frame_of(b, 2).?;
+
+    // Alt + right drag on 4, by its left edge, which the group doesn't touch.
+    const x = frame_of(b, 4).?.x;
+    const press: types.PointerButton = .{ .window = 4, .button = types.button.right, .mods = types.mod.alt, .pos = .{ .x = x + 5, .y = 500 } };
+    b.push(.{ .button_press = press });
+    h.step();
+    b.push(.{ .pointer_motion = .{ .x = x - 55, .y = 500 } });
+    h.step();
+    var release = press;
+    release.pos.x = x - 55;
+    b.push(.{ .button_release = release });
+    h.step();
+
+    try std.testing.expectEqual(before, frame_of(b, 2).?);
 }

@@ -147,8 +147,8 @@ fn sync_graph(g: *Graph) void {
         for (node.constraints.items, 0..) |con, i| {
             var new = con;
             switch (new) {
-                .fixed_x => |*v| v.* = node.x,
-                .fixed_y => |*v| v.* = node.y,
+                .fixed_x => |*v| v.* = node.x - g.work_x,
+                .fixed_y => |*v| v.* = node.y - g.work_y,
                 .fixed_width => |*v| v.* = node.width,
                 .fixed_height => |*v| v.* = node.height,
                 .split => |*s| {
