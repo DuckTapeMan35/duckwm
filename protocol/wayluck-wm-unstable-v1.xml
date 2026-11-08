@@ -180,9 +180,37 @@
       </description>
     </request>
 
+    <request name="set_animation">
+      <description summary="how windows move to where they're placed">
+        For every window without one of its own (wayluck_wm_window_v1's
+        set_animation), until it's set again. A window placed where it's
+        on screen already (in the same scene) is drawn moving there, from
+        where it's drawn then, over duration milliseconds; one appearing
+        (placed in a scene it isn't in) appears where it's placed, unless
+        the transaction says where it starts (start_from). A duration of 0:
+        no animation, as before this is set.
+
+        How far along it is (0: where it starts, 1: where it's placed)
+        follows curve: an array of 32-bit floats in the machine's byte
+        order, how far along at evenly spaced times from the start to the
+        end, 2 to 1024 of them (invalid_curve otherwise), straight between
+        them. They may go past 0 or 1 (overshooting). At the end it's
+        where it's placed, whatever the last one says. Its client is asked
+        for the new size at once; what it draws is stretched to the
+        rectangle it's drawn in meanwhile.
+
+        Placed again where it's going, it keeps going; placed somewhere
+        else on its way, it goes there from where it's drawn then.
+      </description>
+      <arg name="duration" type="uint" summary="milliseconds"/>
+      <arg name="curve" type="array" summary="32-bit floats"/>
+    </request>
+
     <enum name="error">
       <entry name="not_own_toplevel" value="0"
         summary="own_window's surface isn't a toplevel of the window manager's"/>
+      <entry name="invalid_curve" value="1"
+        summary="an animation's curve isn't 2 to 1024 floats, all numbers"/>
     </enum>
 
     <request name="own_window">
@@ -351,6 +379,21 @@
 
     <request name="close">
       <description summary="ask the client to close it"/>
+    </request>
+
+    <request name="set_animation">
+      <description summary="how this window moves to where it's placed">
+        As the manager's set_animation, for this window only, whatever the
+        manager's says, until it's set again or unset. A duration of 0:
+        this window isn't animated. An invalid curve is the manager's
+        invalid_curve error.
+      </description>
+      <arg name="duration" type="uint" summary="milliseconds"/>
+      <arg name="curve" type="array" summary="32-bit floats"/>
+    </request>
+
+    <request name="unset_animation">
+      <description summary="move as the manager's set_animation says"/>
     </request>
 
     <event name="title">
@@ -591,6 +634,32 @@
       </description>
       <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
       <arg name="fullscreen" type="uint" summary="1: it is, 0: it isn't"/>
+    </request>
+
+    <request name="instant">
+      <description summary="a window this transaction places isn't animated">
+        The window (null: every window this transaction places) is drawn
+        where it's placed at once, and one on its way stops there: for a
+        window dragged, say, placed again and again as the pointer moves,
+        while windows making room for it are animated.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1" allow-null="true"/>
+    </request>
+
+    <request name="start_from">
+      <description summary="where a window placed in this transaction starts">
+        Drawn moving from this rectangle (x, y, width, height, relative to
+        its scene's top left corner, as place's) to where it's placed, as
+        its animation says (set_animation): a window appearing, sliding in
+        or growing, say. It fails the transaction if the window isn't
+        placed in it, or if a size isn't positive. Not animated (a
+        duration of 0, or instant): it's ignored.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
     </request>
 
     <event name="applied">

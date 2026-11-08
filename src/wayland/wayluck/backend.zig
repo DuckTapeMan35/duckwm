@@ -349,8 +349,7 @@ pub const Backend = struct {
     }
 
     pub fn set_animation(self: *Backend, a: types.Animation) void {
-        _ = self;
-        _ = a;
+        windows.set_animation(self.state, a);
     }
 };
 

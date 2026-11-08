@@ -1451,7 +1451,7 @@ pub const entries = [_]ApiEntry{
     .{
         .category = "Appearance",
         .name = "set_animation",
-        .desc = "Set animation duration and curve (currently river only)",
+        .desc = "Set animation duration and curve (river and wayluck)",
         .params = &.{
             .{ .name = "duration_ms", .typ = "integer" },
             .{ .name = "curve", .typ = "string|number[]|fun(t: number): number" },

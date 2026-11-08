@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
+const wl = wayland.client.wl;
 const pointer = @import("pointer.zig");
 const outputs = @import("outputs.zig");
 const sharing = @import("sharing.zig");
@@ -223,6 +224,9 @@ pub fn commit(s: *State) void {
     } else {
         tx.setListener(?*anyopaque, tx_listener, null);
     }
+    // While core has the pointer (moving, resizing), every window it
+    // places follows it at once.
+    if (s.captured) tx.instant(null);
     if (s.dirty) place_all(s, tx);
     if (s.focus) |f| {
         const w: ?*Window = if (f.to) |h| s.windows.get(h) else null;
@@ -295,6 +299,8 @@ pub fn place_window(
         @intCast(@max(1, st.frame.width -| 2 * bw)),
         @intCast(@max(1, st.frame.height -| 2 * bw)),
     );
+    // Being dragged: it follows the pointer, not animated.
+    if (st.interactive) tx.instant(w.obj);
     // Tiled windows are told so: clients square their corners, and size
     // themselves exactly (foot rounds a floating one to whole cells).
     // A fullscreen one is told that instead, and drops its own chrome.
@@ -314,6 +320,21 @@ pub fn place_window(
         null_colors,
         st.corner_radius,
     );
+}
+
+// ---- moving ----
+/// How windows move to where they're placed: wayluck draws them on their
+/// way there, over a.duration_ms, along a's curve (core's table, at evenly
+/// spaced times, sent as it is). A duration of 0: they don't move.
+pub fn set_animation(s: *State, a: types.Animation) void {
+    const manager = s.manager orelse return;
+    var curve = a.curve;
+    var array: wl.Array = .{
+        .size = @sizeOf(types.CurveTable),
+        .alloc = @sizeOf(types.CurveTable),
+        .data = &curve,
+    };
+    manager.setAnimation(a.duration_ms, &array);
 }
 
 /// The outlines on o, in its scene, relative to its corner (all of them:
