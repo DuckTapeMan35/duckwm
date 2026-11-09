@@ -187,7 +187,10 @@ pub const Backend = struct {
         const w = self.state.windows.get(h) orelse return .{};
         return .{
             .fullscreen = w.wants_fullscreen,
+            .urgent = w.attention,
+            .keep_above = w.hints.above,
             .fixed_size = windows.fixed_size(w),
+            .fixed_aspect = w.hints.aspect,
         };
     }
 

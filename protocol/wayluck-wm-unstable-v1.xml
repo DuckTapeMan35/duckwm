@@ -469,6 +469,72 @@
       <arg name="max_width" type="int"/>
       <arg name="max_height" type="int"/>
     </event>
+
+    <enum name="kind">
+      <entry name="normal" value="0" summary="an application's own window"/>
+      <entry name="dialog" value="1" summary="asks something, for its parent"/>
+      <entry name="utility" value="2" summary="a palette or toolbox, for its application"/>
+      <entry name="splash" value="3" summary="shown while its application starts"/>
+      <entry name="notification" value="4" summary="a passing message"/>
+      <entry name="menu" value="5" summary="a menu or tooltip it manages itself"/>
+      <entry name="toolbar" value="6" summary="a toolbar torn off its window"/>
+    </enum>
+
+    <event name="kind">
+      <description summary="what kind of window it is">
+        What its client says it is: an X window's type (_NET_WM_WINDOW_TYPE;
+        one without, with a parent: a dialog), a Wayland window's parent
+        (with one: a dialog). The same for either, so a window manager
+        treats them alike. Sent with the window, and again when it changes.
+      </description>
+      <arg name="kind" type="uint" enum="kind"/>
+    </event>
+
+    <enum name="hint" bitfield="true">
+      <entry name="above" value="1" summary="to be kept above the others"/>
+      <entry name="aspect" value="2" summary="to keep its shape: width to height fixed"/>
+    </enum>
+
+    <event name="hints">
+      <description summary="how its client would like it kept">
+        What its client asks of its window manager, besides its size
+        limits: an X window's _NET_WM_STATE (above, or on every workspace)
+        and the aspect in its WM_NORMAL_HINTS (the smallest and largest
+        the same). Sent with the window, and again when they change.
+      </description>
+      <arg name="hints" type="uint" enum="hint"/>
+    </event>
+
+    <event name="attention">
+      <description summary="it wants the user to look at it, or no longer">
+        Its client wants the user's attention: an X window urgent
+        (WM_HINTS) or demanding attention (_NET_WM_STATE), or a Wayland
+        window asking to be brought forward with no right to
+        (xdg-activation, its token from no recent input of its own). Until
+        it's focused, or its client says it no longer does. Sent with the
+        window, and again when it changes.
+      </description>
+      <arg name="on" type="uint" summary="1: it does, 0: it no longer does"/>
+    </event>
+
+    <event name="activate_request">
+      <description summary="it's asked to be brought forward">
+        Its client asked, with the right to: a Wayland client with a token
+        from input the user just gave it (xdg-activation), an X client or
+        pager by _NET_ACTIVE_WINDOW. The window manager decides: focus it,
+        show its workspace, or not.
+      </description>
+    </event>
+
+    <event name="done">
+      <description summary="that's all, for now">
+        Sent once wayluck has said all it has to about the window for
+        now: after what it comes with (names, parent, kind, size limits,
+        hints, a fullscreen request), and after each lot of changes to
+        them. A window manager decides with all of them, not some: placing
+        a new window, say, after its first done.
+      </description>
+    </event>
   </interface>
 
   <interface name="wayluck_wm_key_binding_v1" version="1">

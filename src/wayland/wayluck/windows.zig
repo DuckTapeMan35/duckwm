@@ -14,6 +14,9 @@ pub const Window = struct {
     obj: *wayluck.WmWindowV1,
     handle: types.WindowHandle,
     info: types.WindowInfo = .{},
+    /// wayluck has said all it has to about it (its first done): core hears
+    /// of it at the end of the dispatch.
+    ready: bool = false,
     /// map_request has been sent to core.
     announced: bool = false,
     /// When core last raised it: floating windows stack by it.
@@ -23,6 +26,12 @@ pub const Window = struct {
     wants_fullscreen: bool = false,
     /// The window it belongs to (a dialog's main window): it floats.
     parent: ?types.WindowHandle = null,
+    /// What its client says it is.
+    kind: wayluck.WmWindowV1.Kind = .normal,
+    /// How its client would like it kept (above the others, its aspect).
+    hints: wayluck.WmWindowV1.Hint = .{},
+    /// It wants the user's attention (urgent).
+    attention: bool = false,
     /// Its client's smallest and largest size (0: no limit).
     min: types.Size = .{ .width = 0, .height = 0 },
     max: types.Size = .{ .width = 0, .height = 0 },
@@ -56,9 +65,9 @@ const all_edges: u32 = 1 | 2 | 4 | 8;
 const null_colors: types.BorderColors = .{ .top = 0, .bottom = 0, .left = 0, .right = 0 };
 
 /// wayluck announced a window, with its id: the window's handle, so wayluck's
-/// log, core and quack all call it the same. What its client set up follows
-/// in the same burst, so core hears of it at the end of the dispatch
-/// (announce_fresh), names and all.
+/// log, core and quack all call it the same. What its client set up follows,
+/// up to its first done: then core hears of it, names and all
+/// (announce_fresh, at the end of the dispatch).
 pub fn add(s: *State, obj: *wayluck.WmWindowV1, id: u32) void {
     const w = s.allocator.create(Window) catch return obj.destroy();
     w.* = .{ .state = s, .obj = obj, .handle = id };
@@ -66,7 +75,6 @@ pub fn add(s: *State, obj: *wayluck.WmWindowV1, id: u32) void {
         s.allocator.destroy(w);
         return obj.destroy();
     };
-    s.fresh.append(s.allocator, w) catch {};
     obj.setListener(*Window, listener, w);
 }
 
@@ -104,6 +112,17 @@ fn listener(obj: *wayluck.WmWindowV1, event: wayluck.WmWindowV1.Event, w: *Windo
         .fullscreen_request => fullscreen_request(s, w, .add),
         .unfullscreen_request => fullscreen_request(s, w, .remove),
         .parent => |e| w.parent = if (e.parent) |p| window_of(p).handle else null,
+        .kind => |e| w.kind = e.kind,
+        .hints => |e| w.hints = e.hints,
+        .attention => |e| {
+            w.attention = e.on != 0;
+            if (w.announced) s.push(.{ .urgency_hint = .{ .window = w.handle, .urgent = w.attention } });
+        },
+        .activate_request => if (w.announced) s.push(.{ .activate_request = w.handle }),
+        .done => if (!w.announced and !w.ready) {
+            w.ready = true;
+            s.fresh.append(s.allocator, w) catch {};
+        },
         .size_hints => |e| {
             w.min = .{ .width = nonneg(e.min_width), .height = nonneg(e.min_height) };
             w.max = .{ .width = nonneg(e.max_width), .height = nonneg(e.max_height) };
@@ -159,10 +178,17 @@ fn initial_size(w: *const Window) types.Size {
     };
 }
 
-/// A window with a parent (a dialog) floats, over it.
+/// As the X backend reads an X window's type: one with a parent, or of a
+/// passing kind (a dialog, a splash screen), floats over the others.
 pub fn traits_of(w: *const Window) types.WindowTraits {
+    const kind: types.WindowKind = switch (w.kind) {
+        .dialog, .utility, .splash, .notification, .menu => .floating,
+        .toolbar => .dock,
+        .normal => .normal,
+        _ => .normal,
+    };
     return .{
-        .kind = if (w.parent != null) .floating else .normal,
+        .kind = if (w.parent != null) .floating else kind,
         .transient_for = w.parent,
     };
 }
@@ -214,7 +240,7 @@ pub fn raise(s: *State, h: types.WindowHandle) void {
     s.dirty = true;
 }
 
-/// Repaint h's border (its colours changed: focus moved, say).
+/// Repaint h's border.
 pub fn border(s: *State, h: types.WindowHandle, colors: types.BorderColors, width: u32) void {
     for (s.scene.items) |*st| if (st.handle == h) {
         st.borders = colors;
