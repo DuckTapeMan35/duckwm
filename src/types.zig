@@ -66,6 +66,12 @@ pub const Event = union(enum) {
     became_dock: WindowHandle,
     /// Someone (a pager, a taskbar, xdotool) asked to activate a window.
     activate_request: WindowHandle,
+    /// Someone (a bar, a pager) asked to show a workspace: its number as
+    /// published (publish_workspaces).
+    workspace_request: u32,
+    /// Someone (a pager, the window's own client) asked for a window to be
+    /// on a workspace.
+    window_workspace_request: WorkspaceRequest,
     /// A client asked to change its fullscreen or attention state.
     state_request: StateRequest,
     button_press: PointerButton,
@@ -104,6 +110,9 @@ pub const MapRequest = struct {
 };
 
 pub const UrgencyHint = struct { window: WindowHandle, urgent: bool };
+
+/// A window, and a workspace's number as published (publish_workspaces).
+pub const WorkspaceRequest = struct { window: WindowHandle, workspace: u32 };
 
 pub const StateAction = enum { remove, add, toggle };
 

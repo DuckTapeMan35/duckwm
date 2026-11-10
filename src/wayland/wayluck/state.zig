@@ -1,9 +1,9 @@
 const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
-const windows = @import("windows.zig");
-const Preview = @import("previews.zig").Preview;
 const paint = @import("paint");
+const windows = @import("windows.zig");
+const workspaces = @import("workspaces.zig");
 
 const wl = wayland.client.wl;
 const wayluck = wayland.client.wayluck;
@@ -14,6 +14,7 @@ const ButtonBinding = @import("pointer.zig").Binding;
 const Offer = @import("sharing.zig").Offer;
 const Share = @import("sharing.zig").Share;
 const Window = windows.Window;
+const Preview = @import("previews.zig").Preview;
 
 pub const State = struct {
     allocator: std.mem.Allocator,
@@ -71,6 +72,10 @@ pub const State = struct {
     picking: bool = false,
     /// Workspaces shared, each on a virtual output.
     shares: std.ArrayListUnmanaged(*Share) = .empty,
+    /// Core's workspaces, as bars and pagers see them: one each, numbered in order.
+    workspaces: std.ArrayListUnmanaged(*workspaces.Workspace) = .empty,
+    /// What core last published of them (null: nothing yet).
+    published: ?workspaces.Published = null,
 
     /// Events for core, oldest first.
     events: std.ArrayListUnmanaged(types.Event) = .empty,

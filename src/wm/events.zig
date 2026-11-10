@@ -48,6 +48,8 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
             return false;
         },
         .activate_request => |h| requests.activate(wm, h),
+        .workspace_request => |index| requests.workspace(wm, index),
+        .window_workspace_request => |r| requests.window_workspace(wm, r),
         .state_request => |r| requests.state_request(wm, r) catch |err| {
             std.debug.print("state_request: {}\n", .{err});
             return false;

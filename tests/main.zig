@@ -704,3 +704,76 @@ test "a group keeps its place after a resize by hand away from it" {
 
     try std.testing.expectEqual(before, frame_of(b, 2).?);
 }
+
+test "a bar or pager asking for a workspace by its number shows it" {
+    var h = try Harness.init(std.testing.allocator, harness.default_config);
+    defer h.deinit();
+    const M = types.mod.super;
+
+    const first = h.wm.current_graph;
+    h.key(M, "2");
+    const second = h.wm.current_graph;
+    try std.testing.expect(second != first);
+
+    // Numbered as published: from 0.
+    h.backend().push(.{ .workspace_request = 0 });
+    h.step();
+    try std.testing.expectEqual(first, h.wm.current_graph);
+    // Asking for the one shown changes nothing (no going back, as a key would).
+    h.backend().push(.{ .workspace_request = 0 });
+    h.step();
+    try std.testing.expectEqual(first, h.wm.current_graph);
+    // No such workspace: nothing either.
+    h.backend().push(.{ .workspace_request = 7 });
+    h.step();
+    try std.testing.expectEqual(first, h.wm.current_graph);
+    h.backend().push(.{ .workspace_request = 1 });
+    h.step();
+    try std.testing.expectEqual(second, h.wm.current_graph);
+}
+
+test "a pager asking for a window to be on a workspace sends it there" {
+    var h = try Harness.init(std.testing.allocator, harness.default_config);
+    defer h.deinit();
+    const M = types.mod.super;
+
+    h.map(1);
+    h.key(M, "2");
+    const second = h.wm.current_graph;
+    h.key(M, "1");
+
+    h.backend().push(.{ .window_workspace_request = .{ .window = 1, .workspace = 1 } });
+    h.step();
+    const node = h.wm.node_registry.get(h.wm.window_to_node_id.get(1).?).?;
+    try std.testing.expectEqual(second, node.owner_graph.?.workspace());
+}
+
+test "workspaces are published numbered as keys number them, whatever their places" {
+    var h = try Harness.init(std.testing.allocator, harness.default_config);
+    defer h.deinit();
+    const M = types.mod.super;
+
+    const first = h.wm.current_graph;
+    h.map(1);
+    h.key(M, "2");
+    const second = h.wm.current_graph;
+    h.key(M, "3");
+    // Their places in their graph change (as they do in a group, say):
+    // their numbers don't.
+    const parent = h.wm.current_graph.parent_node.?.owner_graph.?.workspace();
+    std.mem.reverse(@TypeOf(parent.nodes.items[0]), parent.nodes.items);
+    h.wm.sync_workspace_state();
+    h.step();
+    try std.testing.expectEqual(@as(u32, 3), h.backend().published.count);
+    try std.testing.expectEqual(@as(u32, 2), h.backend().published.current);
+
+    h.backend().push(.{ .workspace_request = 0 });
+    h.step();
+    try std.testing.expectEqual(first, h.wm.current_graph);
+    try std.testing.expectEqual(@as(?u32, 0), h.backend().window_workspaces.get(1));
+    h.backend().push(.{ .window_workspace_request = .{ .window = 1, .workspace = 1 } });
+    h.step();
+    const node = h.wm.node_registry.get(h.wm.window_to_node_id.get(1).?).?;
+    try std.testing.expectEqual(second, node.owner_graph.?.workspace());
+    try std.testing.expectEqual(@as(?u32, 1), h.backend().window_workspaces.get(1));
+}

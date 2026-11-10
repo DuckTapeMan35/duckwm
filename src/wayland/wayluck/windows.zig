@@ -5,6 +5,7 @@ const wl = wayland.client.wl;
 const pointer = @import("pointer.zig");
 const outputs = @import("outputs.zig");
 const sharing = @import("sharing.zig");
+const workspaces = @import("workspaces.zig");
 
 const wayluck = wayland.client.wayluck;
 const State = @import("state.zig").State;
@@ -35,6 +36,8 @@ pub const Window = struct {
     /// Its client's smallest and largest size (0: no limit).
     min: types.Size = .{ .width = 0, .height = 0 },
     max: types.Size = .{ .width = 0, .height = 0 },
+    /// The number of the workspace core published it's on.
+    workspace: ?u32 = null,
     /// What wayluck was last told about it: a transaction says only what changed.
     sent: Sent = .{},
 };
@@ -48,6 +51,7 @@ pub const Sent = struct {
     border: ?Border = null,
     shadow: ?types.Shadow = null,
     blur: ?types.Blur = null,
+    workspace: ?*wayluck.WmWorkspaceV1 = null,
 };
 
 const Border = struct { width: u32, colors: types.BorderColors, radius: u32 };
@@ -119,6 +123,12 @@ fn listener(obj: *wayluck.WmWindowV1, event: wayluck.WmWindowV1.Event, w: *Windo
             if (w.announced) s.push(.{ .urgency_hint = .{ .window = w.handle, .urgent = w.attention } });
         },
         .activate_request => if (w.announced) s.push(.{ .activate_request = w.handle }),
+        // Core has no workspace that's all of them: on all (null) is let be.
+        .workspace_request => |e| if (w.announced) if (e.workspace) |ws| {
+            if (workspaces.number_of(s, ws)) |n| {
+                s.push(.{ .window_workspace_request = .{ .window = w.handle, .workspace = n } });
+            }
+        },
         .done => if (!w.announced and !w.ready) {
             w.ready = true;
             s.fresh.append(s.allocator, w) catch {};
@@ -272,7 +282,10 @@ pub fn commit(s: *State) void {
     // While core has the pointer (moving, resizing), every window it
     // places follows it at once.
     if (s.captured) tx.instant(null);
-    if (s.dirty) place_all(s, tx);
+    if (s.dirty) {
+        place_all(s, tx);
+        workspaces.tell(s, tx);
+    }
     if (s.focus) |f| {
         const w: ?*Window = if (f.to) |h| s.windows.get(h) else null;
         tx.focus(if (w) |x| x.obj else null);
@@ -533,6 +546,7 @@ fn tx_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Even
             var it = s.windows.valueIterator();
             while (it.next()) |w| w.*.sent = .{};
             for (s.outputs.items) |o| o.sent = .{};
+            workspaces.forget_sent(s);
             s.dirty = true;
         },
     }

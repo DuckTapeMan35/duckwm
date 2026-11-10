@@ -81,7 +81,8 @@ pub const Frames = struct {
 // ---- the X side: creating and destroying frames ----
 
 /// Reparent client into a new frame.
-pub fn create(self: *Backend, client: c.Window, opts: types.FrameOptions) !c.Window {
+/// own: client is duckwm's own window (a preview), not a program's.
+pub fn create(self: *Backend, client: c.Window, opts: types.FrameOptions, own: bool) !c.Window {
     try self.frames.reserve(self.allocator); // nothing below this line can fail
 
     var attrs: c.XWindowAttributes = undefined;
@@ -139,7 +140,7 @@ pub fn create(self: *Backend, client: c.Window, opts: types.FrameOptions) !c.Win
     _ = c.XSelectInput(self.display, frame, event_mask);
 
     const bw: c_int = @intCast(opts.border_width);
-    _ = c.XAddToSaveSet(self.display, client);
+    if (!own) _ = c.XAddToSaveSet(self.display, client);
     _ = c.XReparentWindow(self.display, client, frame, bw, bw);
     _ = c.XSetWindowBorderWidth(self.display, client, 0);
     _ = c.XSync(self.display, 0);

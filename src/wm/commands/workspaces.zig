@@ -3,6 +3,7 @@ const core = @import("../core.zig");
 const command = @import("../command.zig");
 const groups = @import("../groups.zig");
 const workspace_settings = @import("../workspace_settings.zig");
+const navigation = @import("../navigation.zig");
 const util = @import("util.zig");
 const graph_mod = @import("graph");
 const WM = core.WM;
@@ -17,21 +18,6 @@ const NodeList = std.ArrayListUnmanaged(*Node);
 pub fn parent_graph(wm: *WM) *Graph {
     const pn = wm.current_graph.workspace().parent_node orelse return wm.root;
     return if (pn.owner_graph) |og| og.workspace() else wm.root;
-}
-
-fn by_id(wm: *WM, a: *Node, b: *Node) bool {
-    const id_a = wm.get_id_for_node(a) orelse return false;
-    const id_b = wm.get_id_for_node(b) orelse return false;
-    return id_a < id_b;
-}
-
-fn sorted_workspaces(wm: *WM, g: *Graph, out: *NodeList) !void {
-    out.clearRetainingCapacity();
-    var it = groups.Nodes.init(g);
-    while (it.next()) |n| {
-        if (n.content == .workspace) try out.append(wm.allocator, n);
-    }
-    std.sort.heap(*Node, out.items, wm, by_id);
 }
 
 /// Does the workspace hold any windows or nested workspaces?
@@ -71,7 +57,7 @@ pub fn switch_to(wm: *WM, index: usize) !void {
     var list: NodeList = .empty;
     defer list.deinit(wm.allocator);
     const parent = parent_graph(wm);
-    try sorted_workspaces(wm, parent, &list);
+    try navigation.sorted_workspaces(wm, parent, &list);
     try ensure(wm, parent, &list, index);
     try enter_or_back(wm, list.items[index - 1]);
 }
@@ -80,7 +66,7 @@ pub fn send_to(wm: *WM, node_id: u32, index: usize) !void {
     var list: NodeList = .empty;
     defer list.deinit(wm.allocator);
     const parent = parent_graph(wm);
-    try sorted_workspaces(wm, parent, &list);
+    try navigation.sorted_workspaces(wm, parent, &list);
     try ensure(wm, parent, &list, index);
     try wm.send_to_workspace(node_id, list.items[index - 1].content.workspace);
 }
@@ -116,7 +102,7 @@ pub fn create_nested(wm: *WM) !u32 {
 pub fn workspace_at(wm: *WM, index: usize) !?u32 {
     var list: NodeList = .empty;
     defer list.deinit(wm.allocator);
-    try sorted_workspaces(wm, wm.current_graph, &list);
+    try navigation.sorted_workspaces(wm, wm.current_graph, &list);
     if (index < 1 or index > list.items.len) return null;
     return wm.get_id_for_node(list.items[index - 1]);
 }
@@ -127,7 +113,7 @@ pub const State = enum { focused, active, inactive };
 pub fn states(wm: *WM, a: std.mem.Allocator) ![]State {
     var list: NodeList = .empty;
     defer list.deinit(wm.allocator);
-    try sorted_workspaces(wm, parent_graph(wm), &list);
+    try navigation.sorted_workspaces(wm, parent_graph(wm), &list);
     const out = try a.alloc(State, list.items.len);
     for (list.items, out) |n, *s| {
         const sub = n.content.workspace;
@@ -140,7 +126,7 @@ pub fn states(wm: *WM, a: std.mem.Allocator) ![]State {
 pub fn current_position(wm: *WM) !?usize {
     var list: NodeList = .empty;
     defer list.deinit(wm.allocator);
-    try sorted_workspaces(wm, parent_graph(wm), &list);
+    try navigation.sorted_workspaces(wm, parent_graph(wm), &list);
     for (list.items, 1..) |n, pos| {
         if (n.content.workspace == wm.current_graph) return pos;
     }
@@ -246,7 +232,7 @@ pub fn get_workspace_states(wm: *WM, _: void, arena: Allocator) !Value {
     const st = try states(wm, arena);
     var list: NodeList = .empty;
     defer list.deinit(wm.allocator);
-    try sorted_workspaces(wm, parent_graph(wm), &list); // the same order as states
+    try navigation.sorted_workspaces(wm, parent_graph(wm), &list); // the same order as states
     const out = try arena.alloc(Value, st.len);
     for (st, list.items, out, 1..) |s, n, *v, pos| {
         v.* = .{ .map = try arena.dupe(Value.Field, &.{

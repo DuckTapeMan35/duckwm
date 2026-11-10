@@ -223,21 +223,43 @@ pub fn send_to_workspace(wm: *WM, node_id: u32, target_graph: *graph.Graph) !voi
     }
 }
 
-pub fn sync_workspace_state(wm: *WM) void {
-    const parent_graph: *graph.Graph = if (wm.current_graph.parent_node) |pn|
+/// The graph whose workspaces are published: the current one's and its
+/// siblings', numbered in its order.
+fn published_parent(wm: *WM) *graph.Graph {
+    return if (wm.current_graph.parent_node) |pn|
         if (pn.owner_graph) |og| og.workspace() else wm.root
     else
         wm.root;
+}
 
-    var count: u32 = 0;
-    var current: u32 = 0;
-    var n_it = groups.Nodes.init(parent_graph);
-    while (n_it.next()) |node| {
-        if (node.content != .workspace) continue;
-        if (node.content.workspace == wm.current_graph) current = count;
-        count += 1;
+/// g's workspaces, in the order of their ids (the order they were made):
+/// the order they're numbered in, by keys, commands and pagers alike,
+/// whatever their places in g.
+pub fn sorted_workspaces(wm: *WM, g: *Graph, out: *std.ArrayListUnmanaged(*Node)) !void {
+    out.clearRetainingCapacity();
+    var it = groups.Nodes.init(g);
+    while (it.next()) |n| {
+        if (n.content == .workspace) try out.append(wm.allocator, n);
     }
-    wm.backend.publish_workspaces(@max(count, 1), current);
+    std.sort.heap(*Node, out.items, wm, by_id);
+}
+
+fn by_id(wm: *WM, a: *Node, b: *Node) bool {
+    const id_a = wm.get_id_for_node(a) orelse return false;
+    const id_b = wm.get_id_for_node(b) orelse return false;
+    return id_a < id_b;
+}
+
+/// The workspace published as index (sync_workspace_state).
+pub fn published_workspace(wm: *WM, index: u32) ?*Node {
+    var list: std.ArrayListUnmanaged(*Node) = .empty;
+    defer list.deinit(wm.allocator);
+    sorted_workspaces(wm, published_parent(wm), &list) catch return null;
+    return if (index < list.items.len) list.items[index] else null;
+}
+
+pub fn sync_workspace_state(wm: *WM) void {
+    publish_workspaces(wm);
 
     var client_list: std.ArrayListUnmanaged(types.WindowHandle) = .empty;
     defer client_list.deinit(wm.allocator);
@@ -250,6 +272,19 @@ pub fn sync_workspace_state(wm: *WM) void {
     wm.backend.publish_window_list(client_list.items);
 }
 
+/// How many workspaces there are (at the current one's level), and which is current.
+fn publish_workspaces(wm: *WM) void {
+    var list: std.ArrayListUnmanaged(*Node) = .empty;
+    defer list.deinit(wm.allocator);
+    sorted_workspaces(wm, published_parent(wm), &list) catch return;
+    var current: u32 = 0;
+    for (list.items, 0..) |node, i| {
+        if (node.content.workspace == wm.current_graph) current = @intCast(i);
+    }
+    const count: u32 = @intCast(list.items.len);
+    wm.backend.publish_workspaces(@max(count, 1), current);
+}
+
 pub fn sync_window_workspace(wm: *WM, win: types.WindowHandle) void {
     const node_id = wm.window_to_node_id.get(win) orelse return;
     const node = wm.node_registry.get(node_id) orelse return;
@@ -260,14 +295,12 @@ pub fn sync_window_workspace(wm: *WM, win: types.WindowHandle) void {
     else
         wm.root;
 
-    var idx: u32 = 0;
-    var it = groups.Nodes.init(parent_graph);
-    while (it.next()) |n| {
-        if (n.content != .workspace) continue;
-        if (n.content.workspace == owner) break;
-        idx += 1;
-    }
-    wm.backend.publish_window_workspace(win, idx);
+    var list: std.ArrayListUnmanaged(*Node) = .empty;
+    defer list.deinit(wm.allocator);
+    sorted_workspaces(wm, parent_graph, &list) catch return;
+    for (list.items, 0..) |n, i| if (n.content.workspace == owner) {
+        return wm.backend.publish_window_workspace(win, @intCast(i));
+    };
 }
 
 pub fn create_workspace_graph(wm: *WM, level: u32) !*graph.Graph {

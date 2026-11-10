@@ -10,6 +10,9 @@ const input = @import("input.zig");
 const Backend = @import("backend.zig").Backend;
 const Strut = @import("docks.zig").Strut;
 
+/// The desktop number that's all of them.
+const all_desktops: u32 = 0xFFFFFFFF;
+
 /// The core event e stands for, if any; what only the backend cares about is
 /// handled here and gives null.
 pub fn translate(self: *Backend, e: *c.XEvent) ?types.Event {
@@ -193,6 +196,16 @@ fn translate_client_message(self: *Backend, ev: *c.XClientMessageEvent) ?types.E
         return .{ .activate_request = ev.window };
     }
 
+    if (ev.message_type == a._NET_CURRENT_DESKTOP and ev.window == self.root) {
+        return .{ .workspace_request = desktop(ev.data.l[0]) };
+    }
+
+    if (ev.message_type == a._NET_WM_DESKTOP) {
+        const number = desktop(ev.data.l[0]);
+        if (number == all_desktops) return null;
+        return .{ .window_workspace_request = .{ .window = ev.window, .workspace = number } };
+    }
+
     if (ev.message_type == a._NET_WM_STATE) {
         const action: types.StateAction = switch (ev.data.l[0]) {
             0 => .remove,
@@ -213,6 +226,12 @@ fn translate_client_message(self: *Backend, ev: *c.XClientMessageEvent) ?types.E
         } };
     }
     return null;
+}
+
+/// A desktop number, as a client message carries it: 32 bits in a long
+/// (all_desktops may come sign-extended, as -1).
+fn desktop(l: c_long) u32 {
+    return @truncate(@as(c_ulong, @bitCast(l)));
 }
 
 fn translate_button(self: *Backend, ev: *c.XButtonEvent, pressed: bool) ?types.Event {

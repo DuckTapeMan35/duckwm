@@ -1,13 +1,14 @@
 const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
+const paint = @import("paint");
 const pointer = @import("pointer.zig");
 const windows = @import("windows.zig");
 const outputs_ = @import("outputs.zig");
 const sharing = @import("sharing.zig");
 const keys = @import("keys.zig");
 const previews = @import("previews.zig");
-const paint = @import("paint");
+const workspaces = @import("workspaces.zig");
 
 const xdg = wayland.client.xdg;
 const wl = wayland.client.wl;
@@ -43,6 +44,8 @@ pub const Backend = struct {
         }
         if (s.unavailable) return error.AnotherWmRunning;
 
+        manager.setName("duckwm");
+
         return .{ .allocator = allocator, .state = s };
     }
 
@@ -66,6 +69,7 @@ pub const Backend = struct {
         s.fonts.deinit(s.allocator);
         paint.deinit();
         sharing.deinit(s);
+        workspaces.destroy_all(s);
         keys.ungrab_all(s);
         s.bindings.deinit(s.allocator);
         pointer.ungrab_all(s);
@@ -137,35 +141,35 @@ pub const Backend = struct {
         return outputs_.list(self.state, buf);
     }
 
-    // ---- publishing: nothing listens ----
+    // ---- publishing ----
+    /// wayluck works the work area out itself (from bars, and docks).
     pub fn publish_work_area(self: *const Backend, r: types.Rect) void {
         _ = self;
         _ = r;
     }
 
     pub fn publish_workspaces(self: *const Backend, count: u32, current: u32) void {
-        _ = self;
-        _ = count;
-        _ = current;
+        workspaces.publish(self.state, count, current);
     }
 
+    /// wayluck lists windows itself.
     pub fn publish_window_list(self: *const Backend, hs: []const types.WindowHandle) void {
         _ = self;
         _ = hs;
     }
 
     pub fn publish_window_workspace(self: *const Backend, h: types.WindowHandle, i: u32) void {
-        _ = self;
-        _ = h;
-        _ = i;
+        workspaces.publish_window(self.state, h, i);
     }
 
+    /// Told with the window's place (fullscreen, in the transaction).
     pub fn publish_window_fullscreen(self: *const Backend, h: types.WindowHandle, on: bool) void {
         _ = self;
         _ = h;
         _ = on;
     }
 
+    /// wayluck knows its borders' widths: it draws them.
     pub fn publish_frame_extents(self: *const Backend, bw: u32) void {
         _ = self;
         _ = bw;
@@ -399,5 +403,6 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
         },
         .picker_closed => s.push(.picker_closed),
         .share_workspace => |e| if (e.scene) |scene| sharing.share(s, e.output, scene) else e.output.destroy(),
+        .layer => |e| e.layer.destroy(),
     }
 }

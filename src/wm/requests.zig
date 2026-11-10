@@ -1,6 +1,8 @@
 const std = @import("std");
 const types = @import("types");
 const graph_mod = @import("graph");
+const navigation = @import("navigation.zig");
+
 const Node = graph_mod.Node;
 const WM = @import("core.zig").WM;
 
@@ -26,6 +28,21 @@ pub fn urgency_hint(wm: *WM, hint: types.UrgencyHint) void {
 pub fn activate(wm: *WM, h: types.WindowHandle) void {
     const n = node_for(wm, h) orelse return;
     wm.activate_window(n.node) catch {};
+}
+
+/// Show the workspace published as index, as switching to it does.
+pub fn workspace(wm: *WM, index: u32) void {
+    const node = navigation.published_workspace(wm, index) orelse return;
+    if (node.content.workspace == wm.current_graph) return;
+    wm.journal.set(wm, "previous_graph", wm.current_graph);
+    wm.enter_workspace(node) catch {};
+}
+
+/// Put a window on the workspace published as index, as sending it does.
+pub fn window_workspace(wm: *WM, r: types.WorkspaceRequest) void {
+    const n = node_for(wm, r.window) orelse return;
+    const node = navigation.published_workspace(wm, r.workspace) orelse return;
+    wm.send_to_workspace(n.id, node.content.workspace) catch {};
 }
 
 pub fn state_request(wm: *WM, r: types.StateRequest) !void {

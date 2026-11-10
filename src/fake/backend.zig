@@ -29,6 +29,11 @@ pub const Backend = struct {
     focused: ?types.WindowHandle = null,
     error_shown: bool = false,
 
+    /// How many workspaces core published, and which is current.
+    published: struct { count: u32, current: u32 } = .{ .count = 0, .current = 0 },
+    /// The workspace core published each window is on.
+    window_workspaces: std.AutoHashMapUnmanaged(types.WindowHandle, u32) = .empty,
+
     /// The one output's connector name (tests rename it).
     output_name: []const u8 = "FAKE-1",
 
@@ -71,6 +76,7 @@ pub const Backend = struct {
         self.windows.deinit(self.allocator);
         self.scene.deinit(self.allocator);
         self.outlines.deinit(self.allocator);
+        self.window_workspaces.deinit(self.allocator);
     }
 
     pub fn start(self: *Backend) !void {
@@ -127,16 +133,14 @@ pub const Backend = struct {
         return buf[0..1];
     }
 
-    // ---- publishing: nothing listens ----
+    // ---- publishing ----
     pub fn publish_work_area(self: *const Backend, r: types.Rect) void {
         _ = self;
         _ = r;
     }
 
-    pub fn publish_workspaces(self: *const Backend, count: u32, current: u32) void {
-        _ = self;
-        _ = count;
-        _ = current;
+    pub fn publish_workspaces(self: *Backend, count: u32, current: u32) void {
+        self.published = .{ .count = count, .current = current };
     }
 
     pub fn publish_window_list(self: *const Backend, hs: []const types.WindowHandle) void {
@@ -144,10 +148,8 @@ pub const Backend = struct {
         _ = hs;
     }
 
-    pub fn publish_window_workspace(self: *const Backend, h: types.WindowHandle, i: u32) void {
-        _ = self;
-        _ = h;
-        _ = i;
+    pub fn publish_window_workspace(self: *Backend, h: types.WindowHandle, i: u32) void {
+        self.window_workspaces.put(self.allocator, h, i) catch @panic("OOM");
     }
 
     pub fn publish_window_fullscreen(self: *const Backend, h: types.WindowHandle, on: bool) void {

@@ -311,7 +311,7 @@ pub const Backend = struct {
 
     /// Reparent client into a new frame.
     pub fn frame_window(self: *Backend, h: types.WindowHandle, opts: FrameOptions) !c.Window {
-        return frames_mod.create(self, @intCast(h), opts);
+        return frames_mod.create(self, @intCast(h), opts, false);
     }
 
     /// Stop framing client. With keep_client, it is reparented to the root first so it survives.
@@ -342,7 +342,7 @@ pub const Backend = struct {
         if (pw == 0) return error.PreviewCreateFailed;
         errdefer _ = c.XDestroyWindow(self.display, pw);
 
-        _ = try self.frame_window(pw, opts);
+        _ = try frames_mod.create(self, pw, opts, true);
         _ = c.XSelectInput(self.display, pw, c.ButtonPressMask | c.ButtonReleaseMask | c.ExposureMask);
         return pw;
     }

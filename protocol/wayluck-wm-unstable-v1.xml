@@ -52,6 +52,18 @@
       </description>
       <arg name="id" type="new_id" interface="wayluck_wm_scene_v1"/>
     </request>
+
+    <request name="workspace">
+      <description summary="make a workspace, for programs that list them">
+        A workspace as programs that list them (bars, pagers) see it: what
+        it shows is the window manager's own business (scenes), this is
+        only what's said of it. Listed from now on, after those made
+        before it: unnamed, on no output and not active, until transactions
+        say otherwise. Destroyed, it's no longer listed.
+      </description>
+      <arg name="id" type="new_id" interface="wayluck_wm_workspace_v1"/>
+    </request>
+
     <request name="virtual_output">
       <description summary="make an output with no screen behind it">
         Clients see it as any other output (wl_output): screen sharing and
@@ -218,6 +230,15 @@
       <arg name="offset" type="fixed"/>
     </request>
 
+    <request name="set_name">
+      <description summary="the window manager's name, for programs that ask">
+        Programs that ask which window manager runs (X's, as EWMH has it)
+        are told this name. Until it's set, and once the window manager is
+        gone: wayluck.
+      </description>
+      <arg name="name" type="string"/>
+    </request>
+
     <enum name="error">
       <entry name="not_own_toplevel" value="0"
         summary="own_window's surface isn't a toplevel of the window manager's"/>
@@ -305,6 +326,17 @@
       </description>
       <arg name="output" type="new_id" interface="wayluck_wm_output_v1"/>
       <arg name="scene" type="object" interface="wayluck_wm_scene_v1"/>
+    </event>
+
+    <event name="layer">
+      <description summary="a new layer surface">
+        A bar, wallpaper, notification or launcher (wlr-layer-shell),
+        announced once it's on an output. wayluck places it, as its client
+        asks; the window manager only gives it a look (a transaction's
+        layer requests). Its namespace, layer and output follow at once,
+        then done.
+      </description>
+      <arg name="layer" type="new_id" interface="wayluck_wm_layer_v1"/>
     </event>
   </interface>
 
@@ -515,6 +547,15 @@
         window, and again when it changes.
       </description>
       <arg name="on" type="uint" summary="1: it does, 0: it no longer does"/>
+    </event>
+
+    <event name="workspace_request">
+      <description summary="it's asked to be on a workspace">
+        A program asked (a pager, or the window's own, by X's
+        _NET_WM_DESKTOP) for it to be on workspace; null: on all of them.
+        The window manager decides: window_workspace, or not.
+      </description>
+      <arg name="workspace" type="object" interface="wayluck_wm_workspace_v1" allow-null="true"/>
     </event>
 
     <event name="activate_request">
@@ -776,6 +817,65 @@
       <arg name="blur" type="uint" enum="blur"/>
     </request>
 
+    <request name="layer_corners">
+      <description summary="round a layer surface's corners">
+        Its corners cut off, rounded radius pixels, as a window's with a
+        border's radius; its shadow and blur take that shape. Until it's
+        told: 0, square. A layer surface gone by then is let be.
+      </description>
+      <arg name="layer" type="object" interface="wayluck_wm_layer_v1"/>
+      <arg name="radius" type="uint"/>
+    </request>
+
+    <request name="layer_shadow">
+      <description summary="draw a shadow below a layer surface">
+        As shadow, for a layer surface: around its shape (layer_corners).
+      </description>
+      <arg name="layer" type="object" interface="wayluck_wm_layer_v1"/>
+      <arg name="blur" type="uint"/>
+      <arg name="spread" type="int"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="color" type="uint"/>
+    </request>
+
+    <request name="layer_blur">
+      <description summary="blur what's behind a layer surface">
+        As blur, for a layer surface. Until it's told: client.
+      </description>
+      <arg name="layer" type="object" interface="wayluck_wm_layer_v1"/>
+      <arg name="blur" type="uint" enum="blur"/>
+    </request>
+
+    <request name="workspace_name">
+      <description summary="name a workspace"/>
+      <arg name="workspace" type="object" interface="wayluck_wm_workspace_v1"/>
+      <arg name="name" type="string"/>
+    </request>
+
+    <request name="workspace_output">
+      <description summary="say which output a workspace is on">
+        Null: none in particular.
+      </description>
+      <arg name="workspace" type="object" interface="wayluck_wm_workspace_v1"/>
+      <arg name="output" type="object" interface="wayluck_wm_output_v1" allow-null="true"/>
+    </request>
+
+    <request name="workspace_state">
+      <description summary="say what state a workspace is in"/>
+      <arg name="workspace" type="object" interface="wayluck_wm_workspace_v1"/>
+      <arg name="state" type="uint" enum="wayluck_wm_workspace_v1.state"/>
+    </request>
+
+    <request name="window_workspace">
+      <description summary="say which workspace a window is on">
+        Null: on all of them. Until it's told, and once its workspace is
+        destroyed, nothing is said of it.
+      </description>
+      <arg name="window" type="object" interface="wayluck_wm_window_v1"/>
+      <arg name="workspace" type="object" interface="wayluck_wm_workspace_v1" allow-null="true"/>
+    </request>
+
     <event name="applied">
       <description summary="the changes are on screen"/>
     </event>
@@ -785,6 +885,78 @@
         For example, a window in it was closed first.
       </description>
       <arg name="reason" type="string"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_layer_v1" version="1">
+    <description summary="a layer surface: a bar, wallpaper, notification"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="forget it (after closed)"/>
+    </request>
+
+    <enum name="layer">
+      <entry name="background" value="0"/>
+      <entry name="bottom" value="1"/>
+      <entry name="top" value="2"/>
+      <entry name="overlay" value="3"/>
+    </enum>
+
+    <event name="namespace">
+      <description summary="what its client calls it">
+        Its client's name for what it is ("waybar", "notifications"): the
+        same for its life. Sent with it.
+      </description>
+      <arg name="namespace" type="string"/>
+    </event>
+
+    <event name="layer">
+      <description summary="which layer it's on">
+        Background and bottom: below windows; top and overlay: above them.
+        Sent with it, and again when its client moves it.
+      </description>
+      <arg name="layer" type="uint" enum="layer"/>
+    </event>
+
+    <event name="output">
+      <description summary="the output it's on">
+        Sent with it (null: an output the window manager doesn't know).
+      </description>
+      <arg name="output" type="object" interface="wayluck_wm_output_v1" allow-null="true"/>
+    </event>
+
+    <event name="done">
+      <description summary="that's all, for now">
+        After what it comes with, and after each lot of changes.
+      </description>
+    </event>
+
+    <event name="closed">
+      <description summary="it's gone; destroy it"/>
+    </event>
+  </interface>
+
+  <interface name="wayluck_wm_workspace_v1" version="1">
+    <description summary="a workspace, as programs that list them see it">
+      Made by the manager's workspace request; what's said of it, by
+      transactions.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="it's no longer listed"/>
+    </request>
+
+    <enum name="state" bitfield="true">
+      <entry name="active" value="1" summary="shown on its output"/>
+      <entry name="urgent" value="2" summary="something on it wants attention"/>
+      <entry name="hidden" value="4" summary="better not listed"/>
+    </enum>
+
+    <event name="activate_request">
+      <description summary="it's asked to be shown">
+        A program asked: a bar or a pager, by X's _NET_CURRENT_DESKTOP. The
+        window manager decides: show it, or not.
+      </description>
     </event>
   </interface>
 </protocol>
