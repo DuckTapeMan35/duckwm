@@ -291,6 +291,10 @@ pub const CommandId = enum(u32) {
     clear_node_blur = 631,
     set_node_shadow = 632,
     clear_node_shadow = 633,
+    get_layer_namespace = 634,
+    set_layer_corners = 635,
+    set_layer_shadow = 636,
+    set_layer_blur = 637,
 
     // workspaces: 700-799
     switch_to_workspace = 700,
@@ -568,6 +572,10 @@ pub const Command = union(CommandId) {
     clear_node_blur: One, // 631
     set_node_shadow: struct { id: NodeId, blur: u32, spread: i32, x: i32, y: i32, color: u32, unfocused_color: u32 }, // 632
     clear_node_shadow: One, // 633
+    get_layer_namespace: One, // 634
+    set_layer_corners: struct { id: NodeId, radius: u32 }, // 635
+    set_layer_shadow: struct { id: NodeId, blur: u32, spread: i32, x: i32, y: i32, color: u32 }, // 636
+    set_layer_blur: struct { id: NodeId, blur: Blur }, // 637
 
     // workspaces
     switch_to_workspace: struct { index: u32 }, // 700

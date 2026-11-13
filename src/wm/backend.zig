@@ -60,6 +60,8 @@ comptime {
         "outputs",
         "keysym_name",
         "offer_workspaces",
+        "layer_namespace",
+        "set_layer_look",
     };
     for (required) |name| {
         if (!@hasDecl(Backend, name))

@@ -10,6 +10,14 @@ pub const Window = struct {
     closed: bool = false,
 };
 
+/// A layer surface a test made, and what was set of it.
+pub const Layer = struct {
+    namespace: []const u8,
+    corners: u32 = 0,
+    shadow: ?types.Shadow = null,
+    blur: types.Blur = .client,
+};
+
 pub const Backend = struct {
     allocator: std.mem.Allocator,
     screen: types.Size = .{ .width = 1920, .height = 1080 },
@@ -33,6 +41,9 @@ pub const Backend = struct {
     published: struct { count: u32, current: u32 } = .{ .count = 0, .current = 0 },
     /// The workspace core published each window is on.
     window_workspaces: std.AutoHashMapUnmanaged(types.WindowHandle, u32) = .empty,
+
+    /// Layer surfaces a test made (add_layer), and what was set of them.
+    layers: std.AutoHashMapUnmanaged(types.LayerHandle, Layer) = .empty,
 
     /// The one output's connector name (tests rename it).
     output_name: []const u8 = "FAKE-1",
@@ -77,6 +88,13 @@ pub const Backend = struct {
         self.scene.deinit(self.allocator);
         self.outlines.deinit(self.allocator);
         self.window_workspaces.deinit(self.allocator);
+        self.layers.deinit(self.allocator);
+    }
+
+    /// A layer surface called namespace showed up (as handle): core hears.
+    pub fn add_layer(self: *Backend, handle: types.LayerHandle, namespace: []const u8) void {
+        self.layers.put(self.allocator, handle, .{ .namespace = namespace }) catch @panic("OOM");
+        self.push(.{ .layer_added = handle });
     }
 
     pub fn start(self: *Backend) !void {
@@ -366,5 +384,19 @@ pub const Backend = struct {
         _ = self;
         _ = passes;
         _ = offset;
+    }
+
+    pub fn layer_namespace(self: *const Backend, h: types.LayerHandle) ?[]const u8 {
+        const layer = self.layers.get(h) orelse return null;
+        return layer.namespace;
+    }
+
+    pub fn set_layer_look(self: *Backend, h: types.LayerHandle, change: types.LayerChange) void {
+        const layer = self.layers.getPtr(h) orelse return;
+        switch (change) {
+            .corners => |r| layer.corners = r,
+            .shadow => |s| layer.shadow = s,
+            .blur => |b| layer.blur = b,
+        }
     }
 };

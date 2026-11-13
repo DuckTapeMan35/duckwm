@@ -908,6 +908,30 @@ function wm.set_node_blur(id, blur) end
 ---@param id integer
 function wm.clear_node_blur(id) end
 
+--- What a layer surface (a bar, a wallpaper, a notification: add_rule's 'layer') calls itself, e.g. "waybar"; nil once it's gone. Only on wayluck.
+---@param id integer
+---@return string|nil
+function wm.get_layer_namespace(id) end
+
+--- Round a layer surface's corners, radius pixels (0: square). Its shadow and blur follow. Only on wayluck.
+---@param id integer
+---@param radius integer
+function wm.set_layer_corners(id, radius) end
+
+--- A layer surface's shadow, as set_shadow's for windows (no alpha: none). Only on wayluck.
+---@param id integer
+---@param blur integer
+---@param spread integer
+---@param x integer
+---@param y integer
+---@param color integer
+function wm.set_layer_shadow(id, blur, spread, x, y, color) end
+
+--- Where a layer surface is blurred behind: 'client' where its client asks (the default), 'on' behind all of it, 'off' nowhere. Only on wayluck.
+---@param id integer
+---@param blur 'client'|'on'|'off'
+function wm.set_layer_blur(id, blur) end
+
 --- Be told what changed, once it's committed. topic is one of:
 ---   'scene'   — a new scene reached the screen (get_scene has it)
 ---   'focus'   — the focused node changed; id is the new one (nil: nothing)
@@ -933,6 +957,9 @@ function wm.unsubscribe(id) end
 ---   'map'     — fires after the arranger places the window
 ---   'unmap'   — fires when the window is removed from the layout (e.g. closed or floating)
 ---   'prop'    — fires when WM_CLASS or window title changes (for apps that set class late)
+---   'layer'   — fires once for each layer surface (a bar, a wallpaper, a notification): id is
+---               the layer surface's (see get_layer_namespace), not a window's. Only rules added
+---               outside within hear it. Only on wayluck.
 --- Returns a handle that can be passed to remove_rule.
 ---@param fn fun(event: string, id: integer)
 ---@return integer

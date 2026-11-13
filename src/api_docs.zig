@@ -1556,6 +1556,47 @@ pub const entries = [_]ApiEntry{
         .params = &.{.{ .name = "id", .typ = "integer" }},
         .ret = "nil",
     },
+    .{
+        .category = "Appearance",
+        .name = "get_layer_namespace",
+        .desc = "What a layer surface (a bar, a wallpaper, a notification: add_rule's 'layer') calls itself, e.g. \"waybar\"; nil once it's gone. Only on wayluck.",
+        .params = &.{.{ .name = "id", .typ = "integer" }},
+        .ret = "string|nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "set_layer_corners",
+        .desc = "Round a layer surface's corners, radius pixels (0: square). Its shadow and blur follow. Only on wayluck.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "radius", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "set_layer_shadow",
+        .desc = "A layer surface's shadow, as set_shadow's for windows (no alpha: none). Only on wayluck.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "blur", .typ = "integer" },
+            .{ .name = "spread", .typ = "integer" },
+            .{ .name = "x", .typ = "integer" },
+            .{ .name = "y", .typ = "integer" },
+            .{ .name = "color", .typ = "integer" },
+        },
+        .ret = "nil",
+    },
+    .{
+        .category = "Appearance",
+        .name = "set_layer_blur",
+        .desc = "Where a layer surface is blurred behind: 'client' where its client asks (the default), 'on' behind all of it, 'off' nowhere. Only on wayluck.",
+        .params = &.{
+            .{ .name = "id", .typ = "integer" },
+            .{ .name = "blur", .typ = "'client'|'on'|'off'" },
+        },
+        .ret = "nil",
+    },
 
     // =========================================================
     // Rules
@@ -1598,6 +1639,9 @@ pub const entries = [_]ApiEntry{
         \\  'map'     — fires after the arranger places the window
         \\  'unmap'   — fires when the window is removed from the layout (e.g. closed or floating)
         \\  'prop'    — fires when WM_CLASS or window title changes (for apps that set class late)
+        \\  'layer'   — fires once for each layer surface (a bar, a wallpaper, a notification): id is
+        \\              the layer surface's (see get_layer_namespace), not a window's. Only rules added
+        \\              outside within hear it. Only on wayluck.
         \\Returns a handle that can be passed to remove_rule.
         ,
         .params = &.{.{ .name = "fn", .typ = "fun(event: string, id: integer)" }},

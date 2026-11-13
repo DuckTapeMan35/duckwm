@@ -4,6 +4,7 @@ const wayland = @import("wayland");
 const paint = @import("paint");
 const windows = @import("windows.zig");
 const workspaces = @import("workspaces.zig");
+const layers = @import("layers.zig");
 
 const wl = wayland.client.wl;
 const wayluck = wayland.client.wayluck;
@@ -76,6 +77,9 @@ pub const State = struct {
     workspaces: std.ArrayListUnmanaged(*workspaces.Workspace) = .empty,
     /// What core last published of them (null: nothing yet).
     published: ?workspaces.Published = null,
+    /// Layer surfaces wayluck told of, by duckwm's numbers for them.
+    layers: std.AutoHashMapUnmanaged(types.LayerHandle, *layers.Layer) = .empty,
+    next_layer: types.LayerHandle = 0,
 
     /// Events for core, oldest first.
     events: std.ArrayListUnmanaged(types.Event) = .empty,

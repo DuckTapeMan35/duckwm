@@ -9,6 +9,7 @@ const sharing = @import("sharing.zig");
 const keys = @import("keys.zig");
 const previews = @import("previews.zig");
 const workspaces = @import("workspaces.zig");
+const layers = @import("layers.zig");
 
 const xdg = wayland.client.xdg;
 const wl = wayland.client.wl;
@@ -70,6 +71,7 @@ pub const Backend = struct {
         paint.deinit();
         sharing.deinit(s);
         workspaces.destroy_all(s);
+        layers.destroy_all(s);
         keys.ungrab_all(s);
         s.bindings.deinit(s.allocator);
         pointer.ungrab_all(s);
@@ -362,6 +364,14 @@ pub const Backend = struct {
     pub fn set_blur(self: *Backend, passes: u32, offset: f32) void {
         windows.set_blur(self.state, passes, offset);
     }
+
+    pub fn layer_namespace(self: *const Backend, h: types.LayerHandle) ?[]const u8 {
+        return layers.namespace(self.state, h);
+    }
+
+    pub fn set_layer_look(self: *Backend, h: types.LayerHandle, change: types.LayerChange) void {
+        layers.set_look(self.state, h, change);
+    }
 };
 
 /// wayluck checks duckwm is alive, as it does any client with toplevels.
@@ -403,6 +413,6 @@ fn manager_listener(_: *wayluck.WmManagerV1, event: wayluck.WmManagerV1.Event, s
         },
         .picker_closed => s.push(.picker_closed),
         .share_workspace => |e| if (e.scene) |scene| sharing.share(s, e.output, scene) else e.output.destroy(),
-        .layer => |e| e.layer.destroy(),
+        .layer => |e| layers.add(s, e.layer),
     }
 }

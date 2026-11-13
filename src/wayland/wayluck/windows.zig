@@ -1,12 +1,13 @@
 const std = @import("std");
 const types = @import("types");
 const wayland = @import("wayland");
-const wl = wayland.client.wl;
 const pointer = @import("pointer.zig");
 const outputs = @import("outputs.zig");
 const sharing = @import("sharing.zig");
 const workspaces = @import("workspaces.zig");
+const layers = @import("layers.zig");
 
+const wl = wayland.client.wl;
 const wayluck = wayland.client.wayluck;
 const State = @import("state.zig").State;
 
@@ -285,6 +286,7 @@ pub fn commit(s: *State) void {
     if (s.dirty) {
         place_all(s, tx);
         workspaces.tell(s, tx);
+        layers.tell(s, tx);
     }
     if (s.focus) |f| {
         const w: ?*Window = if (f.to) |h| s.windows.get(h) else null;
@@ -547,6 +549,7 @@ fn tx_listener(tx: *wayluck.WmTransactionV1, event: wayluck.WmTransactionV1.Even
             while (it.next()) |w| w.*.sent = .{};
             for (s.outputs.items) |o| o.sent = .{};
             workspaces.forget_sent(s);
+            layers.forget_sent(s);
             s.dirty = true;
         },
     }

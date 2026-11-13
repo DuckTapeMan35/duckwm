@@ -72,6 +72,9 @@ pub const Event = union(enum) {
     /// Someone (a pager, the window's own client) asked for a window to be
     /// on a workspace.
     window_workspace_request: WorkspaceRequest,
+    /// A layer surface (a bar, a wallpaper, a notification) showed up: rules
+    /// hear of it (add_rule's 'layer').
+    layer_added: LayerHandle,
     /// A client asked to change its fullscreen or attention state.
     state_request: StateRequest,
     button_press: PointerButton,
@@ -110,6 +113,17 @@ pub const MapRequest = struct {
 };
 
 pub const UrgencyHint = struct { window: WindowHandle, urgent: bool };
+
+/// A layer surface, as a backend has it: its own numbers, not nodes'.
+pub const LayerHandle = u32;
+
+/// What's set of a layer surface's look.
+pub const LayerChange = union(enum) {
+    /// Its corners' radius.
+    corners: u32,
+    shadow: Shadow,
+    blur: Blur,
+};
 
 /// A window, and a workspace's number as published (publish_workspaces).
 pub const WorkspaceRequest = struct { window: WindowHandle, workspace: u32 };

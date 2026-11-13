@@ -142,6 +142,18 @@ pub fn release(wm: *WM, cb: Callback) void {
 }
 
 pub fn call_rules(wm: *WM, event: [:0]const u8, node_id: u32) void {
+    run_rules(wm, event, node_id, true);
+}
+
+/// Rules hear of a layer surface: those added everywhere (a layer surface
+/// is in no workspace, so not inside any within's path).
+pub fn call_layer_rules(wm: *WM, layer: types.LayerHandle) void {
+    run_rules(wm, "layer", layer, false);
+}
+
+/// Every rule, for node_id (a node, in_tree), or something that isn't one
+/// (and only the rules added everywhere).
+fn run_rules(wm: *WM, event: [:0]const u8, node_id: u32, in_tree: bool) void {
     wm.hold_output += 1;
     defer wm.hold_output -= 1;
     // By index: a rule may add rules, which can move the list.
@@ -149,6 +161,7 @@ pub fn call_rules(wm: *WM, event: [:0]const u8, node_id: u32) void {
     while (i < wm.rules.items.len) : (i += 1) {
         // Checked for each rule: an earlier one may have moved or named it.
         if (wm.rules.items[i].scope != scopes.everywhere) {
+            if (!in_tree) continue;
             const n = wm.node_registry.get(node_id) orelse continue;
             if (!scopes.contains(wm, wm.rules.items[i].scope, .{ .node = n })) continue;
         }

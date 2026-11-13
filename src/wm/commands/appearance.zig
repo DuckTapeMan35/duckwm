@@ -115,6 +115,31 @@ pub fn clear_node_blur(wm: *WM, args: Args(.clear_node_blur), _: Allocator) !Val
     return .nil;
 }
 
+// ---- layer surfaces (bars, wallpapers, notifications) ----
+pub fn get_layer_namespace(wm: *WM, args: Args(.get_layer_namespace), arena: Allocator) !Value {
+    const namespace = wm.backend.layer_namespace(args.id) orelse return .nil;
+    return try util.text(arena, namespace);
+}
+
+pub fn set_layer_corners(wm: *WM, args: Args(.set_layer_corners), _: Allocator) !Value {
+    wm.backend.set_layer_look(args.id, .{ .corners = args.radius });
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_layer_shadow(wm: *WM, args: Args(.set_layer_shadow), _: Allocator) !Value {
+    const shadow: types.Shadow = .{ .blur = args.blur, .spread = args.spread, .x = args.x, .y = args.y, .color = args.color };
+    wm.backend.set_layer_look(args.id, .{ .shadow = shadow });
+    try repaint(wm);
+    return .nil;
+}
+
+pub fn set_layer_blur(wm: *WM, args: Args(.set_layer_blur), _: Allocator) !Value {
+    wm.backend.set_layer_look(args.id, .{ .blur = blur_of(args.blur) });
+    try repaint(wm);
+    return .nil;
+}
+
 // ---- per-node colors ----
 pub fn set_node_focused_border_color(wm: *WM, args: Args(.set_node_focused_border_color), _: Allocator) !Value {
     wm.journal.set(try util.node(wm, args.id), "border_color_focused", args.color);

@@ -486,4 +486,17 @@ pub const Backend = struct {
         _ = passes;
         _ = offset;
     }
+
+    /// No layer surfaces here.
+    pub fn layer_namespace(self: *const Backend, h: types.LayerHandle) ?[]const u8 {
+        _ = self;
+        _ = h;
+        return null;
+    }
+
+    pub fn set_layer_look(self: *Backend, h: types.LayerHandle, change: types.LayerChange) void {
+        _ = self;
+        _ = h;
+        _ = change;
+    }
 };

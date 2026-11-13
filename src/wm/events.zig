@@ -7,6 +7,7 @@ const requests = @import("requests.zig");
 const pointer = @import("pointer.zig");
 const input_bar = @import("input_bar.zig");
 const output = @import("output.zig");
+const callbacks = @import("callbacks.zig");
 const WM = core.WM;
 
 pub fn handle_event(wm: *WM, ev: types.Event) void {
@@ -50,6 +51,7 @@ fn dispatch(wm: *WM, ev: types.Event) bool {
         .activate_request => |h| requests.activate(wm, h),
         .workspace_request => |index| requests.workspace(wm, index),
         .window_workspace_request => |r| requests.window_workspace(wm, r),
+        .layer_added => |h| callbacks.call_layer_rules(wm, h),
         .state_request => |r| requests.state_request(wm, r) catch |err| {
             std.debug.print("state_request: {}\n", .{err});
             return false;

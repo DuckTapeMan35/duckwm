@@ -777,3 +777,42 @@ test "workspaces are published numbered as keys number them, whatever their plac
     try std.testing.expectEqual(second, node.owner_graph.?.workspace());
     try std.testing.expectEqual(@as(?u32, 1), h.backend().window_workspaces.get(1));
 }
+
+test "layer surfaces: rules hear of them, by namespace, and set their look" {
+    var h = try Harness.init(std.testing.allocator,
+        \\layers_heard, within_heard = 0, 0
+        \\wm.within("web", function()
+        \\    wm.add_rule(function(ev) if ev == "layer" then within_heard = within_heard + 1 end end)
+        \\end)
+        \\wm.add_rule(function(ev, id)
+        \\    if ev ~= "layer" then return end
+        \\    layers_heard = layers_heard + 1
+        \\    if wm.get_layer_namespace(id) == "waybar" then
+        \\        wm.set_layer_corners(id, 8)
+        \\        wm.set_layer_shadow(id, 10, 0, 0, 4, 0x80000000)
+        \\        wm.set_layer_blur(id, "on")
+        \\    end
+        \\end)
+    );
+    defer h.deinit();
+    const lua = h.wm.lua.?;
+
+    h.backend().add_layer(7, "waybar");
+    h.backend().add_layer(8, "wallpaper");
+    h.step();
+    _ = lua.getGlobal("layers_heard");
+    _ = lua.getGlobal("within_heard");
+    defer lua.pop(2);
+    // Every rule added everywhere, once each; none added within a path.
+    try std.testing.expectEqual(@as(i64, 2), try lua.toInteger(-2));
+    try std.testing.expectEqual(@as(i64, 0), try lua.toInteger(-1));
+
+    const bar = h.backend().layers.get(7).?;
+    try std.testing.expectEqual(@as(u32, 8), bar.corners);
+    try std.testing.expectEqual(types.Shadow{ .blur = 10, .y = 4, .color = 0x80000000 }, bar.shadow.?);
+    try std.testing.expectEqual(types.Blur.on, bar.blur);
+    // Only the one the rule picked.
+    const wallpaper = h.backend().layers.get(8).?;
+    try std.testing.expectEqual(@as(u32, 0), wallpaper.corners);
+    try std.testing.expect(wallpaper.shadow == null);
+}
